@@ -17,6 +17,8 @@ kotlin {
         }
     }
 
+    jvm() // Desktop target
+
     // iOS targets (iPhone + iPad). Configure-only on Windows; the framework links on macOS.
     iosX64()
     iosArm64()
