@@ -10,20 +10,28 @@ Real-time and offline audio analysis: spectral decomposition, cough detection, m
 ## Three Projects (Planned Split)
 
 ```
-FFTT04M-Android/
-  ├─ app/                          # Kotlin Android
-  ├─ shared/                        # Shared code (WavReader, FFTUtils)
-  └─ README.md                      # Android-specific docs
-
-FFTT04M-Desktop/
-  ├─ desktop/                       # Kotlin Swing UI
-  ├─ research/cough/               # Python ML pipeline
+FFTT04M-Legacy/
+  ├─ app/                          # Kotlin Android (API 23+: Nexus 7, Galaxy S4, etc.)
+  ├─ shared/                        # Shared DSP (WavReader, FFTUtils, CoughDsp)
   └─ README.md
+  Baseline: Spectrogram, gallery, EQ, noise filter, playback
+  API: 23+ (broad device coverage)
 
 FFTT04M-Research/
-  ├─ notebooks/                     # Jupyter analysis
-  ├─ datasets/                      # Data prep scripts
-  └─ models/                        # Tier-2/3 training
+  ├─ app/                          # Kotlin Android (API 32+: Pixel 3a+)
+  ├─ shared/                        # All of Legacy + cough (Tier-1)
+  ├─ desktop/                       # Kotlin Swing dataset analyzer
+  ├─ research/cough/               # Python ML pipeline (Tier-2/3)
+  └─ README.md
+  Superset of Legacy: all features + cough analysis + MFCC
+  Relationship: Legacy bugfixes → ported to Research; Research features don't backport
+  API: 32+ only
+
+FFTT04M-Desktop/
+  ├─ desktop/                       # Swing UI for batch analysis
+  ├─ research/cough/               # Python training scaffolds
+  └─ README.md
+  Purpose: Dataset processing, Tier-2 model prep
 ```
 
 ## Shared DSP Algorithms (Algorithm Homology)

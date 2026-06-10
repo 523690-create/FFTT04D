@@ -4,12 +4,12 @@ plugins {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
 }
 
 kotlin {
-    jvmToolchain(11)
+    jvmToolchain(8)
 }
 
 dependencies {
@@ -29,4 +29,18 @@ dependencies {
 
 application {
     mainClass.set("com.example.FFTT04M.desktop.MainKt")
+}
+
+// Create fat JAR for direct execution (visible window)
+tasks.register<Jar>("fatJar") {
+    manifest {
+        attributes["Main-Class"] = "com.example.FFTT04M.desktop.MainKt"
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.get().output)
+    dependsOn(configurations.runtimeClasspath)
+    from({
+        configurations.runtimeClasspath.get().filter { it.exists() }.map { if (it.isDirectory) it else zipTree(it) }
+    })
+    archiveFileName.set("CoughAnalyzer.jar")
 }
