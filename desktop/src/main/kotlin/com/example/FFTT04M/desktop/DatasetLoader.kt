@@ -37,7 +37,26 @@ object DatasetLoader {
             val jsonFile = dir.resolve("$baseName.json")
 
             val metadata = if (jsonFile.exists()) {
-                parseJson(jsonFile.readText())
+                try {
+                    val json = jsonFile.readText()
+                    val map = mutableMapOf<String, Any>()
+                    val content = json.trim().removeSurrounding("{", "}")
+                    for (line in content.split(",")) {
+                        val kv = line.trim().split(":")
+                        if (kv.size == 2) {
+                            val key = kv[0].trim().trim('"')
+                            val value = kv[1].trim().trim('"')
+                            map[key] = when {
+                                value == "true" || value == "false" -> value.toBoolean()
+                                value.toDoubleOrNull() != null -> value.toDouble()
+                                else -> value
+                            }
+                        }
+                    }
+                    map
+                } catch (e: Exception) {
+                    emptyMap()
+                }
             } else {
                 emptyMap()
             }
@@ -123,8 +142,7 @@ object DatasetLoader {
                     val covidStatus = if (parts.size > 4) parts[4] else "unknown"
                     val location = if (parts.size > 9) parts[9] else "unknown"
 
-                    // TODO: Look for audio files (cough.wav, speech.wav, etc.) in a subdirectory named after participantId
-                    // For now, just document the structure.
+                    // TODO: Look for audio files (cough.wav, speech.wav, etc.)
                 }
             }
         }
@@ -132,79 +150,18 @@ object DatasetLoader {
         return recordings
     }
 
-    private fun parseJson(json: String): Map<String, Any> {
-        return try {
-            // Simple JSON parser (no external dependency, so avoid org.json)
-            val map = mutableMapOf<String, Any>()
-            val content = json.trim().removeSurrounding("{", "}")
-            for (line in content.split(",")) {
-                val kv = line.trim().split(":")
-                if (kv.size == 2) {
-                    val key = kv[0].trim().trim('"')
-                    val value = kv[1].trim().trim('"')
-                    map[key] = when {
-                        value == "true" || value == "false" -> value.toBoolean()
-                        value.toDoubleOrNull() != null -> value.toDouble()
-                        else -> value
-                    }
-                }
-            }
-            map
-        } catch (e: Exception) {
-            emptyMap()
-        }
-    }
-
     private val TARGET_LABEL = mapOf(
-        0 to "dog",
-        1 to "rooster",
-        2 to "pig",
-        3 to "cow",
-        4 to "frog",
-        5 to "cat",
-        6 to "hen",
-        7 to "insects",
-        8 to "sheep",
-        9 to "crow",
-        10 to "rain",
-        11 to "sea_waves",
-        12 to "crackling_fire",
-        13 to "crickets",
-        14 to "chirping_birds",
-        15 to "water_drops",
-        16 to "wind",
-        17 to "pouring_water",
-        18 to "toilet_flush",
-        19 to "thunderstorm",
-        20 to "typing",
-        21 to "laughing",
-        22 to "brushing_teeth",
-        23 to "sneezing",
-        24 to "drinking",
-        25 to "door_wood_knock",
-        26 to "mouse_click",
-        27 to "keyboard_typing",
-        28 to "door_wood_creaks",
-        29 to "can_opening",
-        30 to "washing_machine",
-        31 to "vacuum_cleaner",
-        32 to "clock_alarm",
-        33 to "clock_tick",
-        34 to "glass_breaking",
-        35 to "helicopter",
-        36 to "chainsaw",
-        37 to "siren",
-        38 to "car_horn",
-        39 to "engine_starting",
-        40 to "train",
-        41 to "church_bells",
-        42 to "airplane",
-        43 to "fireworks",
-        44 to "hand_saw",
-        45 to "car_passing",
-        46 to "zip_clock",
-        47 to "microwave_oven",
-        48 to "bus",
-        49 to "semitone",
+        0 to "dog", 1 to "rooster", 2 to "pig", 3 to "cow", 4 to "frog", 5 to "cat",
+        6 to "hen", 7 to "insects", 8 to "sheep", 9 to "crow", 10 to "rain",
+        11 to "sea_waves", 12 to "crackling_fire", 13 to "crickets", 14 to "chirping_birds",
+        15 to "water_drops", 16 to "wind", 17 to "pouring_water", 18 to "toilet_flush",
+        19 to "thunderstorm", 20 to "typing", 21 to "laughing", 22 to "brushing_teeth",
+        23 to "sneezing", 24 to "drinking", 25 to "door_wood_knock", 26 to "mouse_click",
+        27 to "keyboard_typing", 28 to "door_wood_creaks", 29 to "can_opening",
+        30 to "washing_machine", 31 to "vacuum_cleaner", 32 to "clock_alarm", 33 to "clock_tick",
+        34 to "glass_breaking", 35 to "helicopter", 36 to "chainsaw", 37 to "siren",
+        38 to "car_horn", 39 to "engine_starting", 40 to "train", 41 to "church_bells",
+        42 to "airplane", 43 to "fireworks", 44 to "hand_saw", 45 to "car_passing",
+        46 to "zip_clock", 47 to "microwave_oven", 48 to "bus", 49 to "semitone",
     )
 }
