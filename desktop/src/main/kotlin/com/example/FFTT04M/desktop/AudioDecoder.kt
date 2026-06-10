@@ -96,7 +96,7 @@ object AudioDecoder {
                 "-ac", "1",          // mono
                 "-"                  // stdout
             )
-            processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD)
+            // redirectError not needed for Java 8 compat
 
             val process = processBuilder.start()
             val output = process.inputStream.readBytes()
