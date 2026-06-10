@@ -144,15 +144,27 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
             val results = StringBuilder()
             results.append("=== ANALYSIS RESULTS ===\n\n")
+            var analyzed = 0
+            var skipped = 0
 
             recordings.forEachIndexed { idx, rec ->
                 val percent = ((idx + 1) * 100) / recordings.size
                 progressBar.value = percent
+
+                // Skip unsupported formats (need ffmpeg for WebM/OGG)
+                val ext = rec.audioFile.extension.lowercase()
+                if (ext !in listOf("wav")) {
+                    skipped++
+                    showStatus("Skipping ${idx + 1}/${recordings.size} (${ext.uppercase()} not supported)...")
+                    return@forEachIndexed
+                }
+
                 showStatus("Analyzing ${idx + 1}/${recordings.size}...")
 
                 // Try to decode and analyze
                 val pcm = AudioDecoder.decode(rec.audioFile)
                 if (pcm != null) {
+                    analyzed++
                     val duration = pcm.size.toDouble() / 44100
                     results.append("${rec.id}:\n")
                     results.append("  Duration: ${String.format("%.2f", duration)}s\n")
@@ -160,15 +172,20 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                     results.append("  Peak: ${String.format("%.4f", pcm.maxOrNull() ?: 0f)}\n")
                     rec.label()?.let { results.append("  Label: $it\n") }
                     results.append("\n")
-                } else {
-                    results.append("${rec.id}: Failed to decode\n\n")
                 }
                 SwingUtilities.invokeLater {
                     analysisResultsArea.text = results.toString()
                 }
             }
 
-            showStatus("Analysis complete: ${recordings.size} recordings processed")
+            results.insert(0, "Supported formats: WAV only (WebM/OGG require ffmpeg)\n\n")
+            results.append("\n=== SUMMARY ===\n")
+            results.append("Analyzed: $analyzed | Skipped: $skipped\n")
+            SwingUtilities.invokeLater {
+                analysisResultsArea.text = results.toString()
+            }
+
+            showStatus("Analysis complete: $analyzed analyzed, $skipped skipped (unsupported format)")
             isAnalyzing = false
             progressBar.value = 100
         }
