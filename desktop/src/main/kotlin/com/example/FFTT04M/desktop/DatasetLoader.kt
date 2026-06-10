@@ -38,6 +38,46 @@ object DatasetLoader {
     }
 
     fun loadCoswara(rootPath: String): List<AudioRecording> {
-        return emptyList()
+        val recordings = mutableListOf<AudioRecording>()
+        val rootDir = File(rootPath)
+
+        // For each date directory, read the CSV to get participant info
+        for (dateDir in rootDir.listFiles { f -> f.isDirectory && f.name.matches(Regex("\\d{8}")) } ?: emptyArray()) {
+            val csvFile = dateDir.resolve("${dateDir.name}.csv")
+            if (!csvFile.exists()) continue
+
+            // Parse CSV: id, l_c, a, record_date, covid_status, ...
+            val lines = csvFile.readLines()
+            if (lines.size < 2) continue
+
+            val csv = lines.drop(1)
+            for (line in csv) {
+                val parts = line.split(",")
+                if (parts.isNotEmpty()) {
+                    val participantId = parts[0].trim()
+                    val age = if (parts.size > 2) parts[2].trim() else "?"
+                    val covidStatus = if (parts.size > 4) parts[4].trim() else "unknown"
+                    val country = if (parts.size > 1) parts[1].trim() else "?"
+                    val location = if (parts.size > 9) parts[9].trim() else ""
+
+                    // Create recording entry with metadata (audio files in tar.gz archives)
+                    val id = "$participantId-${dateDir.name}"
+                    val metadata = mapOf(
+                        "age" to age,
+                        "covid_status" to covidStatus,
+                        "country" to country,
+                        "location" to location,
+                        "source" to "Coswara",
+                        "note" to "Audio in ${dateDir.name}.tar.gz (split .aa/.ab/.ac/.ad - extraction pending)"
+                    )
+
+                    // Dummy file path (audio archived in tar.gz, not accessible without extraction)
+                    val dummyFile = File("${rootPath}/${participantId}-${dateDir.name}.wav")
+                    recordings.add(AudioRecording(id = id, audioFile = dummyFile, metadata = metadata))
+                }
+            }
+        }
+
+        return recordings.take(100).sortedBy { it.id }  // Limit to first 100 for performance
     }
 }
