@@ -96,13 +96,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         centerPanel.dividerLocation = 400
         panel.add(centerPanel, BorderLayout.CENTER)
 
-        // Progress bar
+        // Bottom panel: progress + status
+        val bottomPanel = JPanel(BorderLayout(0, 5))
         progressBar.isStringPainted = true
-        panel.add(progressBar, BorderLayout.CENTER + 1)
-
-        // Status bar
+        bottomPanel.add(progressBar, BorderLayout.NORTH)
         statusLabel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
-        panel.add(statusLabel, BorderLayout.SOUTH)
+        bottomPanel.add(statusLabel, BorderLayout.SOUTH)
+        panel.add(bottomPanel, BorderLayout.SOUTH)
 
         contentPane = panel
     }
