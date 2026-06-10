@@ -22,6 +22,9 @@ dependencies {
     // JSON
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // TAR/GZIP support for Coswara dataset extraction
+    implementation("org.apache.commons:commons-compress:1.24.0")
+
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")

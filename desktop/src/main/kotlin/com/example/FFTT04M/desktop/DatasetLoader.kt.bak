@@ -102,13 +102,7 @@ object DatasetLoader {
 
     private fun extractTarGz(splitParts: List<File>, outputDir: File) {
         // Concatenate split tar.gz parts and extract
-        val inputStreams = splitParts.map { FileInputStream(it) }
-        val enumeration = object : java.util.Enumeration<java.io.InputStream> {
-            private var index = 0
-            override fun hasMoreElements() = index < inputStreams.size
-            override fun nextElement() = inputStreams[index++]
-        }
-        val combinedStream = SequenceInputStream(enumeration)
+        val combinedStream = SequenceInputStream(splitParts.map { FileInputStream(it) }.iterator())
         val gzipInput = GzipCompressorInputStream(combinedStream)
         val tarInput = TarArchiveInputStream(gzipInput)
 
