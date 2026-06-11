@@ -62,7 +62,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             selectedDataset = Dataset.COSWARA
             loadDataset()
         })
-        buttonPanel.add(createButton("Load USB Device") {
+        buttonPanel.add(createButton("Request from USB Device") {
             loadFromUsb()
         })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
@@ -168,6 +168,30 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 devices[labels.indexOf(choice).coerceAtLeast(0)]
             }
 
+            // Cooperative handshake: did the phone publish an offer (SHARE → "Offer to desktop")?
+            showStatus("Checking ${device.model} for an offer…")
+            val offer = UsbImporter.readOffer(device)
+            if (offer != null) {
+                val ageMin = if (offer.createdMs > 0)
+                    ((System.currentTimeMillis() - offer.createdMs) / 60000).coerceAtLeast(0) else -1L
+                val whenStr = if (ageMin in 0..600) "offered ${ageMin}m ago" else "offer pending"
+                val accept = arrayOf<Int>(0)
+                SwingUtilities.invokeAndWait {
+                    accept[0] = JOptionPane.showConfirmDialog(this,
+                        "${offer.deviceModel} is offering ${offer.count} recording(s) ($whenStr).\nAccept and import?",
+                        "USB offer", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE)
+                }
+                if (accept[0] != JOptionPane.YES_OPTION) { showStatus("USB offer declined"); return@thread }
+            } else {
+                val proceed = arrayOf<Int>(0)
+                SwingUtilities.invokeAndWait {
+                    proceed[0] = JOptionPane.showConfirmDialog(this,
+                        "No active offer from ${device.model}.\nTip: on the phone tap SHARE → \"Offer recordings to desktop (USB)\".\n\nPull whatever is already staged anyway?",
+                        "USB import", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE)
+                }
+                if (proceed[0] != JOptionPane.YES_OPTION) { showStatus("USB import cancelled"); return@thread }
+            }
+
             showStatus("Pulling recordings from ${device.model} via USB…")
             val importRoot = File(System.getProperty("user.home"), "FFTT04M_usb_import")
             val res = UsbImporter.pull(device, importRoot)
@@ -181,7 +205,10 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             recordings.addAll(DatasetLoader.loadDeviceImport(res.dir, device.model))
             selectedDataset = null
             updateRecordingsList()
-            showStatus("USB: loaded ${recordings.size} recordings from ${device.model}")
+            // Acknowledge back to the phone so its Offer dialog confirms the transfer.
+            val acked = UsbImporter.sendAck(device, res.wavCount)
+            showStatus("USB: imported ${recordings.size} from ${device.model}" +
+                if (acked) " · acknowledged to phone" else "")
         }
     }
 

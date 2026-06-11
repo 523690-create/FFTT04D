@@ -1,5 +1,6 @@
 package com.example.FFTT04M.desktop
 
+import com.google.gson.JsonParser
 import java.io.File
 
 /**
@@ -12,13 +13,19 @@ object UsbImporter {
     private const val APP_ID = "com.example.FFTT04M"
     // Where the apps keep recordings: public Documents/FFTT04M first (survives uninstall), then the
     // app-private external dir as a fallback.
+    private const val PUBLIC_DIR = "/sdcard/Documents/FFTT04M"
     private val REMOTE_DIRS = listOf(
-        "/sdcard/Documents/FFTT04M",
+        PUBLIC_DIR,
         "/sdcard/Android/data/$APP_ID/files",
     )
+    // Cooperative-handshake manifests exchanged in the public folder.
+    private const val OFFER_NAME = "fftt_usb_offer.json"
+    private const val ACK_NAME = "fftt_usb_ack.json"
 
     data class Device(val serial: String, val model: String)
     data class PullResult(val ok: Boolean, val wavCount: Int, val dir: File, val message: String)
+    /** An active offer the phone published via SHARE → "Offer recordings to desktop". */
+    data class Offer(val deviceModel: String, val app: String, val count: Int, val createdMs: Long)
 
     // ---- adb resolution (PATH, then the standard Android SDK location) --------------------------
     @Volatile private var adbCached: String? = null
@@ -87,5 +94,54 @@ object UsbImporter {
         }
         val wavs = dest.walkTopDown().count { it.isFile && it.extension.equals("wav", true) }
         return PullResult(true, wavs, dest, "Pulled $wavs recording(s) from ${device.model} ($pulledFrom)")
+    }
+
+    // ---- Cooperative handshake -----------------------------------------------------------------
+
+    // Remembers which remote dir the last offer was read from, so the ack lands beside it.
+    @Volatile private var lastOfferDir: String = PUBLIC_DIR
+
+    /** Read the device's published offer manifest (null if none / not currently offering). */
+    fun readOffer(device: Device): Offer? {
+        val tmp = File.createTempFile("fftt_offer", ".json")
+        try {
+            for (remote in REMOTE_DIRS) {
+                tmp.writeText("")
+                val (code, _) = run("-s", device.serial, "pull", "$remote/$OFFER_NAME", tmp.absolutePath)
+                if (code != 0 || !tmp.isFile || tmp.length() == 0L) continue
+                val o = JsonParser.parseString(tmp.readText()).asJsonObject
+                if (o.get("status")?.asString != "offering") continue
+                lastOfferDir = remote
+                return Offer(
+                    deviceModel = o.get("device_model")?.asString ?: device.model,
+                    app = o.get("app")?.asString ?: "FFTT04",
+                    count = o.get("count")?.asInt ?: 0,
+                    createdMs = o.get("created_ms")?.asLong ?: 0L,
+                )
+            }
+            return null
+        } catch (e: Exception) {
+            return null
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /** Acknowledge receipt back to the phone (beside the offer it published) so its dialog confirms. */
+    fun sendAck(device: Device, receivedCount: Int): Boolean {
+        val tmp = File.createTempFile("fftt_ack", ".json")
+        return try {
+            tmp.writeText(
+                "{\"type\":\"fftt_usb_ack\",\"status\":\"received\"," +
+                "\"received_count\":$receivedCount," +
+                "\"received_ms\":${System.currentTimeMillis()},\"by\":\"FFTT04D desktop\"}"
+            )
+            val (code, _) = run("-s", device.serial, "push", tmp.absolutePath, "$lastOfferDir/$ACK_NAME")
+            code == 0
+        } catch (e: Exception) {
+            false
+        } finally {
+            tmp.delete()
+        }
     }
 }
