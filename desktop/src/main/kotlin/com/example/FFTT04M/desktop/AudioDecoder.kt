@@ -65,60 +65,77 @@ object AudioDecoder {
         }
     }
 
-    /**
-     * Decode OGG/Vorbis file (placeholder — requires jorbis integration).
-     */
-    private fun decodeOgg(file: File): FloatArray? {
-        return try {
-            // TODO: Integrate jorbis library for OGG decoding
-            // For now, return null as a placeholder
-            System.err.println("OGG decoding not yet implemented")
-            null
-        } catch (e: Exception) {
-            System.err.println("Error decoding OGG: ${e.message}")
-            null
+    /** OGG/Vorbis via ffmpeg. */
+    private fun decodeOgg(file: File): FloatArray? = decodeViaFfmpeg(file)
+
+    /** WebM/Opus via ffmpeg. */
+    private fun decodeWebm(file: File): FloatArray? = decodeViaFfmpeg(file)
+
+    /** True if ffmpeg is available (resolved on PATH or in the winget install dir). */
+    fun ffmpegAvailable(): Boolean = ffmpegExe() != null
+
+    // Resolved lazily and cached. null => not found.
+    @Volatile private var ffmpegResolved = false
+    @Volatile private var ffmpegCached: String? = null
+
+    /** Locate ffmpeg: PATH first, then the winget (Gyan.FFmpeg) package dir. Cached after first call. */
+    private fun ffmpegExe(): String? {
+        if (ffmpegResolved) return ffmpegCached
+        synchronized(this) {
+            if (ffmpegResolved) return ffmpegCached
+            ffmpegCached = resolveFfmpeg()
+            ffmpegResolved = true
+            return ffmpegCached
         }
     }
 
-    /**
-     * Decode WebM file (placeholder — requires external tool or library).
-     */
-    private fun decodeWebm(file: File): FloatArray? {
-        return try {
-            // WebM decoding requires ffmpeg or a library like webm-jnicodecs
-            // For now, try to invoke ffmpeg if available
-            val processBuilder = ProcessBuilder(
-                "ffmpeg",
-                "-i", file.absolutePath,
-                "-f", "s16le",      // signed 16-bit PCM
-                "-acodec", "pcm_s16le",
-                "-ar", "44100",      // 44.1 kHz
-                "-ac", "1",          // mono
-                "-"                  // stdout
-            )
-            // redirectError not needed for Java 8 compat
+    private fun resolveFfmpeg(): String? {
+        // 1) On PATH (works after a shell restart picks up winget's PATH edit).
+        if (canRun("ffmpeg")) return "ffmpeg"
+        // 2) winget shim.
+        val local = System.getenv("LOCALAPPDATA")
+        if (local != null) {
+            val shim = File(local, "Microsoft\\WinGet\\Links\\ffmpeg.exe")
+            if (shim.isFile && canRun(shim.absolutePath)) return shim.absolutePath
+            // 3) winget package dir: ...\Packages\Gyan.FFmpeg*\**\bin\ffmpeg.exe
+            val pkgs = File(local, "Microsoft\\WinGet\\Packages")
+            pkgs.listFiles { f -> f.isDirectory && f.name.startsWith("Gyan.FFmpeg", true) }?.forEach { dir ->
+                dir.walkTopDown().firstOrNull { it.isFile && it.name.equals("ffmpeg.exe", true) }
+                    ?.let { return it.absolutePath }
+            }
+        }
+        return null
+    }
 
-            val process = processBuilder.start()
+    private fun canRun(exe: String): Boolean = try {
+        val p = ProcessBuilder(exe, "-version").redirectErrorStream(true).start()
+        p.inputStream.readBytes(); p.waitFor(); p.exitValue() == 0
+    } catch (e: Exception) { false }
+
+    /** Decode any ffmpeg-supported file to mono 44.1 kHz float PCM. */
+    private fun decodeViaFfmpeg(file: File): FloatArray? {
+        val ff = ffmpegExe() ?: run {
+            System.err.println("ffmpeg not found — cannot decode ${file.name}")
+            return null
+        }
+        return try {
+            val process = ProcessBuilder(
+                ff, "-i", file.absolutePath,
+                "-f", "s16le", "-acodec", "pcm_s16le",
+                "-ar", "44100", "-ac", "1", "-"
+            ).start()
+            // Drain stderr on a thread so a full pipe can't deadlock the decode.
+            val errDrain = Thread { try { process.errorStream.readBytes() } catch (_: Exception) {} }
+            errDrain.isDaemon = true; errDrain.start()
             val output = process.inputStream.readBytes()
             process.waitFor()
-
-            if (process.exitValue() == 0) {
-                // Convert bytes to float
-                val samples = output.size / 2
-                val floatArray = FloatArray(samples)
-                for (i in 0 until samples) {
-                    val sample = bytesToShort(
-                        output.sliceArray(i * 2 until i * 2 + 2),
-                        false // little-endian
-                    ).toFloat() / 32768f
-                    floatArray[i] = sample
-                }
-                floatArray
-            } else {
-                null
+            if (process.exitValue() != 0) return null
+            val samples = output.size / 2
+            FloatArray(samples) { i ->
+                bytesToShort(output.sliceArray(i * 2 until i * 2 + 2), false).toFloat() / 32768f
             }
         } catch (e: Exception) {
-            System.err.println("Error decoding WebM (ffmpeg not available?): ${e.message}")
+            System.err.println("Error decoding ${file.name} via ffmpeg: ${e.message}")
             null
         }
     }

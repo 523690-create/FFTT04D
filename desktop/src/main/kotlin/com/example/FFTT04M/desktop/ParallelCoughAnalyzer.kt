@@ -61,8 +61,13 @@ class ParallelCoughAnalyzer(
 
     private fun analyzeOne(rec: AudioRecording): ClipResult {
         val ext = rec.audioFile.extension.lowercase()
-        if (ext != "wav") {
-            return ClipResult(rec, 0.0, null, error = "unsupported format .$ext (WebM/OGG need ffmpeg)")
+        val ffmpegFormats = setOf("ogg", "webm", "mp3", "m4a", "flac")
+        when {
+            ext == "wav" -> {}
+            ext in ffmpegFormats && !AudioDecoder.ffmpegAvailable() ->
+                return ClipResult(rec, 0.0, null, error = ".$ext needs ffmpeg (not found)")
+            ext !in ffmpegFormats ->
+                return ClipResult(rec, 0.0, null, error = "unsupported format .$ext")
         }
         return try {
             val pcm = AudioDecoder.decode(rec.audioFile)
@@ -76,14 +81,36 @@ class ParallelCoughAnalyzer(
         }
     }
 
-    /** Concatenate every clip's events into one `segments.jsonl` blob for training/export. */
+    /**
+     * Concatenate every clip's events into one `segments.jsonl` blob for training/export.
+     * Each line is augmented with a `"dataset_metadata"` object carrying the source file path and
+     * the dataset's own metadata (Coswara age/covid/country, ESC-50 category, Cough-Dataset-1
+     * sidecar fields, etc.) so the export is self-describing.
+     */
     fun toSegmentsJsonl(results: List<ClipResult>): String {
         val sb = StringBuilder()
         for (r in results) {
             val a = r.analysis ?: continue
-            sb.append(CoughSchemaJson.toJsonl(a, recordingId = r.recording.id))
-            if (sb.isNotEmpty() && sb.last() != '\n') sb.append('\n')
+            val meta = datasetMetaJson(r.recording)
+            for (line in CoughSchemaJson.toJsonl(a, recordingId = r.recording.id).split('\n')) {
+                if (line.isBlank()) continue
+                if (line.endsWith("}")) {
+                    sb.append(line.dropLast(1)).append(", \"dataset_metadata\": ").append(meta).append("}\n")
+                } else {
+                    sb.append(line).append('\n')
+                }
+            }
         }
         return sb.toString()
     }
+
+    private fun datasetMetaJson(rec: AudioRecording): String {
+        val m = LinkedHashMap<String, String>()
+        m["source_file"] = rec.audioFile.absolutePath
+        for ((k, v) in rec.metadata) m[k] = v.toString()
+        return m.entries.joinToString(prefix = "{", postfix = "}") { (k, v) -> jsonStr(k) + ": " + jsonStr(v) }
+    }
+
+    private fun jsonStr(s: String): String =
+        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ") + "\""
 }

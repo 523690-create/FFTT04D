@@ -219,23 +219,59 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         return sb.toString()
     }
 
+    private val exportPrefs = java.util.prefs.Preferences.userRoot().node("FFTT04D/export")
+
     private fun exportJsonl() {
         if (lastResults.isEmpty()) { showStatus("Nothing to export — run Analyze All first"); return }
-        val chooser = JFileChooser().apply {
+
+        // Remember the last-used directory across runs (defaults to Documents the first time).
+        val lastDir = exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
+            ?: File(System.getProperty("user.home"), "Documents")
+
+        val chooser = JFileChooser(lastDir).apply {
             dialogTitle = "Export segments.jsonl"
-            selectedFile = File("segments.jsonl")
+            // Suggest the next non-colliding name so existing exports are never overwritten.
+            selectedFile = nextFreeFile(lastDir, "segments", "jsonl")
             fileFilter = FileNameExtensionFilter("JSON Lines (*.jsonl)", "jsonl")
         }
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return
+
+        var target = chooser.selectedFile
+        if (target.extension.lowercase() != "jsonl") target = File(target.parentFile, target.name + ".jsonl")
+        // Even if the user kept/typed an existing name, bump to the next free index — never overwrite.
+        target = incrementUntilFree(target)
+        target.parentFile?.let { exportPrefs.put("dir", it.absolutePath) }
+
+        val out = target
         thread {
             try {
                 val jsonl = engine.toSegmentsJsonl(lastResults)
-                chooser.selectedFile.writeText(jsonl)
+                out.writeText(jsonl)
                 val lines = jsonl.count { it == '\n' }
-                showStatus("Exported $lines segment rows -> ${chooser.selectedFile.name}")
+                showStatus("Exported $lines segment rows -> ${out.name}  (in ${out.parent})")
             } catch (e: Exception) {
                 showStatus("Export failed: ${e.message}")
             }
+        }
+    }
+
+    /** `<base>.<ext>` if free, else the first free `<base>_NNN.<ext>` in [dir]. */
+    private fun nextFreeFile(dir: File, base: String, ext: String): File =
+        incrementUntilFree(File(dir, "$base.$ext"))
+
+    /** Returns [file] if it doesn't exist, else `<stem>_NNN.<ext>` with the lowest free NNN. */
+    private fun incrementUntilFree(file: File): File {
+        if (!file.exists()) return file
+        val dir = file.parentFile
+        val name = file.name
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (true) {
+            val cand = File(dir, String.format("%s_%03d%s", stem, i, ext))
+            if (!cand.exists()) return cand
+            i++
         }
     }
 

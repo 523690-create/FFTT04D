@@ -1,5 +1,6 @@
 package com.example.FFTT04M.desktop
 
+import com.google.gson.JsonParser
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import java.io.File
@@ -17,28 +18,67 @@ data class AudioRecording(
 }
 
 object DatasetLoader {
+    /** Max recordings a single Load returns, to keep the UI list responsive. */
+    private const val MAX_RECORDINGS = 5000
+
     fun loadCoughDataset1(rootPath: String): List<AudioRecording> {
         val dir = File(rootPath).resolve("public_dataset")
         if (!dir.isDirectory) return emptyList()
         val recordings = mutableListOf<AudioRecording>()
         val audioFiles = dir.listFiles { f -> f.extension in listOf("webm", "ogg", "wav") } ?: return emptyList()
-        for (audioFile in audioFiles) {
+        for (audioFile in audioFiles.sortedBy { it.name }) {
             val baseName = audioFile.nameWithoutExtension
-            val jsonFile = dir.resolve("$baseName.json")
-            recordings.add(AudioRecording(id = baseName, audioFile = audioFile))
+            // Sidecar metadata: <uuid>.json next to the audio file.
+            val meta = flatJson(dir.resolve("$baseName.json")).toMutableMap()
+            meta["source"] = "CoughDataset1"
+            recordings.add(AudioRecording(id = baseName, audioFile = audioFile, metadata = meta))
+            if (recordings.size >= MAX_RECORDINGS) break
         }
-        return recordings.sortedBy { it.id }
+        return recordings
     }
 
     fun loadESC50(rootPath: String): List<AudioRecording> {
         val audioDir = File(rootPath).resolve("audio")
         if (!audioDir.isDirectory) return emptyList()
+
+        // Map filename -> {category, fold, target, esc10} from meta/esc50.csv.
+        val csvMeta = HashMap<String, Map<String, String>>()
+        val csv = File(rootPath).resolve("meta/esc50.csv")
+        if (csv.isFile) {
+            val lines = csv.readLines()
+            // header: filename,fold,target,category,esc10,src_file,take
+            for (line in lines.drop(1)) {
+                val p = line.split(",")
+                if (p.size >= 5) csvMeta[p[0].trim()] = mapOf(
+                    "label" to p[3].trim(), "category" to p[3].trim(),
+                    "fold" to p[1].trim(), "target" to p[2].trim(), "esc10" to p[4].trim()
+                )
+            }
+        }
+
         val recordings = mutableListOf<AudioRecording>()
         val audioFiles = audioDir.listFiles { f -> f.extension == "wav" } ?: return emptyList()
-        for (audioFile in audioFiles) {
-            recordings.add(AudioRecording(id = audioFile.nameWithoutExtension, audioFile = audioFile))
+        for (audioFile in audioFiles.sortedBy { it.name }) {
+            val meta = (csvMeta[audioFile.name] ?: emptyMap()).toMutableMap()
+            meta["source"] = "ESC-50"
+            recordings.add(AudioRecording(id = audioFile.nameWithoutExtension, audioFile = audioFile, metadata = meta))
         }
-        return recordings.sortedBy { it.id }
+        return recordings
+    }
+
+    /** Read a flat JSON object's top-level primitive members into a String map (via gson). */
+    private fun flatJson(file: File): Map<String, String> {
+        if (!file.isFile) return emptyMap()
+        return try {
+            val obj = JsonParser.parseString(file.readText()).asJsonObject
+            val out = LinkedHashMap<String, String>()
+            for ((k, v) in obj.entrySet()) {
+                if (v.isJsonPrimitive) out[k] = v.asString
+            }
+            out
+        } catch (e: Exception) {
+            emptyMap()
+        }
     }
 
     fun loadCoswara(rootPath: String): List<AudioRecording> {
@@ -68,36 +108,28 @@ object DatasetLoader {
                 }
             }
 
-            // Extract tar.gz archives (split into .aa, .ab, .ac, .ad)
             val extractDir = dateDir.resolve("${dateDir.name}-extracted")
-            extractDir.mkdirs()
+            val alreadyExtracted = extractDir.resolve(dateDir.name).let { it.isDirectory && (it.list()?.isNotEmpty() == true) }
 
             try {
-                val tarGzParts = listOf(
-                    dateDir.resolve("${dateDir.name}.tar.gz.aa"),
-                    dateDir.resolve("${dateDir.name}.tar.gz.ab"),
-                    dateDir.resolve("${dateDir.name}.tar.gz.ac"),
-                    dateDir.resolve("${dateDir.name}.tar.gz.ad")
-                ).filter { it.exists() }
-
-                if (tarGzParts.isNotEmpty()) {
+                // Skip extraction when the archive was already unpacked (e.g. by unpack-coswara.sh).
+                if (!alreadyExtracted) {
+                    val tarGzParts = (listOf("aa", "ab", "ac", "ad"))
+                        .map { dateDir.resolve("${dateDir.name}.tar.gz.$it") }
+                        .filter { it.exists() }
+                    if (tarGzParts.isEmpty()) continue
+                    extractDir.mkdirs()
                     extractTarGz(tarGzParts, extractDir)
-
-                    // Find audio files in extracted directory
-                    findAudioFiles(extractDir, dateDir.name, csvData).forEach { rec ->
-                        recordings.add(rec)
-                    }
-
-                    // Limit to avoid loading too much into memory
-                    if (recordings.size >= 100) return recordings.sortedBy { it.id }
                 }
+
+                findAudioFiles(extractDir, dateDir.name, csvData).forEach { recordings.add(it) }
+                if (recordings.size >= MAX_RECORDINGS) return recordings.take(MAX_RECORDINGS).sortedBy { it.id }
             } catch (e: Exception) {
-                // If extraction fails, skip this date directory
                 e.printStackTrace()
             }
         }
 
-        return recordings.take(100).sortedBy { it.id }
+        return recordings.sortedBy { it.id }
     }
 
     private fun extractTarGz(splitParts: List<File>, outputDir: File) {
@@ -131,27 +163,34 @@ object DatasetLoader {
     private fun findAudioFiles(dir: File, dateStr: String, csvData: Map<String, Map<String, String>>): List<AudioRecording> {
         val results = mutableListOf<AudioRecording>()
         val audioExtensions = setOf("wav", "mp3", "ogg")
+        // Cache one metadata.json read per participant directory.
+        val metaCache = HashMap<String, Map<String, String>>()
 
-        // Walk directory tree looking for audio files
         dir.walkTopDown().forEach { file ->
             if (file.isFile && file.extension.lowercase() in audioExtensions) {
-                // Try to match to a participant from CSV
-                val parentDirName = file.parentFile?.name ?: ""
-                val csvMatch = csvData.entries.find { it.key in parentDirName }
+                val participantDir = file.parentFile
+                val participantId = participantDir?.name ?: file.nameWithoutExtension
 
-                val participantId = csvMatch?.key ?: file.nameWithoutExtension
-                val metadata = csvMatch?.value?.toMutableMap() ?: mutableMapOf()
+                val metadata = LinkedHashMap<String, String>()
                 metadata["source"] = "Coswara"
+                metadata["recording_date"] = dateStr
+                // Sound type encoded in the filename (cough-heavy, breathing-deep, vowel-a, ...).
+                metadata["sound_type"] = file.nameWithoutExtension
+                // CSV row (age/covid/country/location).
+                csvData[participantId]?.let { metadata.putAll(it) }
+                // Richer per-participant metadata.json (l_c, a, g, l_s, l_l, dT, ...), if present.
+                val pm = metaCache.getOrPut(participantId) {
+                    participantDir?.resolve("metadata.json")?.let { flatJson(it) } ?: emptyMap()
+                }
+                for ((k, v) in pm) metadata.putIfAbsent(k, v)
 
-                val id = "$participantId-$dateStr"
                 results.add(AudioRecording(
-                    id = id,
+                    id = "$participantId-$dateStr-${file.nameWithoutExtension}",
                     audioFile = file,
-                    metadata = metadata.toMap()
+                    metadata = metadata
                 ))
             }
         }
-
         return results
     }
 }
