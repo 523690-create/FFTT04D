@@ -1,6 +1,8 @@
 package com.example.FFTT04M.desktop
 
+import com.example.FFTT04M.desktop.cough.CoughEvent
 import javax.swing.*
+import javax.swing.filechooser.FileNameExtensionFilter
 import java.awt.*
 import java.io.File
 import kotlin.concurrent.thread
@@ -16,6 +18,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private var datasetPath = ""
     private var isAnalyzing = false
     private val recordings = mutableListOf<AudioRecording>()
+    private val engine = ParallelCoughAnalyzer()
+    private var lastResults: List<ParallelCoughAnalyzer.ClipResult> = emptyList()
 
     private val statusLabel = JLabel("Ready")
     private val recordingsList = JList<String>(DefaultListModel())
@@ -31,7 +35,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
 
         // Title
-        val titleLabel = JLabel("Cough Analysis Desktop")
+        val titleLabel = JLabel("Cough Analysis Desktop — Tier-1 DSP, ${engine.workers} cores")
         titleLabel.font = Font("Dialog", Font.BOLD, 24)
         panel.add(titleLabel, BorderLayout.NORTH)
 
@@ -74,8 +78,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val startButton = createButton("Analyze All") {
             if (recordings.isNotEmpty()) analyzeAll() else showStatus("No recordings loaded")
         }
-        val exportButton = createButton("Export Results") {
-            showStatus("Export functionality coming soon")
+        val exportButton = createButton("Export segments.jsonl") {
+            exportJsonl()
         }
         analysisPanel.add(startButton)
         analysisPanel.add(exportButton)
@@ -138,63 +142,101 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         if (isAnalyzing) return
         isAnalyzing = true
         thread {
-            analysisResultsArea.text = ""
+            SwingUtilities.invokeLater { analysisResultsArea.text = "" }
             progressBar.value = 0
-            showStatus("Analyzing ${recordings.size} recordings...")
+            val n = recordings.size
+            val startNs = System.nanoTime()
+            showStatus("Analyzing $n recordings on ${engine.workers} cores (full Tier-1 DSP)...")
 
-            val results = StringBuilder()
-            results.append("=== ANALYSIS RESULTS ===\n\n")
-            var analyzed = 0
-            var skipped = 0
-
-            recordings.forEachIndexed { idx, rec ->
-                val percent = ((idx + 1) * 100) / recordings.size
-                progressBar.value = percent
-
-                // Skip unsupported formats (need ffmpeg for WebM/OGG)
-                val ext = rec.audioFile.extension.lowercase()
-                if (ext !in listOf("wav")) {
-                    skipped++
-                    showStatus("Skipping ${idx + 1}/${recordings.size} (${ext.uppercase()} not supported)...")
-                    return@forEachIndexed
-                }
-
-                showStatus("Analyzing ${idx + 1}/${recordings.size}...")
-
-                // Try to decode and analyze
-                val pcm = AudioDecoder.decode(rec.audioFile)
-                if (pcm != null) {
-                    analyzed++
-                    val duration = pcm.size.toDouble() / 44100
-                    results.append("${rec.id}:\n")
-                    results.append("  Duration: ${String.format("%.2f", duration)}s\n")
-                    results.append("  RMS Level: ${String.format("%.4f", calculateRMS(pcm))}\n")
-                    results.append("  Peak: ${String.format("%.4f", pcm.maxOrNull() ?: 0f)}\n")
-                    rec.label()?.let { results.append("  Label: $it\n") }
-                    results.append("\n")
-                }
-                SwingUtilities.invokeLater {
-                    analysisResultsArea.text = results.toString()
+            // Fan the full Tier-1 cough engine across every CPU core.
+            val results = engine.analyzeAll(recordings) { doneCount, total ->
+                SwingUtilities.invokeLater { progressBar.value = doneCount * 100 / total }
+                if (doneCount % 5 == 0 || doneCount == total) {
+                    showStatus("Analyzed $doneCount/$total on ${engine.workers} cores...")
                 }
             }
+            lastResults = results
 
-            results.insert(0, "Supported formats: WAV only (WebM/OGG require ffmpeg)\n\n")
-            results.append("\n=== SUMMARY ===\n")
-            results.append("Analyzed: $analyzed | Skipped: $skipped\n")
-            SwingUtilities.invokeLater {
-                analysisResultsArea.text = results.toString()
-            }
+            val elapsedS = (System.nanoTime() - startNs) / 1e9
+            val analyzed = results.count { it.analysis != null }
+            val skipped = results.size - analyzed
+            val totalEvents = results.sumOf { it.analysis?.events?.size ?: 0 }
+            val totalCoughs = results.sumOf { it.analysis?.coughCount ?: 0 }
 
-            showStatus("Analysis complete: $analyzed analyzed, $skipped skipped (unsupported format)")
+            val sb = StringBuilder()
+            sb.append("=== Tier-1 DSP ANALYSIS (${engine.workers} cores) ===\n")
+            sb.append(String.format("%d clips in %.1fs  ·  %.1f clips/s\n", n, elapsedS,
+                if (elapsedS > 0) n / elapsedS else 0.0))
+            sb.append("$totalEvents events detected · $totalCoughs cough-like · $skipped skipped\n\n")
+            for (r in results) sb.append(formatResult(r))
+            val out = sb.toString()
+            SwingUtilities.invokeLater { analysisResultsArea.text = out; analysisResultsArea.caretPosition = 0 }
+
+            showStatus(String.format(
+                "Done: %d analyzed, %d skipped, %d events in %.1fs on %d cores",
+                analyzed, skipped, totalEvents, elapsedS, engine.workers))
             isAnalyzing = false
             progressBar.value = 100
         }
     }
 
-    private fun calculateRMS(pcm: FloatArray): Float {
-        var sum = 0.0
-        for (sample in pcm) sum += sample * sample
-        return kotlin.math.sqrt(sum / pcm.size).toFloat()
+    /** Render one clip's full feature set (mirrors the blue_sky on-device analysis text). */
+    private fun formatResult(r: ParallelCoughAnalyzer.ClipResult): String {
+        val sb = StringBuilder()
+        sb.append("${r.recording.id}")
+        r.recording.label()?.let { sb.append("  [$it]") }
+        sb.append("\n")
+        if (r.analysis == null) {
+            sb.append("  (${r.error ?: "no analysis"})\n\n")
+            return sb.toString()
+        }
+        val a = r.analysis
+        sb.append(String.format("  %.2fs · %d event(s) · %d cough-like\n",
+            r.durationSec, a.events.size, a.coughCount))
+        for (e in a.events) sb.append(formatEvent(e))
+        sb.append("\n")
+        return sb.toString()
+    }
+
+    private fun formatEvent(e: CoughEvent): String {
+        val sb = StringBuilder()
+        sb.append(String.format("    #%d  %.2f–%.2fs\n", e.index, e.segment.startSec, e.segment.endSec))
+        sb.append(String.format("      FFT   Q=%.2f  Fmax=%.0fHz\n", e.fft.qRatio, e.fft.fmaxHz))
+        if (e.ridge.valid) {
+            sb.append(String.format("      Ridge f0=%.0fHz  curv=%.0f  slope=%.0f  R²=%.2f\n",
+                e.ridge.centerFreqHz, e.ridge.curvature, e.ridge.slope, e.ridge.rSquared))
+        } else {
+            sb.append("      Ridge (insufficient points)\n")
+        }
+        e.phases?.let { sb.append(String.format("      Phase T1=%.3fs T2=%.3fs T3=%.3fs\n", it.t1Sec, it.t2Sec, it.t3Sec)) }
+        e.mfcc?.let {
+            val c = it.mean.take(4).joinToString(", ") { v -> String.format("%.1f", v) }
+            sb.append("      MFCC[$c, ...]\n")
+        }
+        sb.append(String.format("      %s (speech-likelihood %.2f, flatness %.2f, pitch %.2f)\n",
+            if (e.speech.isLikelyCough) "COUGH" else "not-cough",
+            e.speech.speechLikelihood, e.speech.spectralFlatness, e.speech.pitchStrength))
+        return sb.toString()
+    }
+
+    private fun exportJsonl() {
+        if (lastResults.isEmpty()) { showStatus("Nothing to export — run Analyze All first"); return }
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Export segments.jsonl"
+            selectedFile = File("segments.jsonl")
+            fileFilter = FileNameExtensionFilter("JSON Lines (*.jsonl)", "jsonl")
+        }
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return
+        thread {
+            try {
+                val jsonl = engine.toSegmentsJsonl(lastResults)
+                chooser.selectedFile.writeText(jsonl)
+                val lines = jsonl.count { it == '\n' }
+                showStatus("Exported $lines segment rows -> ${chooser.selectedFile.name}")
+            } catch (e: Exception) {
+                showStatus("Export failed: ${e.message}")
+            }
+        }
     }
 
     private fun showStatus(message: String) {
