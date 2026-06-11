@@ -81,7 +81,11 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val exportButton = createButton("Export segments.jsonl") {
             exportJsonl()
         }
+        val metaButton = createButton("Meta-Analysis (Tensor)") {
+            metaAnalysis()
+        }
         analysisPanel.add(startButton)
+        analysisPanel.add(metaButton)
         analysisPanel.add(exportButton)
         leftPanel.add(analysisPanel, BorderLayout.SOUTH)
 
@@ -252,6 +256,63 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             } catch (e: Exception) {
                 showStatus("Export failed: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Build the big cough feature tensor over all analysed events, z-score it, measure Euclidean
+     * distances (nearest neighbours + pairwise stats), show a report, and offer a CSV export.
+     */
+    private fun metaAnalysis() {
+        if (lastResults.isEmpty()) { showStatus("Run Analyze All first, then Meta-Analysis"); return }
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        thread {
+            showStatus("Building cough tensor…")
+            val tensor = MetaAnalyzer.buildTensor(lastResults)
+            if (tensor.n == 0) { showStatus("No cough events to tensorize"); return@thread }
+            val s = MetaAnalyzer.analyze(tensor)
+
+            val sb = StringBuilder()
+            sb.append("=== META-ANALYSIS: cough tensor ===\n")
+            sb.append("tensor shape: ${s.n} events × ${s.dim} features\n")
+            sb.append("cough-like events: ${s.coughCount} / ${s.n}\n")
+            sb.append("features: ${MetaAnalyzer.featureNames.joinToString(", ")}\n\n")
+            if (s.pairwiseComputed) {
+                sb.append(String.format("pairwise Euclidean distance — mean %.3f, min %.3f, max %.3f%n",
+                    s.meanDist, s.minDist, s.maxDist))
+            } else {
+                sb.append("(>3000 events: skipped full pairwise matrix; nearest-neighbours below)\n")
+            }
+            sb.append("\nnearest neighbour (most similar cough) — sampled:\n")
+            for ((a, b, d) in s.nnExamples) sb.append(String.format("  %-28s ~ %-28s  d=%.3f%n", a, b, d))
+            val report = sb.toString()
+            SwingUtilities.invokeLater { analysisResultsArea.text = report; analysisResultsArea.caretPosition = 0 }
+            showStatus("Tensor: ${s.n}×${s.dim}. Export tensor CSV? use the dialog…")
+
+            // Offer to save the standardized tensor as CSV.
+            SwingUtilities.invokeLater { maybeExportTensor(tensor) }
+        }
+    }
+
+    private fun maybeExportTensor(tensor: MetaAnalyzer.Tensor) {
+        val lastDir = exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
+            ?: File(System.getProperty("user.home"), "Documents")
+        val chooser = JFileChooser(lastDir).apply {
+            dialogTitle = "Export cough tensor (CSV) — Cancel to skip"
+            selectedFile = nextFreeFile(lastDir, "cough_tensor", "csv")
+            fileFilter = FileNameExtensionFilter("CSV (*.csv)", "csv")
+        }
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) { showStatus("Tensor not exported"); return }
+        var target = chooser.selectedFile
+        if (target.extension.lowercase() != "csv") target = File(target.parentFile, target.name + ".csv")
+        target = incrementUntilFree(target)
+        target.parentFile?.let { exportPrefs.put("dir", it.absolutePath) }
+        val out = target
+        thread {
+            try {
+                out.writeText(MetaAnalyzer.tensorCsv(tensor))
+                showStatus("Tensor exported: ${out.name} (${tensor.n}×${tensor.dim}) in ${out.parent}")
+            } catch (e: Exception) { showStatus("Tensor export failed: ${e.message}") }
         }
     }
 
