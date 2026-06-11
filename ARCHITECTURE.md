@@ -1,171 +1,60 @@
-# FFTT04M Ecosystem — Institutional Memory & Algorithm Homology
+# FFTT04M Three-Project Architecture
 
-**Version**: 0.1.0  
-**Purpose**: Single source of truth for DSP algorithms, design principles, and interop across Android, Windows, and research platforms.
+## Overview
+FFTT04M has been split into three independent projects with shared Tier-1 DSP algorithms:
 
-## Core Mission
+### FFTT04M (High-API, API 32+)
+- **Branch**: blue_sky
+- **Scope**: Modern Android with full cough analysis (Tier-1/2/3)
+- **Icon**: Original cyan/magenta roundel
+- Features: FFT, MFCC, ridge parabola, phases, speech rejection, on-device cough detection
 
-Real-time and offline audio analysis: spectral decomposition, cough detection, medical diagnostics.
+### FFTT04L (Legacy, API 23+)  
+- **Branch**: main
+- **Scope**: Maximum compatibility (Nexus 7+)
+- **Icon**: Square-in-square (magenta outer, cyan inner)
+- Features: Core FFT, RMS/Peak, Bluetooth, gallery
 
-## Three Projects (Planned Split)
+### FFTT04D (Desktop Analyzer, Windows)
+- **Branch**: port_windows
+- **Scope**: Batch analysis and model training
+- **Launcher**: CoughAnalyzer.bat → desktop shortcut
+- Features: Dataset loading (ESC-50, Coswara), RMS/Peak, DSP foundation
 
-```
-FFTT04M-Legacy/
-  ├─ app/                          # Kotlin Android (API 23+: Nexus 7, Galaxy S4, etc.)
-  ├─ shared/                        # Shared DSP (WavReader, FFTUtils, CoughDsp)
-  └─ README.md
-  Baseline: Spectrogram, gallery, EQ, noise filter, playback
-  API: 23+ (broad device coverage)
+### Shared Algorithm Homology
+All three implement identical Tier-1 DSP:
+- FFT (Cooley-Tukey)
+- Segmentation (energy envelope)
+- Features (Q-ratio, Fmax)
+- Ridge fitting (300–1000 Hz parabola)
+- Speech rejection (spectral flatness + pitch)
+- Phases (T1/T2/T3 + expulsive)
+- MFCC (Mel → log → DCT)
+- Similarity (z-scored Euclidean)
 
-FFTT04M-Research/
-  ├─ app/                          # Kotlin Android (API 32+: Pixel 3a+)
-  ├─ shared/                        # All of Legacy + cough (Tier-1)
-  ├─ desktop/                       # Kotlin Swing dataset analyzer
-  ├─ research/cough/               # Python ML pipeline (Tier-2/3)
-  └─ README.md
-  Superset of Legacy: all features + cough analysis + MFCC
-  Relationship: Legacy bugfixes → ported to Research; Research features don't backport
-  API: 32+ only
-
-FFTT04M-Desktop/
-  ├─ desktop/                       # Swing UI for batch analysis
-  ├─ research/cough/               # Python training scaffolds
-  └─ README.md
-  Purpose: Dataset processing, Tier-2 model prep
-```
-
-## Shared DSP Algorithms (Algorithm Homology)
-
-### Tier 1: Classical Spectral (On-Device, All Platforms)
-
-**Location**: `shared/cough/` (Kotlin) + `research/cough/features.py` (Python)
-
-- **FFT Features**: Q-ratio E(60–600)/E(600–6k), Fmax (parabolic sub-bin interpolation)
-- **Ridge Extraction**: 300–1000 Hz band, STFT, parabola fit f=at²+bt+c (curvature, slope, intercept)
-- **Segmentation**: RMS envelope, dynamic threshold (median × factor), merge gaps, duration gate
-- **Phase Split**: T1/T2/T3 + expulsive window (150–200 ms)
-- **MFCC**: Mel filterbank → log → DCT-II, 13 coefficients, mean±std summary
-- **Speech Rejection**: Spectral flatness + autocorrelation pitch strength
-
-**Invariants**:
-- All frequencies in Hz, times in seconds, amplitudes normalized to [-1,1]
-- Samplerate: 44.1 kHz canonical; resample on input if needed
-- Feature z-scoring: per-dimension (curvature / std) for comparability
-
-### Tier 2: MFCC + TDNN (GPU-Accelerated, Desktop/Cloud)
-
-**Location**: `research/cough/models.py` (PyTorch)
-
-- 13-dim MFCC + 4-layer temporal DNN (256 hidden)
-- Class-weighted CE loss (4-class: bronchitis, pneumonia, croup, habit-cough)
-- Validation AUROC 0.80–0.92
-
-### Tier 3: Transformer (EAT — Explainable Attention)
-
-**Location**: Future; scaffolded in `research/cough/models.py`
-
-- Mel-patch input, self-attention over time
-- AUROC 0.85–0.97
-
-## Data Schema (Unified Across Platforms)
-
-**File Format**: `segments.jsonl` (one event per line, training-ready)
-
+### Data Format
+Canonical `segments.jsonl` (JSON per line):
 ```json
 {
-  "recording_id": "uuid",
-  "segment_id": "uuid_seg_0000",
-  "start_sample": 1024,
-  "end_sample": 65536,
-  "sample_rate_hz": 44100,
-  "is_cough": true,
-  "phases": {
-    "t1_s": 0.1,
-    "t2_s": 0.05,
-    "t3_expulsive_s": 0.2,
-    "expulsive_start_sample": 2048,
-    "expulsive_end_sample": 11000
-  },
-  "qc": {
-    "speech_likelihood": 0.1,
-    "spectral_flatness": 0.85,
-    "pitch_strength": 0.05
-  },
-  "features": {
-    "fft": {
-      "duration_s": 0.35,
-      "q_ratio": 0.42,
-      "fmax_hz": 450.5
-    },
-    "ridge": {
-      "valid": true,
-      "curvature_a": 125.3,
-      "slope_b": -50.2,
-      "intercept_c": 600.0,
-      "center_freq_hz": 550.0,
-      "frame_count": 35,
-      "energy": 0.78,
-      "bandwidth_hz": 180.0,
-      "r_squared": 0.92
-    },
-    "mfcc": {
-      "num_coeffs": 13,
-      "frame_count": 35,
-      "mean": [-200.5, ...],
-      "std": [45.2, ...]
-    }
-  },
-  "labels": {
-    "diagnosis_4class": "bronchitis",
-    "source": "manual"
-  }
+  "segment_idx": 0,
+  "time_start_s": 0.0,
+  "time_end_s": 1.0,
+  "fft": {"q_ratio": 1.5, "fmax_hz": 800},
+  "ridge": {"f0_hz": 450},
+  "phases": {"t1_s": 0.1, "t2_s": 0.2, "t3_expulsive_s": 0.3},
+  "mfcc": {"mean_coeffs": [...]},
+  "speech": {"verdict": "cough", "score": 0.95}
 }
 ```
 
-## Platform-Specific Adaptations
+### Consistency Rules
+1. Bug fixes main → port to blue_sky
+2. New features stay in blue_sky (don't backport)
+3. Identical DSP across all 3 projects
+4. 44.1 kHz canonical sample rate
+5. Z-score normalization mandatory
 
-### Android (`FFTT04M-Android`)
-- **Use case**: Real-time capture, on-device Tier-1 analysis, gallery mgmt
-- **Languages**: Kotlin + Java
-- **Display**: Spectrogram (FFTHeatMapView), ridge overlay (CoughVisualizerView)
-- **Storage**: Public `/sdcard/Documents/FFTT04M` (survives uninstall)
-- **API**: 32+ (Pixel 3a+)
-
-### Desktop (`FFTT04M-Desktop`)
-- **Use case**: Batch dataset analysis, Tier-2 training prep, visualization
-- **Languages**: Kotlin (UI) + Python (ML)
-- **UI**: Swing (load datasets, run analysis, export JSON)
-- **Compute**: CPU-based (GPU optional via PyTorch)
-
-### Research (`FFTT04M-Research`)
-- **Datasets**: COUGHVID, ICBHI, Coswara, ESC-50 (public)
-- **ML**: PyTorch scaffolds (TDNN4, EAT4), training loops
-- **Output**: Trained `.onnx` models → re-import to Android
-
-## Consistency Rules
-
-1. **DSP Algorithm Changes**: Update both Kotlin and Python versions simultaneously (feature parity)
-2. **Schema Changes**: Update `segments.jsonl` schema, regenerate all training data
-3. **Samplerate**: Always 44.1 kHz as canonical; document any exceptions
-4. **Feature Vectors**: Z-score standardization mandatory before clustering/distance metrics
-5. **Test Coverage**: Every new DSP component has unit tests on the JVM (Kotlin) + pytest (Python)
-
-## Known Limitations & TODOs
-
-- [ ] Coswara tar.gz extraction in desktop (stubs ready)
-- [ ] Tier-2 model training pipeline (scaffolded)
-- [ ] Android TFLite inference integration
-- [ ] Real-time latency benchmarks on Tier-2
-- [ ] Multi-language cough detection (currently mono)
-
-## References
-
-- **BMC Pulmonary Medicine**: Tier-1 classical features (Q-ratio, Fmax)
-- **ICBHI 2017 Challenge**: 4-class taxonomy, AUROC baselines
-- **COUGHVID**: Public cough database (~20k samples)
-- **EAT4 Paper**: Explainable attention for respiratory signals
-
----
-
-**Last Updated**: 2026-06-10  
-**Maintainers**: Audio analysis research team
+### Known Limitations
+- Coswara tar extraction: metadata loaded, audio requires library
+- WebM/OGG: blocked (ffmpeg dependency)
+- Desktop DSP: RMS/Peak only (Tier-1 code available for integration)
