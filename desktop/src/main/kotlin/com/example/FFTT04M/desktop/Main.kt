@@ -46,7 +46,10 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val leftPanel = JPanel(BorderLayout(5, 5))
 
         // Dataset selection buttons
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        // GridLayout (not FlowLayout): a BorderLayout NORTH region only grants a component its
+        // preferred height, and FlowLayout reports a single row — extra wrapped buttons get clipped.
+        // GridLayout's preferred height counts every row, so all buttons stay visible.
+        val buttonPanel = JPanel(GridLayout(0, 2, 6, 6))
         buttonPanel.add(createButton("Load Cough Dataset 1") {
             datasetPath = "H:\\cough dataset 1"
             selectedDataset = Dataset.COUGH_DATASET_1
@@ -77,7 +80,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         leftPanel.add(listPanel, BorderLayout.CENTER)
 
         // Analysis controls
-        val analysisPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        val analysisPanel = JPanel(GridLayout(0, 2, 6, 6))
         val startButton = createButton("Analyze All") {
             if (recordings.isNotEmpty()) analyzeAll() else showStatus("No recordings loaded")
         }
