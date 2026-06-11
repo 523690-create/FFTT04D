@@ -1,0 +1,24 @@
+{
+    "permissions":  {
+                        "defaultMode": "acceptEdits",
+                        "additionalDirectories": [
+                                      "H:\\FFTT04M",
+                                      "H:\\FFTT04L",
+                                      "H:\\FFTT04D"
+                                  ],
+                        "allow":  [
+                                      "Bash(gradlew *)",
+                                      "Bash(./gradlew *)",
+                                      "Bash(./gradlew.bat *)",
+                                      "Bash(adb)",
+                                      "Bash(adb *)",
+                                      "Bash(git *)",
+                                      "Bash(gh *)",
+                                      "Bash(java -jar desktop/build/libs/CoughAnalyzer.jar)",
+                                      "Bash(java -jar H:/FFTT04D/desktop/build/libs/CoughAnalyzer.jar)",
+                                      "Bash(Get-Date *)",
+                                      "Bash(Copy-Item *)",
+                                      "PowerShell"
+                                  ]
+                    }
+}

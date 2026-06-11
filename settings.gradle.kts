@@ -22,7 +22,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FFTT04M"
+rootProject.name = "FFTT04D"
 include(":app")
 include(":shared")
 include(":desktop")
