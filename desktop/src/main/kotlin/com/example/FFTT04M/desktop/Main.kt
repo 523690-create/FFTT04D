@@ -62,6 +62,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             selectedDataset = Dataset.COSWARA
             loadDataset()
         })
+        buttonPanel.add(createButton("Load USB Device") {
+            loadFromUsb()
+        })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
         // Recordings list
@@ -128,6 +131,57 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             recordings.addAll(list)
             updateRecordingsList()
             showStatus("Loaded ${recordings.size} recordings from ${selectedDataset?.displayName}")
+        }
+    }
+
+    /** Pull recordings + metadata off a USB-connected Android device (legacy or modern) via adb. */
+    private fun loadFromUsb() {
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        thread {
+            if (!UsbImporter.adbAvailable()) {
+                SwingUtilities.invokeLater {
+                    JOptionPane.showMessageDialog(this,
+                        "adb not found. Install Android platform-tools, or set ANDROID_HOME.",
+                        "USB import", JOptionPane.WARNING_MESSAGE)
+                }
+                showStatus("adb not found"); return@thread
+            }
+            showStatus("Scanning for USB devices…")
+            val devices = UsbImporter.listDevices()
+            if (devices.isEmpty()) {
+                SwingUtilities.invokeLater {
+                    JOptionPane.showMessageDialog(this,
+                        "No authorized device found.\nConnect via USB, enable USB debugging, and accept the prompt.",
+                        "USB import", JOptionPane.INFORMATION_MESSAGE)
+                }
+                showStatus("No USB device"); return@thread
+            }
+            // Pick the device (auto if one, else ask on the EDT).
+            val device = if (devices.size == 1) devices[0] else {
+                val labels = devices.map { "${it.model} (${it.serial})" }.toTypedArray()
+                val picked = arrayOfNulls<String>(1)
+                SwingUtilities.invokeAndWait {
+                    picked[0] = JOptionPane.showInputDialog(this, "Select device to import from:", "USB import",
+                        JOptionPane.QUESTION_MESSAGE, null, labels, null) as String?
+                }
+                val choice = picked[0] ?: run { showStatus("USB import cancelled"); return@thread }
+                devices[labels.indexOf(choice).coerceAtLeast(0)]
+            }
+
+            showStatus("Pulling recordings from ${device.model} via USB…")
+            val importRoot = File(System.getProperty("user.home"), "FFTT04M_usb_import")
+            val res = UsbImporter.pull(device, importRoot)
+            if (!res.ok) {
+                SwingUtilities.invokeLater {
+                    JOptionPane.showMessageDialog(this, res.message, "USB import", JOptionPane.WARNING_MESSAGE)
+                }
+                showStatus(res.message); return@thread
+            }
+            recordings.clear()
+            recordings.addAll(DatasetLoader.loadDeviceImport(res.dir, device.model))
+            selectedDataset = null
+            updateRecordingsList()
+            showStatus("USB: loaded ${recordings.size} recordings from ${device.model}")
         }
     }
 

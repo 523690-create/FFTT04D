@@ -66,6 +66,23 @@ object DatasetLoader {
         return recordings
     }
 
+    /** Load recordings pulled off a device by [UsbImporter]: each <base>.wav + <base>.json sidecar. */
+    fun loadDeviceImport(dir: File, deviceLabel: String): List<AudioRecording> {
+        if (!dir.isDirectory) return emptyList()
+        val recordings = mutableListOf<AudioRecording>()
+        dir.walkTopDown().forEach { f ->
+            if (f.isFile && f.extension.equals("wav", true)) {
+                val meta = flatJson(File(f.parentFile, "${f.nameWithoutExtension}.json")).toMutableMap()
+                meta["source"] = "USB:$deviceLabel"
+                // Comment sidecar (<base>.txt), if present.
+                File(f.parentFile, "${f.nameWithoutExtension}.txt").takeIf { it.isFile }
+                    ?.let { meta["comment"] = it.readText().trim().take(200) }
+                recordings.add(AudioRecording(id = f.nameWithoutExtension, audioFile = f, metadata = meta))
+            }
+        }
+        return recordings.sortedBy { it.id }
+    }
+
     /** Read a flat JSON object's top-level primitive members into a String map (via gson). */
     private fun flatJson(file: File): Map<String, String> {
         if (!file.isFile) return emptyMap()
