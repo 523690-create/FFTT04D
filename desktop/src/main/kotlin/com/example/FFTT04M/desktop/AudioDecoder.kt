@@ -74,6 +74,32 @@ object AudioDecoder {
     /** True if ffmpeg is available (resolved on PATH or in the winget install dir). */
     fun ffmpegAvailable(): Boolean = ffmpegExe() != null
 
+    /**
+     * Transcode any ffmpeg-readable file (WAV/WebM/OGG/MP3/…) to a canonical
+     * [sampleRate] Hz, mono, 16-bit PCM WAV at [output]. Overwrites [output].
+     * Returns false if ffmpeg is missing or the conversion fails.
+     */
+    fun convertToWav(input: File, output: File, sampleRate: Int = 44100): Boolean {
+        val ff = ffmpegExe() ?: return false
+        return try {
+            output.parentFile?.mkdirs()
+            val p = ProcessBuilder(
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", input.absolutePath,
+                "-ar", sampleRate.toString(), "-ac", "1", "-c:a", "pcm_s16le",
+                output.absolutePath
+            ).redirectErrorStream(true).start()
+            // Drain output so a full pipe can't deadlock the process.
+            val drain = Thread { try { p.inputStream.readBytes() } catch (_: Exception) {} }
+            drain.isDaemon = true; drain.start()
+            p.waitFor()
+            p.exitValue() == 0 && output.isFile && output.length() > 44L
+        } catch (e: Exception) {
+            System.err.println("convertToWav failed for ${input.name}: ${e.message}")
+            false
+        }
+    }
+
     // Resolved lazily and cached. null => not found.
     @Volatile private var ffmpegResolved = false
     @Volatile private var ffmpegCached: String? = null

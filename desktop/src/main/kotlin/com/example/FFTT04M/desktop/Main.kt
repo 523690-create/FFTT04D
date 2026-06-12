@@ -26,6 +26,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private val progressBar = JProgressBar(0, 100)
     private val analysisResultsArea = JTextArea(10, 60)
 
+    private lateinit var buildAllDataButton: JButton
+    @Volatile private var buildingAllData = false
+
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
         size = Dimension(1000, 700)
@@ -74,6 +77,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         buttonPanel.add(createButton("Request from USB Device") {
             loadFromUsb()
         })
+        buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
+        buttonPanel.add(buildAllDataButton)
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
         // Recordings list
@@ -226,6 +231,70 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             val acked = UsbImporter.sendAck(device, res.wavCount)
             showStatus("USB: imported ${recordings.size} from ${device.model}" +
                 if (acked) " · acknowledged to phone" else "")
+        }
+    }
+
+    /**
+     * Consolidate every dataset under a sources root into one ALLDATA folder: all clips
+     * transcoded to WAV, all metadata merged into one metadata.csv. Runs in the background;
+     * the button toggles to "Cancel ALLDATA build" while running.
+     */
+    private fun onBuildAllData() {
+        if (buildingAllData) { AllDataBuilder.cancel(); showStatus("Cancelling ALLDATA build…"); return }
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+
+        val sourcesRoot = pickDirectory(
+            "Select the folder that CONTAINS the datasets (Coswara, ESC-50, coughvid, …)",
+            "allDataSources", "C:\\AndroidStudio") ?: return
+        val outDir = pickDirectory("Select the output ALLDATA folder",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
+
+        if (!AudioDecoder.ffmpegAvailable()) {
+            JOptionPane.showMessageDialog(this,
+                "ffmpeg not found. Install it (winget install Gyan.FFmpeg) and reopen.",
+                "Build ALLDATA", JOptionPane.WARNING_MESSAGE)
+            return
+        }
+
+        buildingAllData = true
+        SwingUtilities.invokeLater {
+            buildAllDataButton.text = "Cancel ALLDATA build"
+            progressBar.isIndeterminate = false
+            progressBar.value = 0
+            analysisResultsArea.text = "Building ALLDATA from ${sourcesRoot.absolutePath}\n -> ${outDir.absolutePath}\n\n"
+        }
+        thread {
+            val startNs = System.nanoTime()
+            val summary = AllDataBuilder.build(sourcesRoot, outDir) { p ->
+                SwingUtilities.invokeLater {
+                    if (p.total > 0) {
+                        progressBar.isIndeterminate = false
+                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
+                    } else progressBar.isIndeterminate = true
+                    statusLabel.text = p.message
+                }
+            }
+            val elapsedS = (System.nanoTime() - startNs) / 1e9
+            val sb = StringBuilder()
+            sb.append(if (summary.cancelled) "=== ALLDATA build CANCELLED ===\n" else "=== ALLDATA build complete ===\n")
+            sb.append(String.format("%d rows · %d converted · %d reused · %d failed · %.1fs%n",
+                summary.rows, summary.converted, summary.reused, summary.failed, elapsedS))
+            if (summary.csvPath.isNotEmpty()) sb.append("metadata: ${summary.csvPath}\n")
+            sb.append("\nby source:\n")
+            summary.bySource.forEach { (s, n) -> sb.append("  ${s.padEnd(16)} $n\n") }
+            val report = sb.toString()
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(report)
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                progressBar.isIndeterminate = false
+                progressBar.value = if (summary.cancelled) progressBar.value else 100
+                buildAllDataButton.text = "Build ALLDATA"
+                statusLabel.text = if (summary.cancelled)
+                    "ALLDATA cancelled — ${summary.rows} rows written"
+                else
+                    "ALLDATA: ${summary.rows} clips, ${summary.failed} failed, in ${"%.1f".format(elapsedS)}s"
+            }
+            buildingAllData = false
         }
     }
 
