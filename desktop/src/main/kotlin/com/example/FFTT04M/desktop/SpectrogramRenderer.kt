@@ -39,13 +39,6 @@ object SpectrogramRenderer {
     private const val CWT_W0 = 6.0f
     private const val CWT_MAX_SAMPLES = 60000   // same safety cap as the mobile engine
 
-    /**
-     * Use the GPU (cuFFT) for the CWT inverse-FFT bank when available. Default OFF: with the
-     * CPU-side multiply/magnitude + full PCIe transfer, the simple cuFFT path is transfer-bound and
-     * loses to a many-core CPU. A worthwhile GPU path needs on-device multiply+magnitude (NVRTC).
-     */
-    @Volatile var useGpu = false
-
     // The 100 Morlet frequency-domain kernels depend only on the padded length, not the signal,
     // so cache them per padded size and reuse across all clips (big CPU saving vs rebuilding each).
     private val kernelCache = HashMap<Int, Array<FloatArray>>()
@@ -73,8 +66,9 @@ object SpectrogramRenderer {
         toImage(grid).let { ImageIO.write(it, "png", out) }
     }
 
-    fun renderCwtJpg(pcm: FloatArray, sampleRate: Int, out: File) {
-        val grid = cwtScalogram(pcm, sampleRate)    // [freqLow→high][time]
+    /** [useGpu] picks the CWT inverse-FFT backend per call (so CPU and GPU passes can run at once). */
+    fun renderCwtJpg(pcm: FloatArray, sampleRate: Int, out: File, useGpu: Boolean = false) {
+        val grid = cwtScalogram(pcm, sampleRate, useGpu)    // [freqLow→high][time]
         toImage(grid).let { ImageIO.write(it, "jpg", out) }
     }
 
@@ -108,7 +102,7 @@ object SpectrogramRenderer {
     // ---- Morlet CWT scalogram (ported from WaveletActivity.runCwt) ------------------------------
 
     /** CWT magnitude grid `[row][time]`, rows ordered low→high frequency (row 0 = lowest). */
-    private fun cwtScalogram(pcm: FloatArray, sampleRate: Int): Array<FloatArray> {
+    private fun cwtScalogram(pcm: FloatArray, sampleRate: Int, useGpu: Boolean): Array<FloatArray> {
         var data = resample(pcm, sampleRate.toFloat(), CWT_TARGET_HZ)
         if (data.size > CWT_MAX_SAMPLES) data = data.copyOf(CWT_MAX_SAMPLES)
         val n = data.size

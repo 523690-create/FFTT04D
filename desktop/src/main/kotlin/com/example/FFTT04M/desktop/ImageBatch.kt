@@ -2,6 +2,7 @@ package com.example.FFTT04M.desktop
 
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -30,12 +31,12 @@ object ImageBatch {
 
     private val workers = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
 
-    @Volatile private var cancelRequested = false
-    fun cancel() { cancelRequested = true }
-
-    /** Render [mode]'s image for every WAV under [folder] that doesn't already have one. */
-    fun run(folder: File, mode: Mode, onProgress: (Progress) -> Unit): Summary {
-        cancelRequested = false
+    /**
+     * Render [mode]'s image for every WAV under [folder] that doesn't already have one. [cancel] is
+     * a per-run flag the caller owns, so several passes (e.g. CPU + GPU CWT) can run concurrently and
+     * be cancelled independently — the GPU pass offloads its FFTs while the CPU passes use the cores.
+     */
+    fun run(folder: File, mode: Mode, cancel: AtomicBoolean, onProgress: (Progress) -> Unit): Summary {
         val startNs = System.nanoTime()
 
         val wavs = folder.walkTopDown()
@@ -43,9 +44,7 @@ object ImageBatch {
         val todo = wavs.filter { !targetFor(it, mode).isFile }
         val total = todo.size
 
-        // One device → set the renderer's mode once for the whole pass.
         val wantGpu = mode == Mode.CWT_GPU
-        SpectrogramRenderer.useGpu = wantGpu
         val gpuReady = wantGpu && GpuFft.available()
         val device = when {
             mode == Mode.CWT_GPU && gpuReady -> GpuFft.deviceName() ?: "GPU"
@@ -63,14 +62,15 @@ object ImageBatch {
         try {
             val futures = todo.map { wav ->
                 pool.submit {
-                    if (!cancelRequested) {
+                    if (!cancel.get()) {
                         try {
                             val out = targetFor(wav, mode)
                             val pcm = AudioDecoder.decode(wav)   // canonical 44.1 kHz mono WAV
                             if (pcm != null && pcm.isNotEmpty()) {
                                 when (mode) {
                                     Mode.FFT -> SpectrogramRenderer.renderFftPng(pcm, 44100, out)
-                                    Mode.CWT_CPU, Mode.CWT_GPU -> SpectrogramRenderer.renderCwtJpg(pcm, 44100, out)
+                                    Mode.CWT_CPU -> SpectrogramRenderer.renderCwtJpg(pcm, 44100, out, useGpu = false)
+                                    Mode.CWT_GPU -> SpectrogramRenderer.renderCwtJpg(pcm, 44100, out, useGpu = true)
                                 }
                                 rendered.incrementAndGet()
                             } else failed.incrementAndGet()
@@ -95,7 +95,7 @@ object ImageBatch {
         return Summary(
             total = total, rendered = rendered.get(), skipped = wavs.size - total,
             failed = failed.get(), elapsedS = (System.nanoTime() - startNs) / 1e9,
-            cancelled = cancelRequested, device = device
+            cancelled = cancel.get(), device = device
         )
     }
 

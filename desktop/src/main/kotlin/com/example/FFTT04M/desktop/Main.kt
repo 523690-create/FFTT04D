@@ -32,7 +32,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private lateinit var fftButton: JButton
     private lateinit var cwtCpuButton: JButton
     private lateinit var cwtGpuButton: JButton
-    @Volatile private var imaging = false
+    // Per-button cancel flags: each image pass runs independently so CPU and GPU CWT (and FFT) can
+    // run concurrently — the GPU offloads its FFTs while the CPU cores keep working on the others.
+    private val imagingTokens =
+        java.util.concurrent.ConcurrentHashMap<JButton, java.util.concurrent.atomic.AtomicBoolean>()
+
+    private lateinit var isolateButton: JButton
+    @Volatile private var isolating = false
+    private val isolatingToken = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
@@ -42,10 +49,21 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val panel = JPanel(BorderLayout(10, 10))
         panel.border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
 
-        // Title
+        // Title row: name on the left, the per-build version letter right-adjusted (magenta, to
+        // match the mobile launcher-icon letter — see BuildInfo / generateVersionLetter).
+        val titleBar = JPanel(BorderLayout())
         val titleLabel = JLabel("Cough Analysis Desktop — Tier-1 DSP, ${engine.workers} cores")
         titleLabel.font = Font("Dialog", Font.BOLD, 24)
-        panel.add(titleLabel, BorderLayout.NORTH)
+        titleBar.add(titleLabel, BorderLayout.WEST)
+        BuildInfo.versionLetter.takeIf { it.isNotEmpty() }?.let { letter ->
+            val letterLabel = JLabel(letter)
+            letterLabel.font = Font("Dialog", Font.BOLD, 24)
+            letterLabel.foreground = Color(0xFF, 0x00, 0xFF)   // magenta, like the launcher letter
+            letterLabel.border = BorderFactory.createEmptyBorder(0, 12, 0, 8)
+            letterLabel.toolTipText = "Build version letter"
+            titleBar.add(letterLabel, BorderLayout.EAST)
+        }
+        panel.add(titleBar, BorderLayout.NORTH)
 
         // Central panel with split view
         val centerPanel = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
@@ -92,6 +110,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         buttonPanel.add(fftButton)
         buttonPanel.add(cwtCpuButton)
         buttonPanel.add(cwtGpuButton)
+        // Trim cough WAVs down to the detected cough (ALLDATA + extras, picked at runtime).
+        isolateButton = createButton("ISOLATE COUGHS") { onIsolateCoughs() }
+        buttonPanel.add(isolateButton)
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
         // Recordings list
@@ -322,13 +343,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
     /**
      * Second-pass image generation over a ready ALLDATA folder. Each mode renders only the clips
-     * that don't already have its image (resumable). The clicked button toggles to "Cancel …" while
-     * running; the others are disabled. Reports device + clips/s so CPU and GPU passes can be
-     * compared on real data.
+     * that don't already have its image (resumable). Passes run **concurrently and independently**:
+     * the clicked button toggles to "Cancel …" and owns its own cancel flag, so CPU and GPU CWT (and
+     * FFT) can run at the same time — the GPU offloads its FFTs while the cores work the others.
+     * Reports device + clips/s so CPU and GPU can be raced on real data.
      */
     private fun onGenerateImages(mode: ImageBatch.Mode, button: JButton) {
-        if (imaging) { ImageBatch.cancel(); showStatus("Cancelling image pass…"); return }
-        if (isAnalyzing || buildingAllData) { showStatus("Busy…"); return }
+        // Already running on this button → cancel that pass.
+        imagingTokens[button]?.let { it.set(true); showStatus("Cancelling ${mode.button}…"); return }
 
         if (mode == ImageBatch.Mode.CWT_GPU && !GpuFft.available()) {
             val go = JOptionPane.showConfirmDialog(this,
@@ -340,17 +362,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val folder = pickDirectory("Select the ALLDATA folder (holds the .wav files)",
             "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
 
-        imaging = true
+        val token = java.util.concurrent.atomic.AtomicBoolean(false)
+        imagingTokens[button] = token
         SwingUtilities.invokeLater {
             button.text = "Cancel ${mode.button}"
-            setImagingButtonsEnabled(false, except = button)
-            progressBar.isIndeterminate = false
-            progressBar.value = 0
             analysisResultsArea.append("\n${mode.label} over ${folder.absolutePath}\n")
             analysisResultsArea.caretPosition = analysisResultsArea.document.length
         }
         thread {
-            val summary = ImageBatch.run(folder, mode) { p ->
+            val summary = ImageBatch.run(folder, mode, token) { p ->
                 SwingUtilities.invokeLater {
                     if (p.total > 0) {
                         progressBar.isIndeterminate = false
@@ -372,21 +392,76 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 analysisResultsArea.caretPosition = analysisResultsArea.document.length
                 progressBar.value = if (summary.cancelled) progressBar.value else 100
                 button.text = mode.button
-                setImagingButtonsEnabled(true)
                 statusLabel.text = if (summary.cancelled)
                     "Image pass cancelled — ${summary.rendered} rendered"
                 else
                     "${mode.button}: ${summary.rendered} in ${"%.1f".format(summary.elapsedS)}s · " +
                     "${"%.1f".format(cps)} clips/s · ${summary.device}"
             }
-            imaging = false
+            imagingTokens.remove(button)
         }
     }
 
-    /** Enable/disable the image buttons together (keep [except] enabled so it can act as Cancel). */
-    private fun setImagingButtonsEnabled(enabled: Boolean, except: JButton? = null) {
-        for (b in listOf(fftButton, cwtCpuButton, cwtGpuButton, buildAllDataButton)) {
-            b.isEnabled = enabled || b === except
+    /**
+     * ISOLATE COUGHS — trim every cough WAV in the chosen folders down to the detected cough span
+     * (cutting before/after), overwriting each file under its original name and deleting its
+     * .png/.jpg (recomputed from the shorter clip). Folders (ALLDATA + extras/USB) are picked at
+     * runtime and remembered; non-cough clips are skipped; clips with no detected cough are left
+     * untouched.
+     */
+    private fun onIsolateCoughs() {
+        if (isolating) { isolatingToken.set(true); showStatus("Cancelling ISOLATE…"); return }
+
+        val allData = pickDirectory("ISOLATE: ALLDATA folder (Cancel to skip it)",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA")
+        val extras = pickDirectory("ISOLATE: extras / USB recordings folder (Cancel to skip it)",
+            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+        val folders = listOfNotNull(allData, extras)
+        if (folders.isEmpty()) { showStatus("ISOLATE cancelled — no folder chosen"); return }
+
+        val confirm = JOptionPane.showConfirmDialog(this,
+            "Trim every cough WAV in:\n  ${folders.joinToString("\n  ") { it.absolutePath }}\n\n" +
+            "down to the detected cough (cutting before/after), OVERWRITING each file in place and\n" +
+            "deleting its .png/.jpg. Non-cough clips are skipped; this app does not keep the originals.\n\nProceed?",
+            "ISOLATE COUGHS", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE)
+        if (confirm != JOptionPane.OK_OPTION) return
+
+        isolating = true
+        isolatingToken.set(false)
+        SwingUtilities.invokeLater {
+            isolateButton.text = "Cancel ISOLATE"
+            progressBar.isIndeterminate = false
+            progressBar.value = 0
+            analysisResultsArea.append("\nISOLATE COUGHS over:\n  ${folders.joinToString("\n  ") { it.absolutePath }}\n")
+            analysisResultsArea.caretPosition = analysisResultsArea.document.length
+        }
+        thread {
+            val s = CoughIsolator.run(folders, isolatingToken) { p ->
+                SwingUtilities.invokeLater {
+                    if (p.total > 0) {
+                        progressBar.isIndeterminate = false
+                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
+                    } else progressBar.isIndeterminate = true
+                    statusLabel.text = p.message
+                }
+            }
+            val report = buildString {
+                append(if (s.cancelled) "=== ISOLATE COUGHS cancelled ===\n" else "=== ISOLATE COUGHS complete ===\n")
+                append(String.format(
+                    "%d trimmed · %d non-cough skipped · %d no-cough-detected · %d failed · %d images deleted · %.1fs%n",
+                    s.trimmed, s.skippedNonCough, s.noDetect, s.failed, s.imagesDeleted, s.elapsedS))
+            }
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(report)
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                progressBar.value = if (s.cancelled) progressBar.value else 100
+                isolateButton.text = "ISOLATE COUGHS"
+                statusLabel.text = if (s.cancelled)
+                    "ISOLATE cancelled — ${s.trimmed} trimmed"
+                else
+                    "ISOLATE: ${s.trimmed} trimmed, ${s.noDetect} no-detect, ${s.imagesDeleted} images removed in ${"%.1f".format(s.elapsedS)}s"
+            }
+            isolating = false
         }
     }
 
@@ -411,7 +486,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
      */
     private fun analyzeAll() {
         if (isAnalyzing) { showStatus("Busy analyzing…"); return }
-        if (buildingAllData || imaging) { showStatus("Busy…"); return }
+        if (buildingAllData) { showStatus("Busy…"); return }
 
         val options = buildList {
             if (recordings.isNotEmpty()) add("Loaded recordings (${recordings.size})")

@@ -45,3 +45,6 @@ xcuserdata/
 
 # NVIDIA CUDA runtime redistributables (cudart/cufft) for optional GPU path — fetched, not committed
 /native/
+
+# Desktop per-build version-letter counter (per-machine, like the mobile icon counter)
+desktop/version_letter_index.txt

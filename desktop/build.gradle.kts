@@ -57,3 +57,25 @@ tasks.register<Jar>("fatJar") {
     })
     archiveFileName.set("CoughAnalyzer.jar")
 }
+
+// ---- Version-letter stamp (parity with the mobile launcher-icon letter) ---------------------
+// Each build advances a letter a..z,A..Z (cycling) and writes it into a generated resource the app
+// reads (BuildInfo) and shows top-right in the title. Mirrors the phone's icon_letter_index.txt.
+val versionLetterDir = layout.buildDirectory.dir("generated/version").get().asFile
+val generateVersionLetter = tasks.register("generateVersionLetter") {
+    val counter = file("version_letter_index.txt")
+    val outDir = versionLetterDir
+    outputs.dir(outDir)
+    outputs.upToDateWhen { false }   // advance the letter on every build
+    doLast {
+        val seq = (('a'..'z') + ('A'..'Z'))
+        val idx = counter.takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 0
+        val letter = seq[((idx % 52) + 52) % 52]
+        counter.writeText((idx + 1).toString())
+        outDir.mkdirs()
+        outDir.resolve("version.properties").writeText("letter=$letter\nindex=$idx\n")
+        println("Desktop version letter: '$letter' (build index $idx)")
+    }
+}
+sourceSets["main"].resources.srcDir(versionLetterDir)
+tasks.named("processResources") { dependsOn(generateVersionLetter) }

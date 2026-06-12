@@ -75,6 +75,24 @@ object AudioDecoder {
     fun ffmpegAvailable(): Boolean = ffmpegExe() != null
 
     /**
+     * Write [pcm] (mono float in [-1,1]) as a 16-bit PCM little-endian WAV at [sampleRate],
+     * overwriting [out]. Matches the canonical ALLDATA format, so trimmed clips round-trip cleanly.
+     */
+    fun writeWavMono16(pcm: FloatArray, sampleRate: Int, out: File) {
+        val dataLen = pcm.size * 2
+        val b = java.io.ByteArrayOutputStream(44 + dataLen)
+        fun str(s: String) = b.write(s.toByteArray(Charsets.US_ASCII))
+        fun le32(v: Int) { b.write(v and 0xFF); b.write((v shr 8) and 0xFF); b.write((v shr 16) and 0xFF); b.write((v shr 24) and 0xFF) }
+        fun le16(v: Int) { b.write(v and 0xFF); b.write((v shr 8) and 0xFF) }
+        str("RIFF"); le32(36 + dataLen); str("WAVE")
+        str("fmt "); le32(16); le16(1); le16(1)                 // PCM, 1 channel
+        le32(sampleRate); le32(sampleRate * 2); le16(2); le16(16)  // byteRate, blockAlign, bits
+        str("data"); le32(dataLen)
+        for (s in pcm) le16((s.coerceIn(-1f, 1f) * 32767f).toInt() and 0xFFFF)
+        out.outputStream().use { it.write(b.toByteArray()) }
+    }
+
+    /**
      * Transcode any ffmpeg-readable file (WAV/WebM/OGG/MP3/…) to a canonical
      * [sampleRate] Hz, mono, 16-bit PCM WAV at [output]. Overwrites [output].
      * Returns false if ffmpeg is missing or the conversion fails.
