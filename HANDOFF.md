@@ -40,6 +40,16 @@ Build the jar with `gradlew.bat :desktop:fatJar`.
   Parallel (one ffmpeg/core), resumable (existing WAV reused), cancellable (button toggles).
   Verified end-to-end on CoughDataset + ESC-50 and one Coswara date (684 clips, 152 cough /
   532 non-cough), plus resume-reuse and CSV escaping of the JSON column.
+- **Filename metadata + analysis images**: output WAV names encode the clip's summary metadata
+  (`<source>__<id>__<soundType>__<cough|noncough>__<health>__a<age>__<gender>__<country>.wav`);
+  `Row.wav` is set from the final name so CSV rows stay linked. `SpectrogramRenderer.kt` renders,
+  beside each WAV, a 512×512 Magma FFT spectrogram (`.png`, size 2048/step 1024, renormalized) and
+  a 512×512 Morlet-CWT scalogram (`.jpg`, resampled 20 kHz, level 10, w0 6, no threshold,
+  renormalized). The CWT math is ported verbatim from `WaveletActivity.runCwt`; "order" is DWT-only
+  and has no effect on Morlet CWT. Build asks yes/no for images (the CWT is the slow part);
+  `AllDataBuilder.generateImages` toggles it. Images use the desktop `cough.FFTUtils` (no `:shared`
+  dependency). Verified: 512×512 PNG/JPEG output, correct chirp ridge (FFT) and log-frequency CWT
+  ridge, trio grouping (wav/png/jpg share base name), and resume skipping existing images.
 
 ## metadata.csv schema (ALLDATA)
 `wav, source, original_id, sound_type, is_cough, health_status, age, gender, country,

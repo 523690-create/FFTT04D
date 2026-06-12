@@ -60,10 +60,20 @@ builder then:
   `wav, source, original_id, sound_type, is_cough, health_status, age, gender, country,
   cough_detected, metadata_json` — the last column preserves the full original metadata losslessly;
 - derives a consistent **cough / non-cough** label (`is_cough`) and a canonical **health_status**
-  across every source.
+  across every source;
+- **encodes each clip's key metadata into its WAV filename** —
+  `<source>__<id>__<soundType>__<cough|noncough>__<health>__a<age>__<gender>__<country>.wav`
+  (blanks skipped, sanitized, length-capped) — while the CSV's `wav` column always matches the
+  on-disk name, so files and rows stay linked;
+- optionally renders, beside each WAV (same base name), two **512×512** analysis images:
+  - **`.png`** — FFT spectrogram (size 2048 / step 1024), Magma, renormalized to full intensity;
+  - **`.jpg`** — Morlet **CWT** scalogram (resampled to 20 kHz, level 10, w0 = 6, no threshold),
+    Magma, renormalized.
 
-It is **parallel** (one ffmpeg per core), **resumable** (an existing non-empty output WAV is reused,
-never re-converted) and **cancellable** (the button toggles to *Cancel ALLDATA build* while running).
+  Image rendering (especially the CWT) is the slow part, so the build asks yes/no first.
+
+It is **parallel** (one ffmpeg per core), **resumable** (existing output WAVs and images are reused,
+never regenerated) and **cancellable** (the button toggles to *Cancel ALLDATA build* while running).
 
 | Source folder (under the root) | Audio | `is_cough` | `health_status` | Metadata source |
 |---|---|---|---|---|

@@ -256,6 +256,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             return
         }
 
+        // Image rendering is the slow part — let the user opt out (Cancel aborts the whole build).
+        val imgChoice = JOptionPane.showConfirmDialog(this,
+            "Also render a 512×512 FFT spectrogram (PNG) and Morlet-CWT scalogram (JPEG) per clip?\n" +
+            "This is much slower than the audio conversion (Cancel to abort the build).",
+            "Build ALLDATA — images", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+        if (imgChoice == JOptionPane.CANCEL_OPTION || imgChoice == JOptionPane.CLOSED_OPTION) return
+        AllDataBuilder.generateImages = (imgChoice == JOptionPane.YES_OPTION)
+
         buildingAllData = true
         SwingUtilities.invokeLater {
             buildAllDataButton.text = "Cancel ALLDATA build"
@@ -277,8 +285,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             val elapsedS = (System.nanoTime() - startNs) / 1e9
             val sb = StringBuilder()
             sb.append(if (summary.cancelled) "=== ALLDATA build CANCELLED ===\n" else "=== ALLDATA build complete ===\n")
-            sb.append(String.format("%d rows · %d converted · %d reused · %d failed · %.1fs%n",
-                summary.rows, summary.converted, summary.reused, summary.failed, elapsedS))
+            sb.append(String.format("%d rows · %d converted · %d reused · %d failed · %d images · %.1fs%n",
+                summary.rows, summary.converted, summary.reused, summary.failed, summary.images, elapsedS))
             if (summary.csvPath.isNotEmpty()) sb.append("metadata: ${summary.csvPath}\n")
             sb.append("\nby source:\n")
             summary.bySource.forEach { (s, n) -> sb.append("  ${s.padEnd(16)} $n\n") }

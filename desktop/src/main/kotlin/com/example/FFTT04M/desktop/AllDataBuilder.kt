@@ -51,11 +51,14 @@ object AllDataBuilder {
     data class Progress(val phase: String, val done: Int, val total: Int, val message: String)
     data class Summary(
         val rows: Int, val converted: Int, val reused: Int, val failed: Int,
-        val csvPath: String, val bySource: Map<String, Int>, val cancelled: Boolean
+        val images: Int, val csvPath: String, val bySource: Map<String, Int>, val cancelled: Boolean
     )
 
     @Volatile private var cancelled = false
     fun cancel() { cancelled = true }
+
+    /** Also render the 512×512 FFT (PNG) + Morlet-CWT (JPEG) image per clip. */
+    @Volatile var generateImages = true
 
     private val gson = Gson()
     private val workers = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
@@ -66,6 +69,7 @@ object AllDataBuilder {
     private val converted = AtomicInteger()
     private val reused = AtomicInteger()
     private val failed = AtomicInteger()
+    private val images = AtomicInteger()
 
     /**
      * Build ALLDATA from datasets found under [sourcesRoot] into [outDir].
@@ -74,12 +78,12 @@ object AllDataBuilder {
     fun build(sourcesRoot: File, outDir: File, onProgress: (Progress) -> Unit): Summary {
         cancelled = false
         usedNames.clear(); rows.clear()
-        converted.set(0); reused.set(0); failed.set(0)
+        converted.set(0); reused.set(0); failed.set(0); images.set(0)
         outDir.mkdirs()
 
         if (!AudioDecoder.ffmpegAvailable()) {
             onProgress(Progress("error", 0, 0, "ffmpeg not found — cannot convert audio. Install Gyan.FFmpeg."))
-            return Summary(0, 0, 0, 0, "", emptyMap(), false)
+            return Summary(0, 0, 0, 0, 0, "", emptyMap(), false)
         }
 
         val bySource = LinkedHashMap<String, Int>()
@@ -118,7 +122,7 @@ object AllDataBuilder {
         }
 
         return Summary(
-            rows.size, converted.get(), reused.get(), failed.get(),
+            rows.size, converted.get(), reused.get(), failed.get(), images.get(),
             csv.absolutePath, bySource, cancelled
         )
     }
@@ -133,8 +137,9 @@ object AllDataBuilder {
                 if (!cancelled) convertOne(job)
                 val d = done.incrementAndGet()
                 if (d % 25 == 0 || d == total) {
+                    val img = if (generateImages) ", imaged ${images.get()}" else ""
                     onProgress(Progress(phase, d, total,
-                        "$phase: $d/$total  (converted ${converted.get()}, reused ${reused.get()}, failed ${failed.get()})"))
+                        "$phase: $d/$total  (converted ${converted.get()}, reused ${reused.get()}, failed ${failed.get()}$img)"))
                 }
             }
         }
@@ -151,10 +156,27 @@ object AllDataBuilder {
             } else {
                 failed.incrementAndGet(); false
             }
-            if (ok) synchronized(rows) { rows.add(job.row) }
+            if (ok) {
+                synchronized(rows) { rows.add(job.row) }
+                if (generateImages) renderImages(job.output)
+            }
         } finally {
             if (job.deleteInput) job.input.delete()
         }
+    }
+
+    /** Render the FFT PNG + CWT JPEG beside [wav] (shared base name); skip if both already exist. */
+    private fun renderImages(wav: File) {
+        val base = wav.nameWithoutExtension
+        val png = File(wav.parentFile, "$base.png")
+        val jpg = File(wav.parentFile, "$base.jpg")
+        if (png.isFile && jpg.isFile) return
+        val pcm = AudioDecoder.decode(wav) ?: return   // output is canonical 44.1 kHz mono WAV
+        if (pcm.isEmpty()) return
+        if (!png.isFile) try { SpectrogramRenderer.renderFftPng(pcm, 44100, png); images.incrementAndGet() }
+            catch (e: Exception) { System.err.println("FFT image failed ${wav.name}: ${e.message}") }
+        if (!jpg.isFile) try { SpectrogramRenderer.renderCwtJpg(pcm, 44100, jpg); images.incrementAndGet() }
+            catch (e: Exception) { System.err.println("CWT image failed ${wav.name}: ${e.message}") }
     }
 
     // ---- output-name allocation ----------------------------------------------------------------
