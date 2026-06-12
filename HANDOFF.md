@@ -29,6 +29,12 @@ Build the jar with `gradlew.bat :desktop:fatJar`.
   Required for WebM/OGG decode and all ALLDATA conversion. v8.1 is installed on this machine.
 - **adb** (`UsbImporter`): resolved from `ANDROID_HOME`/`ANDROID_SDK_ROOT`/`LOCALAPPDATA`. Required
   for USB device import.
+- **CUDA runtime DLLs** (`GpuFft`, optional GPU CWT): cudart/cufft/nvJitLink loaded from
+  `native/cuda/` (gitignored — ~360 MB), env `FFTT04D_CUDA_DIR`, or `CUDA_PATH\bin`. Fetch the
+  redistributables without the toolkit via pip wheels:
+  `python -m pip install --target native/cuda nvidia-cufft-cu12 nvidia-cuda-runtime-cu12` then move
+  the `*/bin/*.dll` up into `native/cuda/`. Missing → `GpuFft.available()` is false and the CWT
+  falls back to CPU. Only an NVIDIA driver is otherwise required (no toolkit install).
 
 ## Recent work (this session)
 - **Directory pickers** replaced the hardcoded `H:\…` dataset paths and the fixed
@@ -50,6 +56,22 @@ Build the jar with `gradlew.bat :desktop:fatJar`.
   `AllDataBuilder.generateImages` toggles it. Images use the desktop `cough.FFTUtils` (no `:shared`
   dependency). Verified: 512×512 PNG/JPEG output, correct chirp ridge (FFT) and log-frequency CWT
   ridge, trio grouping (wav/png/jpg share base name), and resume skipping existing images.
+
+## Image passes + GPU + Analyze All sources (this session)
+- **Image generation is now a separate, resumable second pass** (`ImageBatch.kt`), not part of the
+  ALLDATA build. Three buttons over a chosen folder (defaults to the ALLDATA output): **FFT images**
+  (PNG), **CWT images (CPU)**, **CWT images (GPU)** — each renders only clips missing that image,
+  fans across all cores, is cancellable, and reports device + clips/s. The Build ALLDATA image
+  prompt now defaults to **No** (build WAV + metadata only, image later).
+- **Optional GPU CWT** (`GpuFft.kt`, JCuda/cuFFT): `SpectrogramRenderer.useGpu` routes the CWT's
+  100-scale inverse-FFT bank through cuFFT (batched, persistent plan + device buffer, CPU-side
+  multiply/magnitude). Verified correct on a GTX 1660 SUPER, but **transfer-bound**: on a 20-core
+  box the simple path is ~1.8× *slower* than CPU (26 MB up + 26 MB down per clip). A real win needs
+  on-device multiply+magnitude (NVRTC) — not yet done. The CPU/GPU wavelet buttons exist to measure
+  this live. CWT kernels are now cached per padded length (a CPU win independent of GPU).
+- **Analyze All** now offers a source picker: loaded list, **ALLDATA folder**, **USB import
+  folder**, or both combined (`DatasetLoader.loadFolder`, recursive). The list display caps at 2000
+  rows (ALLDATA is ~61k) but the full set is analyzed.
 
 ## metadata.csv schema (ALLDATA)
 `wav, source, original_id, sound_type, is_cough, health_status, age, gender, country,

@@ -7,7 +7,7 @@ Dim fso, shell, root, libs, jar, javaw
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
-root = "H:\FFTT04D"
+root = "C:\AndroidStudio\FFTT04D"
 libs = root & "\desktop\build\libs"
 
 ' 1) Prefer the libs dir; 2) fall back to a project-wide search for the app jar.

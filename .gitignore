@@ -42,3 +42,6 @@ xcuserdata/
 *.log
 *.hprof
 .DS_Store
+
+# NVIDIA CUDA runtime redistributables (cudart/cufft) for optional GPU path — fetched, not committed
+/native/

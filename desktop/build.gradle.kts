@@ -25,6 +25,16 @@ dependencies {
     // TAR/GZIP support for Coswara dataset extraction
     implementation("org.apache.commons:commons-compress:1.24.0")
 
+    // Optional GPU acceleration (NVIDIA): JCuda runtime + cuFFT, with Windows x86_64 natives.
+    // The natives jars bundle the CUDA runtime/cuFFT libs, so only an NVIDIA driver is required
+    // (no CUDA toolkit install). GpuFft falls back to the CPU FFT if any of this fails to load.
+    val jcudaVer = "12.6.0"
+    val jcudaClassifier = "windows-x86_64"
+    implementation("org.jcuda:jcuda:$jcudaVer") { isTransitive = false }
+    implementation("org.jcuda:jcufft:$jcudaVer") { isTransitive = false }
+    implementation("org.jcuda:jcuda-natives:$jcudaVer:$jcudaClassifier")
+    implementation("org.jcuda:jcufft-natives:$jcudaVer:$jcudaClassifier")
+
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")

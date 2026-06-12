@@ -67,14 +67,21 @@ object DatasetLoader {
     }
 
     /** Load recordings pulled off a device by [UsbImporter]: each <base>.wav + <base>.json sidecar. */
-    fun loadDeviceImport(dir: File, deviceLabel: String): List<AudioRecording> {
+    fun loadDeviceImport(dir: File, deviceLabel: String): List<AudioRecording> =
+        loadFolder(dir, "USB:$deviceLabel")
+
+    /**
+     * Generic recursive WAV-folder loader — used for ALLDATA output and USB import locations alike.
+     * Picks up an optional `<base>.json` metadata sidecar and `<base>.txt` comment beside each WAV
+     * (ALLDATA has neither; its WAV name carries the metadata and its rows live in metadata.csv).
+     */
+    fun loadFolder(dir: File, source: String): List<AudioRecording> {
         if (!dir.isDirectory) return emptyList()
         val recordings = mutableListOf<AudioRecording>()
         dir.walkTopDown().forEach { f ->
             if (f.isFile && f.extension.equals("wav", true)) {
                 val meta = flatJson(File(f.parentFile, "${f.nameWithoutExtension}.json")).toMutableMap()
-                meta["source"] = "USB:$deviceLabel"
-                // Comment sidecar (<base>.txt), if present.
+                meta["source"] = source
                 File(f.parentFile, "${f.nameWithoutExtension}.txt").takeIf { it.isFile }
                     ?.let { meta["comment"] = it.readText().trim().take(200) }
                 recordings.add(AudioRecording(id = f.nameWithoutExtension, audioFile = f, metadata = meta))

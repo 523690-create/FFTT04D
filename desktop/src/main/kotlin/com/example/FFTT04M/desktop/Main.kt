@@ -29,6 +29,11 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private lateinit var buildAllDataButton: JButton
     @Volatile private var buildingAllData = false
 
+    private lateinit var fftButton: JButton
+    private lateinit var cwtCpuButton: JButton
+    private lateinit var cwtGpuButton: JButton
+    @Volatile private var imaging = false
+
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
         size = Dimension(1000, 700)
@@ -79,6 +84,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
+        // Secondary image passes over a ready ALLDATA folder (resumable; skip clips already imaged).
+        // The separate CPU/GPU wavelet buttons double as a live CPU-vs-GPU benchmark.
+        fftButton = createButton(ImageBatch.Mode.FFT.button) { onGenerateImages(ImageBatch.Mode.FFT, fftButton) }
+        cwtCpuButton = createButton(ImageBatch.Mode.CWT_CPU.button) { onGenerateImages(ImageBatch.Mode.CWT_CPU, cwtCpuButton) }
+        cwtGpuButton = createButton(ImageBatch.Mode.CWT_GPU.button) { onGenerateImages(ImageBatch.Mode.CWT_GPU, cwtGpuButton) }
+        buttonPanel.add(fftButton)
+        buttonPanel.add(cwtCpuButton)
+        buttonPanel.add(cwtGpuButton)
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
         // Recordings list
@@ -92,9 +105,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
         // Analysis controls
         val analysisPanel = JPanel(GridLayout(0, 2, 6, 6))
-        val startButton = createButton("Analyze All") {
-            if (recordings.isNotEmpty()) analyzeAll() else showStatus("No recordings loaded")
-        }
+        val startButton = createButton("Analyze All") { analyzeAll() }
         val exportButton = createButton("Export segments.jsonl") {
             exportJsonl()
         }
@@ -256,10 +267,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             return
         }
 
-        // Image rendering is the slow part — let the user opt out (Cancel aborts the whole build).
+        // Image rendering is the slow part and now has its own buttons (FFT images / CWT CPU / CWT
+        // GPU) that run as a resumable second pass — so default this to No. (Cancel aborts the build.)
         val imgChoice = JOptionPane.showConfirmDialog(this,
-            "Also render a 512×512 FFT spectrogram (PNG) and Morlet-CWT scalogram (JPEG) per clip?\n" +
-            "This is much slower than the audio conversion (Cancel to abort the build).",
+            "Also render the 512×512 FFT (PNG) + Morlet-CWT (JPEG) images inline, per clip?\n\n" +
+            "Recommended: No — build WAV + metadata only, then use the\n" +
+            "\"FFT images\" / \"CWT images (CPU)\" / \"CWT images (GPU)\" buttons\n" +
+            "to render (and resume) images separately.",
             "Build ALLDATA — images", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
         if (imgChoice == JOptionPane.CANCEL_OPTION || imgChoice == JOptionPane.CLOSED_OPTION) return
         AllDataBuilder.generateImages = (imgChoice == JOptionPane.YES_OPTION)
@@ -306,21 +320,144 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         }
     }
 
+    /**
+     * Second-pass image generation over a ready ALLDATA folder. Each mode renders only the clips
+     * that don't already have its image (resumable). The clicked button toggles to "Cancel …" while
+     * running; the others are disabled. Reports device + clips/s so CPU and GPU passes can be
+     * compared on real data.
+     */
+    private fun onGenerateImages(mode: ImageBatch.Mode, button: JButton) {
+        if (imaging) { ImageBatch.cancel(); showStatus("Cancelling image pass…"); return }
+        if (isAnalyzing || buildingAllData) { showStatus("Busy…"); return }
+
+        if (mode == ImageBatch.Mode.CWT_GPU && !GpuFft.available()) {
+            val go = JOptionPane.showConfirmDialog(this,
+                "No NVIDIA GPU / cuFFT available — this pass will run on the CPU instead.\nProceed?",
+                "GPU wavelets", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE)
+            if (go != JOptionPane.OK_OPTION) return
+        }
+        // Defaults to the ALLDATA output folder used by Build ALLDATA (same pref key).
+        val folder = pickDirectory("Select the ALLDATA folder (holds the .wav files)",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
+
+        imaging = true
+        SwingUtilities.invokeLater {
+            button.text = "Cancel ${mode.button}"
+            setImagingButtonsEnabled(false, except = button)
+            progressBar.isIndeterminate = false
+            progressBar.value = 0
+            analysisResultsArea.append("\n${mode.label} over ${folder.absolutePath}\n")
+            analysisResultsArea.caretPosition = analysisResultsArea.document.length
+        }
+        thread {
+            val summary = ImageBatch.run(folder, mode) { p ->
+                SwingUtilities.invokeLater {
+                    if (p.total > 0) {
+                        progressBar.isIndeterminate = false
+                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
+                    } else progressBar.isIndeterminate = true
+                    statusLabel.text = p.message
+                }
+            }
+            val cps = if (summary.elapsedS > 0) summary.rendered / summary.elapsedS else 0.0
+            val report = buildString {
+                append(if (summary.cancelled) "=== image pass CANCELLED ===\n" else "=== image pass complete ===\n")
+                append("${mode.label}  ·  device: ${summary.device}\n")
+                append(String.format(
+                    "%d rendered · %d skipped (already imaged) · %d failed · %.1fs · %.1f clips/s%n",
+                    summary.rendered, summary.skipped, summary.failed, summary.elapsedS, cps))
+            }
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(report)
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                progressBar.value = if (summary.cancelled) progressBar.value else 100
+                button.text = mode.button
+                setImagingButtonsEnabled(true)
+                statusLabel.text = if (summary.cancelled)
+                    "Image pass cancelled — ${summary.rendered} rendered"
+                else
+                    "${mode.button}: ${summary.rendered} in ${"%.1f".format(summary.elapsedS)}s · " +
+                    "${"%.1f".format(cps)} clips/s · ${summary.device}"
+            }
+            imaging = false
+        }
+    }
+
+    /** Enable/disable the image buttons together (keep [except] enabled so it can act as Cancel). */
+    private fun setImagingButtonsEnabled(enabled: Boolean, except: JButton? = null) {
+        for (b in listOf(fftButton, cwtCpuButton, cwtGpuButton, buildAllDataButton)) {
+            b.isEnabled = enabled || b === except
+        }
+    }
+
+    /** Max rows shown in the list; the full [recordings] set is still analyzed (ALLDATA is ~61k). */
+    private val MAX_LIST_DISPLAY = 2000
+
     private fun updateRecordingsList() {
         SwingUtilities.invokeLater {
             val model = recordingsList.model as DefaultListModel<String>
             model.clear()
-            recordings.forEach { rec ->
-                val label = rec.label() ?: "unknown"
-                model.addElement("${rec.id}: $label")
-            }
+            val shown = recordings.take(MAX_LIST_DISPLAY)
+            shown.forEach { rec -> model.addElement("${rec.id}: ${rec.label() ?: "unknown"}") }
+            if (recordings.size > shown.size)
+                model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
         }
     }
 
+    /**
+     * Analyze a chosen source: the currently loaded list, the **ALLDATA** output folder, the
+     * **USB import** folder, or both folders combined. Folder choices are loaded (recursively) into
+     * [recordings] before the Tier-1 engine fans out across cores.
+     */
     private fun analyzeAll() {
-        if (isAnalyzing) return
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        if (buildingAllData || imaging) { showStatus("Busy…"); return }
+
+        val options = buildList {
+            if (recordings.isNotEmpty()) add("Loaded recordings (${recordings.size})")
+            add("ALLDATA folder")
+            add("USB import folder")
+            add("ALLDATA + USB import (combined)")
+        }
+        val choice = JOptionPane.showInputDialog(this, "Analyze which source?", "Analyze All",
+            JOptionPane.QUESTION_MESSAGE, null, options.toTypedArray(), options.first()) as String?
+            ?: return
+
+        // Resolve folder pickers here on the EDT; remember choices via the same prefs the other
+        // features use (allDataOut / usbImport) so they default to where you built / imported.
+        val wantAllData = choice.startsWith("ALLDATA")
+        val wantUsb = choice.contains("USB")
+        val allDataDir = if (wantAllData) pickDirectory("Select the ALLDATA folder to analyze",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return else null
+        val usbDir = if (wantUsb) pickDirectory("Select the USB import folder to analyze",
+            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+            ?: return else null
+
         isAnalyzing = true
         thread {
+            if (wantAllData || wantUsb) {
+                showStatus("Scanning folder(s) for WAVs…")
+                val loaded = mutableListOf<AudioRecording>()
+                allDataDir?.let { loaded.addAll(DatasetLoader.loadFolder(it, "ALLDATA")) }
+                usbDir?.let { loaded.addAll(DatasetLoader.loadFolder(it, "USB")) }
+                recordings.clear()
+                recordings.addAll(loaded)
+                selectedDataset = null
+                updateRecordingsList()
+            }
+            if (recordings.isEmpty()) {
+                showStatus("No recordings found to analyze")
+                isAnalyzing = false
+                return@thread
+            }
+            runAnalysis()
+            isAnalyzing = false
+        }
+    }
+
+    /** Run the Tier-1 engine over the current [recordings] (assumes a populated list). */
+    private fun runAnalysis() {
+        run {
             SwingUtilities.invokeLater { analysisResultsArea.text = "" }
             progressBar.value = 0
             val n = recordings.size
@@ -354,7 +491,6 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             showStatus(String.format(
                 "Done: %d analyzed, %d skipped, %d events in %.1fs on %d cores",
                 analyzed, skipped, totalEvents, elapsedS, engine.workers))
-            isAnalyzing = false
             progressBar.value = 100
         }
     }

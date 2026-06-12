@@ -39,6 +39,33 @@ object SpectrogramRenderer {
     private const val CWT_W0 = 6.0f
     private const val CWT_MAX_SAMPLES = 60000   // same safety cap as the mobile engine
 
+    /**
+     * Use the GPU (cuFFT) for the CWT inverse-FFT bank when available. Default OFF: with the
+     * CPU-side multiply/magnitude + full PCIe transfer, the simple cuFFT path is transfer-bound and
+     * loses to a many-core CPU. A worthwhile GPU path needs on-device multiply+magnitude (NVRTC).
+     */
+    @Volatile var useGpu = false
+
+    // The 100 Morlet frequency-domain kernels depend only on the padded length, not the signal,
+    // so cache them per padded size and reuse across all clips (big CPU saving vs rebuilding each).
+    private val kernelCache = HashMap<Int, Array<FloatArray>>()
+
+    @Synchronized
+    private fun kernelsFor(padded: Int): Array<FloatArray> = kernelCache.getOrPut(padded) {
+        val minScale = 1f
+        val maxScale = 2f.pow(CWT_LEVEL + 3)
+        Array(CWT_SCALES) { s ->
+            val scale = minScale * (maxScale / minScale).pow(s.toFloat() / (CWT_SCALES - 1))
+            val sqrtScale = sqrt(scale)
+            FloatArray(padded) { i ->
+                val omega = if (i <= padded / 2) 2f * PI.toFloat() * i / padded
+                            else 2f * PI.toFloat() * (i - padded) / padded
+                val valExp = -0.5f * (scale * omega - CWT_W0).pow(2)
+                if (valExp > -20f) exp(valExp) * sqrtScale else 0f
+            }
+        }
+    }
+
     // ---- public API ----------------------------------------------------------------------------
 
     fun renderFftPng(pcm: FloatArray, sampleRate: Int, out: File) {
@@ -93,33 +120,53 @@ object SpectrogramRenderer {
         for (i in 0 until n) sigRe[i] = data[i]
         FFTUtils.compute(sigRe, sigIm)
 
-        val minScale = 1f
-        val maxScale = 2f.pow(CWT_LEVEL + 3)        // level 10 -> 8192
+        val kernels = kernelsFor(padded)
         // coefficients[scale][time]; scale 0 = smallest = highest frequency.
-        val coeff = Array(CWT_SCALES) { FloatArray(n) }
-        val wavRe = FloatArray(padded)
-        val wavIm = FloatArray(padded)
-
-        for (s in 0 until CWT_SCALES) {
-            val scale = minScale * (maxScale / minScale).pow(s.toFloat() / (CWT_SCALES - 1))
-            val sqrtScale = sqrt(scale)
-            for (i in 0 until padded) {
-                val omega = if (i <= padded / 2) 2f * PI.toFloat() * i / padded
-                            else 2f * PI.toFloat() * (i - padded) / padded
-                val valExp = -0.5f * (scale * omega - CWT_W0).pow(2)
-                wavRe[i] = if (valExp > -20f) exp(valExp) * sqrtScale else 0f
-                wavIm[i] = 0f
-            }
-            for (i in 0 until padded) {
-                val r = sigRe[i] * wavRe[i] - sigIm[i] * wavIm[i]
-                val im = sigRe[i] * wavIm[i] + sigIm[i] * wavRe[i]
-                wavRe[i] = r; wavIm[i] = im
-            }
-            FFTUtils.inverse(wavRe, wavIm)
-            for (i in 0 until n) coeff[s][i] = sqrt(wavRe[i] * wavRe[i] + wavIm[i] * wavIm[i])
-        }
+        val coeff = if (useGpu && GpuFft.available()) gpuBank(sigRe, sigIm, kernels, padded, n)
+                    else cpuBank(sigRe, sigIm, kernels, padded, n)
         // Reorder rows so row 0 = lowest frequency (largest scale), to match the FFT image.
         return Array(CWT_SCALES) { r -> coeff[CWT_SCALES - 1 - r] }
+    }
+
+    /** CPU path: per-scale spectral product + inverse FFT + magnitude. */
+    private fun cpuBank(sigRe: FloatArray, sigIm: FloatArray, kernels: Array<FloatArray>,
+                        padded: Int, n: Int): Array<FloatArray> {
+        val coeff = Array(CWT_SCALES) { FloatArray(n) }
+        val re = FloatArray(padded)
+        val im = FloatArray(padded)
+        for (s in 0 until CWT_SCALES) {
+            val k = kernels[s]
+            for (i in 0 until padded) { re[i] = sigRe[i] * k[i]; im[i] = sigIm[i] * k[i] }
+            FFTUtils.inverse(re, im)
+            for (i in 0 until n) coeff[s][i] = sqrt(re[i] * re[i] + im[i] * im[i])
+        }
+        return coeff
+    }
+
+    /** GPU path: build all 100 spectral products, one batched cuFFT inverse, then magnitudes. */
+    private fun gpuBank(sigRe: FloatArray, sigIm: FloatArray, kernels: Array<FloatArray>,
+                        padded: Int, n: Int): Array<FloatArray> {
+        val interleaved = FloatArray(2 * CWT_SCALES * padded)
+        for (s in 0 until CWT_SCALES) {
+            val k = kernels[s]
+            val base = 2 * s * padded
+            for (i in 0 until padded) {
+                interleaved[base + 2 * i] = sigRe[i] * k[i]
+                interleaved[base + 2 * i + 1] = sigIm[i] * k[i]
+            }
+        }
+        val inv = GpuFft.inverseBatch(interleaved, padded, CWT_SCALES)
+            ?: return cpuBank(sigRe, sigIm, kernels, padded, n)   // fall back if the GPU call fails
+        val coeff = Array(CWT_SCALES) { FloatArray(n) }
+        for (s in 0 until CWT_SCALES) {
+            val base = 2 * s * padded
+            val cs = coeff[s]
+            for (i in 0 until n) {
+                val re = inv[base + 2 * i]; val im = inv[base + 2 * i + 1]
+                cs[i] = sqrt(re * re + im * im)
+            }
+        }
+        return coeff
     }
 
     private fun resample(input: FloatArray, from: Float, to: Float): FloatArray {
