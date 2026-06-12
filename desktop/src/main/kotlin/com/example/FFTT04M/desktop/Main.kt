@@ -51,17 +51,23 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // GridLayout's preferred height counts every row, so all buttons stay visible.
         val buttonPanel = JPanel(GridLayout(0, 2, 6, 6))
         buttonPanel.add(createButton("Load Cough Dataset 1") {
-            datasetPath = "H:\\cough dataset 1"
+            val dir = pickDirectory("Select Cough Dataset 1 folder (holds public_dataset\\)",
+                "coughDataset1", "H:\\cough dataset 1") ?: return@createButton
+            datasetPath = dir.absolutePath
             selectedDataset = Dataset.COUGH_DATASET_1
             loadDataset()
         })
         buttonPanel.add(createButton("Load ESC-50") {
-            datasetPath = "H:\\ESC-50-master"
+            val dir = pickDirectory("Select ESC-50 folder (holds audio\\ and meta\\esc50.csv)",
+                "esc50", "H:\\ESC-50-master") ?: return@createButton
+            datasetPath = dir.absolutePath
             selectedDataset = Dataset.ESC_50
             loadDataset()
         })
         buttonPanel.add(createButton("Load Coswara") {
-            datasetPath = "H:\\Coswara-Data-master"
+            val dir = pickDirectory("Select Coswara folder (holds YYYYMMDD date folders)",
+                "coswara", "H:\\Coswara-Data-master") ?: return@createButton
+            datasetPath = dir.absolutePath
             selectedDataset = Dataset.COSWARA
             loadDataset()
         })
@@ -133,13 +139,22 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
             recordings.addAll(list)
             updateRecordingsList()
-            showStatus("Loaded ${recordings.size} recordings from ${selectedDataset?.displayName}")
+            showStatus(
+                if (recordings.isEmpty())
+                    "No recordings found in $datasetPath — expected ${selectedDataset?.structureHint}"
+                else
+                    "Loaded ${recordings.size} recordings from ${selectedDataset?.displayName}"
+            )
         }
     }
 
     /** Pull recordings + metadata off a USB-connected Android device (legacy or modern) via adb. */
     private fun loadFromUsb() {
         if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        // Ask where to land the pulled recordings (on the EDT, before the worker thread starts).
+        val importRoot = pickDirectory("Choose folder to import USB recordings into",
+            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+            ?: run { showStatus("USB import cancelled"); return }
         thread {
             if (!UsbImporter.adbAvailable()) {
                 SwingUtilities.invokeLater {
@@ -196,7 +211,6 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
 
             showStatus("Pulling recordings from ${device.model} via USB…")
-            val importRoot = File(System.getProperty("user.home"), "FFTT04M_usb_import")
             val res = UsbImporter.pull(device, importRoot)
             if (!res.ok) {
                 SwingUtilities.invokeLater {
@@ -308,6 +322,28 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     }
 
     private val exportPrefs = java.util.prefs.Preferences.userRoot().node("FFTT04D/export")
+    private val dirPrefs = java.util.prefs.Preferences.userRoot().node("FFTT04D/dirs")
+
+    /**
+     * Directory chooser that remembers the last choice per [prefKey] across runs.
+     * Starts at the remembered dir, else [fallback] (the old fixed path) if it exists, else home.
+     * A typed-in directory that doesn't exist yet is created. Returns null on cancel.
+     */
+    private fun pickDirectory(title: String, prefKey: String, fallback: String? = null): File? {
+        val start = dirPrefs.get(prefKey, null)?.let { File(it) }?.takeIf { it.isDirectory }
+            ?: fallback?.let { File(it) }?.takeIf { it.isDirectory }
+            ?: File(System.getProperty("user.home"))
+        val chooser = JFileChooser(start).apply {
+            dialogTitle = title
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+            selectedFile = start   // OK without browsing reuses the remembered/default dir
+        }
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return null
+        val dir = chooser.selectedFile ?: return null
+        if (!dir.isDirectory && !dir.mkdirs()) { showStatus("Cannot use folder: $dir"); return null }
+        dirPrefs.put(prefKey, dir.absolutePath)
+        return dir
+    }
 
     private fun exportJsonl() {
         if (lastResults.isEmpty()) { showStatus("Nothing to export — run Analyze All first"); return }
@@ -433,8 +469,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     }
 }
 
-enum class Dataset(val displayName: String) {
-    COUGH_DATASET_1("Cough Dataset 1"),
-    ESC_50("ESC-50"),
-    COSWARA("Coswara"),
+enum class Dataset(val displayName: String, val structureHint: String) {
+    COUGH_DATASET_1("Cough Dataset 1", "public_dataset\\*.webm|ogg|wav with <uuid>.json sidecars"),
+    ESC_50("ESC-50", "audio\\*.wav plus meta\\esc50.csv"),
+    COSWARA("Coswara", "YYYYMMDD date folders with <date>.csv and tar.gz parts"),
 }
