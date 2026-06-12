@@ -160,9 +160,36 @@ object AllDataBuilder {
     // ---- output-name allocation ----------------------------------------------------------------
 
     private val sanitize = Regex("[^A-Za-z0-9._-]")
-    /** Allocate a collision-free `<prefix>__<id>.wav` (thread-safe). */
-    private fun outFile(outDir: File, prefix: String, id: String): File {
-        val base = "${prefix}__${sanitize.replace(id, "_")}"
+    /** Longest output base name we allow, so dir + name stays well under Windows MAX_PATH (260). */
+    private const val MAX_BASE = 150
+
+    /**
+     * Build a Job whose output WAV name encodes the clip's key metadata, and set [row].wav to that
+     * exact name so the CSV row stays linked to the file on disk. The name is
+     * `<prefix>__<id>__<soundType>__<cough|noncough>__<health>__a<age>__<gender>__<country>.wav`,
+     * blanks skipped, sanitized, length-capped, and de-duplicated.
+     */
+    private fun jobFor(outDir: File, prefix: String, id: String, input: File,
+                       deleteInput: Boolean, row: Row): Job {
+        val out = outFile(outDir, listOf(prefix, id) + metaTags(row))
+        return Job(input, out, deleteInput, row.copy(wav = out.name))
+    }
+
+    /** Compact, human-readable metadata summary appended to the filename (full data is in the CSV). */
+    private fun metaTags(row: Row): List<String> = buildList {
+        if (row.soundType.isNotBlank()) add(row.soundType)
+        add(if (row.isCough == "true") "cough" else "noncough")
+        if (row.healthStatus.isNotBlank() && row.healthStatus != "unknown") add(row.healthStatus)
+        if (row.age.isNotBlank()) add("a${row.age}")
+        if (row.gender.isNotBlank()) add(row.gender)
+        if (row.country.isNotBlank()) add(row.country)
+    }
+
+    /** Allocate a collision-free `<part>__<part>__….wav` from sanitized, non-blank [parts]. */
+    private fun outFile(outDir: File, parts: List<String>): File {
+        var base = parts.filter { it.isNotBlank() }
+            .joinToString("__") { sanitize.replace(it, "_") }
+        if (base.length > MAX_BASE) base = base.take(MAX_BASE).trimEnd('_')
         synchronized(usedNames) {
             var name = "$base.wav"
             var i = 2
@@ -180,11 +207,11 @@ object AllDataBuilder {
         return audioFiles(audio).map { f ->
             val id = f.nameWithoutExtension
             val meta = mapOf("source" to "CoughDataset", "label_assumed" to "covid", "file" to f.name)
-            Job(f, outFile(outDir, "coughdataset", id), false, Row(
+            jobFor(outDir, "coughdataset", id, f, false, Row(
                 wav = "", source = "CoughDataset", originalId = id, soundType = "cough",
                 isCough = "true", healthStatus = "covid", age = "", gender = "", country = "",
                 coughDetected = "", metadataJson = gson.toJson(meta)
-            )).withWavName()
+            ))
         }
     }
 
@@ -199,12 +226,12 @@ object AllDataBuilder {
             meta["source"] = "COUGHVID"
             Json.flat(dir.resolve("$uuid.json")).forEach { (k, v) -> meta[k] = v }
             compiled[uuid]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
-            Job(f, outFile(outDir, "coughvid", uuid), false, Row(
+            jobFor(outDir, "coughvid", uuid, f, false, Row(
                 wav = "", source = "COUGHVID", originalId = uuid, soundType = "cough",
                 isCough = "true", healthStatus = canonStatus(meta["status"]),
                 age = meta["age"] ?: "", gender = meta["gender"] ?: "", country = "",
                 coughDetected = meta["cough_detected"] ?: "", metadataJson = gson.toJson(meta)
-            )).withWavName()
+            ))
         }
     }
 
@@ -217,11 +244,11 @@ object AllDataBuilder {
             for (f in audioFiles(sub)) {
                 val id = f.nameWithoutExtension
                 val meta = mapOf("source" to "dataset_1sec", "folder" to folder, "file" to f.name)
-                jobs.add(Job(f, outFile(outDir, "d1sec", "${folder}__$id"), false, Row(
+                jobs.add(jobFor(outDir, "d1sec", id, f, false, Row(
                     wav = "", source = "dataset_1sec", originalId = id, soundType = folder,
                     isCough = "true", healthStatus = canonStatus(folder), age = "", gender = "",
                     country = "", coughDetected = "", metadataJson = gson.toJson(meta)
-                )).withWavName())
+                )))
             }
         }
         return jobs
@@ -236,12 +263,12 @@ object AllDataBuilder {
             val row = meta[f.name] ?: emptyMap()
             val category = row["category"] ?: "unknown"
             val m = LinkedHashMap<String, String>(); m["source"] = "ESC-50"; m.putAll(row)
-            Job(f, outFile(outDir, "esc50", f.nameWithoutExtension), false, Row(
+            jobFor(outDir, "esc50", f.nameWithoutExtension, f, false, Row(
                 wav = "", source = "ESC-50", originalId = f.nameWithoutExtension, soundType = category,
                 isCough = if (category == "coughing") "true" else "false",
                 healthStatus = "na", age = "", gender = "", country = "",
                 coughDetected = "", metadataJson = gson.toJson(m)
-            )).withWavName()
+            ))
         }
     }
 
@@ -298,13 +325,13 @@ object AllDataBuilder {
                 meta["participant"] = participant; meta["sound_type"] = soundType
                 combined[participant]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
                 perParticipantJson[participant]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
-                Job(tmp, outFile(outDir, "coswara", "${participant}__$soundType"), true, Row(
+                jobFor(outDir, "coswara", participant, tmp, true, Row(
                     wav = "", source = "Coswara", originalId = participant, soundType = soundType,
                     isCough = if (soundType.startsWith("cough", true)) "true" else "false",
                     healthStatus = canonStatus(meta["covid_status"]),
                     age = meta["a"] ?: "", gender = meta["g"] ?: "", country = meta["l_c"] ?: "",
                     coughDetected = "", metadataJson = gson.toJson(meta)
-                )).withWavName()
+                ))
             }
             runJobs(jobs, pool, "Coswara ${dateDir.name}", onProgress)
         }
@@ -353,9 +380,6 @@ object AllDataBuilder {
         }
     }
 
-    /** Fill in the output file name on a Job's row (the name isn't known when Row is built). */
-    private fun Job.withWavName(): Job =
-        Job(input, output, deleteInput, row.copy(wav = output.name))
 }
 
 /** Minimal RFC-4180-ish CSV read/write (handles quotes, embedded commas, CRLF). */
