@@ -1,180 +1,108 @@
-# FFTT04M
+# FFTT04D — Cough Analysis Desktop
 
-[![Android CI](https://github.com/523690-create/FFTT04M/actions/workflows/android.yml/badge.svg)](https://github.com/523690-create/FFTT04M/actions/workflows/android.yml)
+The **Windows desktop companion and analytic engine** for the FFTT04M mobile app. It runs the
+*same* Tier-1 cough DSP as the phone, but fanned out across every CPU core, so large public
+datasets can be batch-analysed offline and turned into training data the mobile app can't compute
+on-device.
 
-A real-time audio spectrogram and wavelet analysis tool for Android. Listen live, freeze and
-crop interesting moments, save them, and analyse them with FFT or wavelet transforms.
+> This is the desktop repo. The README, HANDOFF and agents docs in the *mobile* repo (FFTT04M /
+> FFTT04L) describe the Android app — don't follow those here. The authoritative desktop docs are
+> this file, [WINDOWS_PORT.md](WINDOWS_PORT.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Latest debug APK:** built on every push — grab it from the
-[**Nightly** release](https://github.com/523690-create/FFTT04M/releases/tag/nightly) or the
-artifacts of the latest [Actions run](https://github.com/523690-create/FFTT04M/actions).
+- **Branch:** `port_windows`
+- **UI:** Java Swing (`desktop/` module, `MainKt` → `AnalyzerWindow`). *Not* Compose, despite the
+  original plan in WINDOWS_PORT.md.
+- **Toolchain:** Kotlin/JVM, Java 8 toolchain, Gradle.
+- **External tools:** `ffmpeg` (audio decode/convert) and `adb` (USB device import) are discovered
+  on `PATH` / standard install locations at runtime; neither is bundled.
 
-> The manual section below is **auto-synced once a day** from the in-app manual
-> (`app/src/main/assets/user_manual.md`). Edit the manual, not the text between the markers.
-
-<!-- MANUAL:START -->
-# FFTT04M — User Manual
-
-A real-time audio spectrogram and wavelet analysis tool. Listen live, freeze and crop
-interesting moments, save them, and analyse them with FFT or wavelet transforms.
-
-*This manual is bundled with the app and opened from the **HELP** button in the Gallery.*
-
----
-
-## Quick start
-
-1. On the **Listen** screen, grant microphone access when prompted.
-2. Watch the live spectrogram scroll. Tap it once to **freeze**; tap again to resume.
-3. While frozen, drag a box to **crop** a region, then **Save** it.
-4. Open the **Gallery** to see saved recordings.
-5. Tap a recording to open the **FFT analysis** viewer; from there you can switch to
-   **Wavelet** analysis or play the audio.
-
----
-
-## Screens
-
-### Listen (live)
-The home screen shows the live microphone spectrogram (frequency vs. time, colour = intensity).
-
-- **Tap** the spectrogram to freeze / unfreeze.
-- **Freeze, then drag** a rectangle to select a time/frequency region.
-- **Save** writes the crop as a `.wav` recording (16-bit PCM) plus a thumbnail.
-- **COLOR** opens the colour-scheme picker (see *Colour schemes*). In Listen mode your
-  choice is global and remembered across sessions.
-- **GALLERY** opens saved recordings. **LATENCY** helps measure audio round-trip delay.
-- The EQ sliders (100 Hz … 8 kHz) shape **only the waterfall display** — the recording you
-  save and play back is always the **raw, unprocessed mic feed**.
-
-### Gallery
-A grid/list of saved recordings, each with a thumbnail and filename.
-
-- **Tap** a recording to open it in the **FFT analysis** viewer.
-- The grid/list toggle (top-left) switches layout.
-- **SHARE** sends/receives recordings between devices (see *Sharing*).
-- **HELP** opens this manual. **LISTEN** returns to the live screen.
-
-### FFT analysis (Viewer)
-Detailed FFT spectrogram of a saved recording, with three tabs:
-
-- **EQ** — per-band gain sliders (display-only, like Listen).
-- **FILTER** — noise filter %, plus attack (Rise) and release (Fall) times.
-- **DISPLAY** — FFT **Size** and **Step** (overlap), **ENHANCE**, **COLOR**, **PROCESSED
-  PLAYBACK**, and **TIME GRID**.
-
-Top bar: **GALLERY**, **LISTEN**, **WAVELET** (analysis of the same file), **NOTE**
-(add a comment / refresh the thumbnail), **PLAY** (raw audio playback).
-
-- **PROCESSED PLAYBACK** plays the recording **as you see it** — EQ, FILTER, and the ENHANCE
-  post-processors are all applied to the sound (reconstructed from the displayed spectrogram with
-  the original phase). The *engine* modes (Reassignment/Synchrosqueeze/Constant-Q/Multitaper) and
-  very old/low-memory devices fall back to EQ + filter only. Experimental.
-- **TIME GRID** overlays vertical time markers — **1 s** (thick) and/or **100 ms** (thin);
-  multi-select, with Clear. Independent of BLUR.
-
-In analysis screens the colour choice is **tied to the recording**, so each recording
-remembers its own scheme. The first time, it inherits your last-used (global) scheme.
-
-### Wavelet analysis
-A continuous/discrete wavelet view of the recording, with two tabs:
-
-- **SETUP** — choose the **MODE**, then the **FAMILY** (its choices change with the mode),
-  the boundary handling (**BND**), soft/hard **Threshold**, and **View** options (LOG,
-  L-NORM). A safety note warns when the sampling rate is above the safe limit for the mode.
-- **SLIDERS** — **LEVEL** (decomposition depth), **ORDER**, **SAMPLE** (rate), **THRESH**.
-
-New recordings default to **CWT, max level/order, zero threshold, max safe sample rate**.
-All settings persist per recording.
-
----
-
-## Analysis modes (Wavelet)
-
-| Mode | What it does | FAMILY choices |
-|------|--------------|----------------|
-| **DWT** | Discrete wavelet transform | Daubechies / Symlet / Coiflet |
-| **WPT** | Wavelet packet transform | Daubechies / Symlet / Coiflet |
-| **CWT** | Continuous wavelet transform (best frequency detail) | Morlet / Mexican Hat |
-| **Reconstruct** | Inverse transform (denoise preview) | Daubechies / Symlet / Coiflet |
-
-- **Morlet** — the default CWT wavelet; excellent for tonal, "squiggly" pitch tracks.
-- **Mexican Hat (Ricker)** — a second-derivative shape that isolates ridge peaks and
-  transients.
-
----
-
-## Colour schemes
-
-Eight perceptually-designed colour maps (256-level gradients):
-
-**Turbo** (default), **Viridis**, **Magma**, **Inferno**, **Plasma**, **Cividis**
-(colour-vision-deficiency friendly), and **Gray**.
-
-Open the picker from the **COLOR** button on any screen. Tap a swatch to apply it
-immediately. Listen remembers your choice globally; analysis screens remember it per
-recording.
-
----
-
-## Enhancements (FFT analysis → DISPLAY → ENHANCE)
-
-Pick one **engine** (or none) and stack any number of **post-processors**:
-
-- **Gaussian / Bilateral / TV Denoise / Butterworth** — general smoothing/denoise.
-- **Anisotropic** — edge-preserving diffusion; smooths along ridges, keeps edges sharp.
-- **Gabor ridges** — boosts oriented "squiggly" spectral lines of any slope.
-- **Frangi ridges** — multi-scale ridge (vesselness) detector for continuous lines.
-
-Heavier filters (Gabor, Frangi) are disabled on older/low-memory devices and labelled
-"(needs newer device)".
-
----
-
-## Sharing recordings between devices
-
-Two devices running this app can transfer recordings — **with all their analysis settings,
-comments, and thumbnails** — directly, no internet or account needed. Recordings the receiver
-already has are **skipped** (only the missing ones transfer), so re-sharing is safe.
-
-**Bluetooth (most reliable — no Wi-Fi needed):**
-1. **One-time:** pair the two devices in Android's Bluetooth settings.
-2. Sender: **Gallery → SHARE → Send via Bluetooth**. A QR appears.
-3. Receiver: **Gallery → SHARE → Receive (scan QR)**, then scan it. The transfer runs over
-   Bluetooth — works even with no Wi-Fi or on mobile data.
-
-**Wi-Fi QR (faster, same network):**
-1. Both devices on the **same Wi-Fi**.
-2. Sender: **SHARE → Send via Wi-Fi QR**. Receiver: **SHARE → Receive (scan QR)**, scan it.
-   (If it times out, the Wi-Fi is likely blocking device-to-device — use Bluetooth or file.)
-
-The QR only carries the connection handshake; the recordings stream over the chosen link.
-**Receiving runs in the background** — once you scan, you can leave the Gallery; a notification
-pops up as each recording arrives, and a final one summarises how many were imported/skipped.
-Tap any of them to return to the Gallery. (Allow the notification permission when asked.)
-
-**On different networks (mobile data, different Wi-Fi)?** Use **SHARE → Export / share to
-file…** on the sending device — it packages the gallery into a `.zip` and opens the system
-share sheet (Quick Share, Bluetooth, email, Drive, …), which works across any network. On the
-receiving device, **tap the received file and choose FFTT** to import it, or use **SHARE →
-Import from file…** and pick it.
-
-## Tips
-
-- If a recording looks empty, check the COLOR scheme and the LOG/L-NORM view toggles.
-- On older devices, wavelet analysis automatically eases its settings to avoid running
-  out of memory; a brief message appears when it does.
-- Playback uses the raw PCM audio of the recording.
-
----
-
-*Draft manual — updated as features change.*
-<!-- MANUAL:END -->
-
-## Building
+## Running
 
 ```
-./gradlew :app:assembleDebug      # Linux/macOS
-gradlew.bat :app:assembleDebug    # Windows
+gradlew.bat :desktop:fatJar          # build desktop\build\libs\CoughAnalyzer.jar
+CoughAnalyzer.bat                     # launch it (java -jar …)
 ```
-Requires JDK 17+ (CI uses 21). Min SDK 23, target/compile SDK 36.
+
+`launch-cough-analyzer.vbs` is a no-console launcher for a desktop shortcut (edit its `root=` if
+the repo isn't at the path it hardcodes). `gradlew.bat :desktop:run` also works for development.
+
+## What the window does
+
+A single window with dataset buttons on the left, a recordings list, an analysis text pane on the
+right, and a progress/status bar at the bottom. All long operations run on background threads and
+report into the progress bar; nothing blocks the UI.
+
+### Loading recordings
+- **Load Cough Dataset 1 / Load ESC-50 / Load Coswara** — open a remembered directory chooser
+  (no more hardcoded `H:\…` paths) and parse that dataset's audio + metadata into the list.
+  Coswara split `.tar.gz` archives are extracted on demand.
+- **Request from USB Device** — pull recordings + metadata sidecars off a USB-connected Android
+  device (FFTT04M/FFTT04L) via `adb`, into a directory you choose. Supports the cooperative
+  offer/ack handshake (see *USB import* below).
+
+### Analysing
+- **Analyze All** — runs the full Tier-1 cough engine (`ParallelCoughAnalyzer`) across every core:
+  FFT q-ratio/Fmax, ridge parabola, T1/T2/T3 phases, 13-band MFCC, and a speech-vs-cough verdict
+  per detected event. (This is the homologous `cough/` DSP package, identical to the phone's.)
+- **Export segments.jsonl** — write the canonical per-segment JSON-lines training file. Remembers
+  the last export directory; never overwrites (auto-increments the filename).
+- **Meta-Analysis (Tensor)** — build one z-scored feature tensor over every cough event
+  (`MetaAnalyzer`), report nearest-neighbours / pairwise-distance stats, and offer a tensor CSV.
+
+### Build ALLDATA (dataset consolidator)
+**Build ALLDATA** merges the several datasets that sit side-by-side under one folder into a single
+analysis-ready corpus. Pick the **sources root** (default `C:\AndroidStudio`, the folder that
+*contains* the datasets) and the **output folder** (default `C:\AndroidStudio\ALLDATA`); the
+builder then:
+
+- transcodes **every** clip to 44.1 kHz mono 16-bit PCM **WAV** in the output folder (via ffmpeg);
+- writes one **`metadata.csv`** with a row per output WAV, in uniform columns:
+  `wav, source, original_id, sound_type, is_cough, health_status, age, gender, country,
+  cough_detected, metadata_json` — the last column preserves the full original metadata losslessly;
+- derives a consistent **cough / non-cough** label (`is_cough`) and a canonical **health_status**
+  across every source.
+
+It is **parallel** (one ffmpeg per core), **resumable** (an existing non-empty output WAV is reused,
+never re-converted) and **cancellable** (the button toggles to *Cancel ALLDATA build* while running).
+
+| Source folder (under the root) | Audio | `is_cough` | `health_status` | Metadata source |
+|---|---|---|---|---|
+| `Coswara-Data-dataset-paper-publication` | per-participant WAVs in split tars | `cough-*` → true; breathing/vowel/counting → **false** (negatives) | from `covid_status` | `combined_data.csv` (by `id`) **+** in-tar `metadata.json` |
+| `CoughDataset-main` | `covid/*.wav` | true | **covid** (presumed) | folder convention |
+| `coughvid_20211012` | `.webm/.ogg/.wav` | true | from `status` | per-file `.json` **+** `metadata_compiled.csv` (by uuid) |
+| `dataset_1sec` | `covid/healthy/lower/obstructive/upper/*.wav` | true | from folder name | folder = `sound_type` |
+| `ESC-50-master` | `audio/*.wav` | `coughing` → true; all others → **false** (negatives) | `na` | `meta/esc50.csv` |
+
+The negatives (Coswara breathing/vowel/counting, ESC-50 non-cough categories) are exactly what
+trains the app's cough/non-cough discrimination.
+
+## Module layout (`desktop/src/main/kotlin/com/example/FFTT04M/desktop/`)
+
+- `Main.kt` — `AnalyzerWindow` Swing UI + all button handlers and directory pickers.
+- `DatasetLoader.kt` — parsers for Cough Dataset 1, ESC-50, Coswara (tar extraction), USB imports.
+- `AudioDecoder.kt` — decode to float PCM and `convertToWav()`, resolving ffmpeg on PATH/winget.
+- `AllDataBuilder.kt` — the ALLDATA consolidator (this file owns its own CSV/JSON helpers).
+- `ParallelCoughAnalyzer.kt` — multi-core batch driver for the Tier-1 engine.
+- `MetaAnalyzer.kt` — z-scored cough feature tensor + similarity stats.
+- `UsbImporter.kt` — adb device listing, pull, and the offer/ack handshake.
+- `cough/` — the shared Tier-1 DSP, homologous to the mobile app's `cough/` package.
+
+## USB import (cooperative handshake)
+
+The phone's **Gallery → SHARE → "Offer recordings to desktop (USB)"** writes a
+`fftt_usb_offer.json` manifest into `/sdcard/Documents/FFTT04M` (fallback
+`/sdcard/Android/data/com.example.FFTT04M/files`). The desktop's *Request from USB Device* reads
+that offer over `adb`, pulls the WAV + `.json`/`.txt` sidecars, imports them, and pushes a
+`fftt_usb_ack.json` back so the phone's dialog confirms the transfer. Pulling whatever is already
+staged works even without an active offer.
+
+## Datasets it understands (as laid out on this machine)
+
+- **Coswara** — `Coswara-Data-dataset-paper-publication/`: `YYYYMMDD/` date folders with split
+  `*.tar.gz.aa…` archives (each holding `<participant>/<sound-type>.wav` + `metadata.json`),
+  plus `combined_data.csv` and `csv_labels_legend.json`.
+- **CoughDataset-main** — a small `covid/` set of cough clips.
+- **coughvid_20211012** — large flat folder of `.webm`/`.ogg`/`.wav` with per-file `.json` and a
+  compiled `metadata_compiled.csv`.
+- **dataset_1sec** — one-second clips foldered by condition (covid/healthy/lower/obstructive/upper).
+- **ESC-50-master** — 2000 environmental clips; only the `coughing` class is a cough.

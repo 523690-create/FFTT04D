@@ -17,9 +17,12 @@ FFTT04M has been split into three independent projects with shared Tier-1 DSP al
 
 ### FFTT04D (Desktop Analyzer, Windows)
 - **Branch**: port_windows
-- **Scope**: Batch analysis and model training
+- **Scope**: Batch analysis, dataset consolidation, and (future) model training
+- **UI**: Java Swing (`MainKt` → `AnalyzerWindow`); see [README.md](README.md)
 - **Launcher**: CoughAnalyzer.bat → desktop shortcut
-- Features: Dataset loading (ESC-50, Coswara), RMS/Peak, DSP foundation
+- Features: dataset loading (Cough Dataset 1 / ESC-50 / Coswara), USB device import, full Tier-1
+  cough engine across all cores (`ParallelCoughAnalyzer`), `segments.jsonl` + feature-tensor
+  export, and the ALLDATA consolidator (`AllDataBuilder`: all datasets → WAV + merged `metadata.csv`)
 
 ### Shared Algorithm Homology
 All three implement identical Tier-1 DSP:
@@ -54,7 +57,10 @@ Canonical `segments.jsonl` (JSON per line):
 4. 44.1 kHz canonical sample rate
 5. Z-score normalization mandatory
 
-### Known Limitations
-- Coswara tar extraction: metadata loaded, audio requires library
-- WebM/OGG: blocked (ffmpeg dependency)
-- Desktop DSP: RMS/Peak only (Tier-1 code available for integration)
+### Status / limitations (desktop)
+- Coswara tar extraction: **working** — split `.tar.gz` parts are concatenated and extracted
+  (streamed in `AllDataBuilder`, on-disk in `DatasetLoader`).
+- WebM/OGG: **decoded via ffmpeg** (resolved at runtime; not bundled). Earlier "blocked" note is
+  obsolete.
+- Desktop DSP: **full Tier-1 engine** runs in parallel across all cores (not RMS/Peak).
+- Tier-2 model training/redeploy (ONNX/TFLite back to Android) remains future work.
