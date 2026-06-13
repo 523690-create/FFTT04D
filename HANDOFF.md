@@ -73,6 +73,42 @@ Build the jar with `gradlew.bat :desktop:fatJar`.
   folder**, or both combined (`DatasetLoader.loadFolder`, recursive). The list display caps at 2000
   rows (ALLDATA is ~61k) but the full set is analyzed.
 
+## Cough detector rebuild, cloud meta-analysis, ISOLATE, fixes (this session)
+- **New cough/not-cough detector** (replaces the broken median×4 segmenter + rubber-stamp verdict):
+  - `WholeClipFeatures.kt` — 14 detection-independent acoustic features over the loudest ~0.7 s window
+    (crest, zcr, onset_sharp, env_peak_ratio, active_frac, centroid, flatness, rolloff85, bandwidth,
+    hf_ratio, q_ratio, pitch_strength, **syllabic_mod**, **spectral_crest**).
+  - `CoughForest.kt` — serializable random forest (gzip resource `cough_forest.txt.gz`, `loadBundled`).
+  - `CoughClassifier.kt` — the deployable verdict (features → forest); `thresholdOverride` moves along
+    the ROC at runtime.
+  - Trained on ALLDATA (cough vs **speech/crying/non-human**; sneezing/breathing/snoring are "don't
+    care", excluded). Held-out **AUC 0.92, ~91 % sens / 83 % spec** (sens-leaning threshold 0.48). The
+    OLD engine was ~84 % sens / **44 % spec** and missed **95 % of 1-sec clips** (median threshold fails
+    when the cough fills the clip). Same model ported into the FFTT04M + FFTT04L mobile cough packages
+    (FFT is byte-identical via the shared module). NOTE: the desktop `cough/CoughAnalyzer` segmenter is
+    UNCHANGED (still used for the rich per-event features the meta-analysis reads); the forest is a
+    separate clip-level verdict. See memory `cough-detection-redesign`.
+- **ISOLATE COUGHS** button (`CoughIsolator.kt`): trims each cough WAV in chosen ALLDATA + extras folders
+  down to the detected cough span (cuts before/after), overwrites in place under the original name,
+  deletes its `.png`/`.jpg`. Non-cough skipped; no-detection clips untouched. `AudioDecoder` gained a
+  16-bit-mono WAV writer (`writeWavMono16`).
+- **Cloud meta-analysis** (`CloudAnalysis.kt` + **Cloud Match (extras)** button, `CloudMetaAnalyzer.kt`):
+  builds a labeled per-recording vector pool from ALLDATA (WholeClipFeatures + 8-value paroxysm block;
+  one sound cloud + multi-label qualifiers per recording), then k-NN-matches the user's extras/USB
+  recordings → nearest sound cloud + qualifier votes, tagged with cough probability. Writes a report +
+  `cloud_match.csv` + `cloud_pca.png` (2D PCA map). Qualifier taxonomy + synonym collapses live in memory
+  `meta-analysis-cloud-design`. v1 = acoustic + paroxysm only (image descriptors deferred).
+- **GPU image passes are concurrent**: each image button owns its own cancel token (no global flag), so
+  CPU + GPU CWT (and FFT) run at once; `SpectrogramRenderer.renderCwtJpg(…, useGpu)` is per-call.
+- **Stacked progress bars**: each running task gets its own bar (`TaskProgress`) instead of sharing one.
+- **AllDataBuilder auto drill-down**: `findChild` descends through unzip wrappers automatically
+  (single-subfolder nesting of any depth/naming — `X/X`, or `public_dataset_v3/coughvid_20211012`) to the
+  real dataset content, so Build ALLDATA pointed at a freshly-unzipped root (e.g. `H:\`) finds all five
+  datasets. `AllDataBuilder.diagnose(root)` reports resolved paths. (COUGHVID's `public_dataset_v3` may
+  lack `metadata_compiled.csv` — copy it from the C:\ `coughvid_20211012` for the expert labels.)
+- **Desktop version letter**: `generateVersionLetter` Gradle task stamps a per-build letter (a..z,A..Z)
+  into `version.properties`; `BuildInfo` reads it; shown top-right of the title in magenta.
+
 ## metadata.csv schema (ALLDATA)
 `wav, source, original_id, sound_type, is_cough, health_status, age, gender, country,
 cough_detected, metadata_json`

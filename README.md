@@ -86,6 +86,23 @@ never regenerated) and **cancellable** (the button toggles to *Cancel ALLDATA bu
 The negatives (Coswara breathing/vowel/counting, ESC-50 non-cough categories) are exactly what
 trains the app's cough/non-cough discrimination.
 
+### Image passes, ISOLATE, Cloud Match, and the cough detector
+
+- **FFT images / CWT images (CPU) / CWT images (GPU)** — render the 512×512 spectrogram/scalogram
+  images over a ready ALLDATA folder as a resumable **second pass** (skip clips already imaged). The CPU
+  and GPU CWT buttons run **concurrently** (each gets its own stacked progress bar) and report device +
+  clips/s. GPU uses cuFFT (`GpuFft`) when an NVIDIA driver + the `native/cuda` DLLs are present, else CPU.
+- **ISOLATE COUGHS** — trim each cough WAV in chosen ALLDATA + extras folders down to the detected
+  cough (overwrites in place, deletes its images so they recompute).
+- **Cloud Match (extras)** — measure your own (extras/USB) recordings against ALLDATA "clouds" (one per
+  sound category + multi-label health/cough qualifiers) by k-NN; writes a report, `cloud_match.csv`, and
+  a 2D PCA map. Adjustable detector threshold in the dialog.
+- **Cough/not-cough detector** — `WholeClipFeatures` (14 features) → `CoughForest` (bundled random
+  forest, **AUC 0.92**, ~91 % sens / 83 % spec) → `CoughClassifier`; the deployable verdict shipped to the
+  phones. (The old median-threshold segmenter remains for the rich per-event analysis.)
+- **Auto dataset drill-down** — Build ALLDATA descends through unzip wrappers automatically, so a
+  freshly-unzipped sources root (e.g. `H:\`) works without flattening folders.
+
 ## Module layout (`desktop/src/main/kotlin/com/example/FFTT04M/desktop/`)
 
 - `Main.kt` — `AnalyzerWindow` Swing UI + all button handlers and directory pickers.
