@@ -23,7 +23,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
     private val statusLabel = JLabel("Ready")
     private val recordingsList = JList<String>(DefaultListModel())
-    private val progressBar = JProgressBar(0, 100)
+    // Active tasks each get their own bar stacked here, so concurrent passes don't fight one bar.
+    private val progressStack = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val analysisResultsArea = JTextArea(10, 60)
 
     private lateinit var buildAllDataButton: JButton
@@ -153,10 +154,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         centerPanel.dividerLocation = 400
         panel.add(centerPanel, BorderLayout.CENTER)
 
-        // Bottom panel: progress + status
+        // Bottom panel: stacked per-task progress bars + status
         val bottomPanel = JPanel(BorderLayout(0, 5))
-        progressBar.isStringPainted = true
-        bottomPanel.add(progressBar, BorderLayout.NORTH)
+        bottomPanel.add(progressStack, BorderLayout.NORTH)
         statusLabel.border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
         bottomPanel.add(statusLabel, BorderLayout.SOUTH)
         panel.add(bottomPanel, BorderLayout.SOUTH)
@@ -300,22 +300,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         AllDataBuilder.generateImages = (imgChoice == JOptionPane.YES_OPTION)
 
         buildingAllData = true
+        val tp = TaskProgress("Build ALLDATA")
         SwingUtilities.invokeLater {
             buildAllDataButton.text = "Cancel ALLDATA build"
-            progressBar.isIndeterminate = false
-            progressBar.value = 0
             analysisResultsArea.text = "Building ALLDATA from ${sourcesRoot.absolutePath}\n -> ${outDir.absolutePath}\n\n"
         }
         thread {
             val startNs = System.nanoTime()
             val summary = AllDataBuilder.build(sourcesRoot, outDir) { p ->
-                SwingUtilities.invokeLater {
-                    if (p.total > 0) {
-                        progressBar.isIndeterminate = false
-                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
-                    } else progressBar.isIndeterminate = true
-                    statusLabel.text = p.message
-                }
+                tp.update(p.done, p.total, p.message)
             }
             val elapsedS = (System.nanoTime() - startNs) / 1e9
             val sb = StringBuilder()
@@ -329,14 +322,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             SwingUtilities.invokeLater {
                 analysisResultsArea.append(report)
                 analysisResultsArea.caretPosition = analysisResultsArea.document.length
-                progressBar.isIndeterminate = false
-                progressBar.value = if (summary.cancelled) progressBar.value else 100
                 buildAllDataButton.text = "Build ALLDATA"
                 statusLabel.text = if (summary.cancelled)
                     "ALLDATA cancelled — ${summary.rows} rows written"
                 else
                     "ALLDATA: ${summary.rows} clips, ${summary.failed} failed, in ${"%.1f".format(elapsedS)}s"
             }
+            tp.finish()
             buildingAllData = false
         }
     }
@@ -364,6 +356,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
         val token = java.util.concurrent.atomic.AtomicBoolean(false)
         imagingTokens[button] = token
+        val tp = TaskProgress(mode.button)
         SwingUtilities.invokeLater {
             button.text = "Cancel ${mode.button}"
             analysisResultsArea.append("\n${mode.label} over ${folder.absolutePath}\n")
@@ -371,13 +364,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         }
         thread {
             val summary = ImageBatch.run(folder, mode, token) { p ->
-                SwingUtilities.invokeLater {
-                    if (p.total > 0) {
-                        progressBar.isIndeterminate = false
-                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
-                    } else progressBar.isIndeterminate = true
-                    statusLabel.text = p.message
-                }
+                tp.update(p.done, p.total, p.message)
             }
             val cps = if (summary.elapsedS > 0) summary.rendered / summary.elapsedS else 0.0
             val report = buildString {
@@ -390,7 +377,6 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             SwingUtilities.invokeLater {
                 analysisResultsArea.append(report)
                 analysisResultsArea.caretPosition = analysisResultsArea.document.length
-                progressBar.value = if (summary.cancelled) progressBar.value else 100
                 button.text = mode.button
                 statusLabel.text = if (summary.cancelled)
                     "Image pass cancelled — ${summary.rendered} rendered"
@@ -398,6 +384,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                     "${mode.button}: ${summary.rendered} in ${"%.1f".format(summary.elapsedS)}s · " +
                     "${"%.1f".format(cps)} clips/s · ${summary.device}"
             }
+            tp.finish()
             imagingTokens.remove(button)
         }
     }
@@ -428,22 +415,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
         isolating = true
         isolatingToken.set(false)
+        val tp = TaskProgress("ISOLATE COUGHS")
         SwingUtilities.invokeLater {
             isolateButton.text = "Cancel ISOLATE"
-            progressBar.isIndeterminate = false
-            progressBar.value = 0
             analysisResultsArea.append("\nISOLATE COUGHS over:\n  ${folders.joinToString("\n  ") { it.absolutePath }}\n")
             analysisResultsArea.caretPosition = analysisResultsArea.document.length
         }
         thread {
             val s = CoughIsolator.run(folders, isolatingToken) { p ->
-                SwingUtilities.invokeLater {
-                    if (p.total > 0) {
-                        progressBar.isIndeterminate = false
-                        progressBar.value = (p.done * 100 / p.total).coerceIn(0, 100)
-                    } else progressBar.isIndeterminate = true
-                    statusLabel.text = p.message
-                }
+                tp.update(p.done, p.total, p.message)
             }
             val report = buildString {
                 append(if (s.cancelled) "=== ISOLATE COUGHS cancelled ===\n" else "=== ISOLATE COUGHS complete ===\n")
@@ -454,13 +434,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             SwingUtilities.invokeLater {
                 analysisResultsArea.append(report)
                 analysisResultsArea.caretPosition = analysisResultsArea.document.length
-                progressBar.value = if (s.cancelled) progressBar.value else 100
                 isolateButton.text = "ISOLATE COUGHS"
                 statusLabel.text = if (s.cancelled)
                     "ISOLATE cancelled — ${s.trimmed} trimmed"
                 else
                     "ISOLATE: ${s.trimmed} trimmed, ${s.noDetect} no-detect, ${s.imagesDeleted} images removed in ${"%.1f".format(s.elapsedS)}s"
             }
+            tp.finish()
             isolating = false
         }
     }
@@ -534,14 +514,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private fun runAnalysis() {
         run {
             SwingUtilities.invokeLater { analysisResultsArea.text = "" }
-            progressBar.value = 0
+            val tp = TaskProgress("Analyze")
             val n = recordings.size
             val startNs = System.nanoTime()
             showStatus("Analyzing $n recordings on ${engine.workers} cores (full Tier-1 DSP)...")
 
             // Fan the full Tier-1 cough engine across every CPU core.
             val results = engine.analyzeAll(recordings) { doneCount, total ->
-                SwingUtilities.invokeLater { progressBar.value = doneCount * 100 / total }
+                tp.update(doneCount, total, "Analyzed $doneCount/$total")
                 if (doneCount % 5 == 0 || doneCount == total) {
                     showStatus("Analyzed $doneCount/$total on ${engine.workers} cores...")
                 }
@@ -566,7 +546,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             showStatus(String.format(
                 "Done: %d analyzed, %d skipped, %d events in %.1fs on %d cores",
                 analyzed, skipped, totalEvents, elapsedS, engine.workers))
-            progressBar.value = 100
+            tp.finish()
         }
     }
 
@@ -747,6 +727,31 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private fun showStatus(message: String) {
         SwingUtilities.invokeLater {
             statusLabel.text = message
+        }
+    }
+
+    /**
+     * One stacked progress row (label + bar) for a single running task. Multiple can coexist, so
+     * concurrent passes (e.g. CPU + GPU CWT) each show their own bar instead of overwriting one.
+     * Removes itself from the stack when the task finishes.
+     */
+    inner class TaskProgress(title: String) {
+        private val bar = JProgressBar(0, 100).apply { isStringPainted = true; string = title }
+        private val row = JPanel(BorderLayout(8, 0)).apply {
+            maximumSize = Dimension(Int.MAX_VALUE, 24)
+            add(JLabel(title).apply { preferredSize = Dimension(150, 0) }, BorderLayout.WEST)
+            add(bar, BorderLayout.CENTER)
+        }
+        init { SwingUtilities.invokeLater { progressStack.add(row); progressStack.revalidate(); progressStack.repaint() } }
+
+        fun update(done: Int, total: Int, msg: String?) = SwingUtilities.invokeLater {
+            if (total > 0) { bar.isIndeterminate = false; bar.value = (done * 100 / total).coerceIn(0, 100) }
+            else bar.isIndeterminate = true
+            if (msg != null) bar.string = msg
+        }
+
+        fun finish() = SwingUtilities.invokeLater {
+            progressStack.remove(row); progressStack.revalidate(); progressStack.repaint()
         }
     }
 
