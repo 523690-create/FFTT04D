@@ -141,3 +141,39 @@ reads the offer over adb, pulls WAV + `.json`/`.txt` sidecars, imports, and push
 - ALLDATA is metadata + WAV only; wiring `Analyze All` / `segments.jsonl` to read an ALLDATA folder
   directly (as a dataset source) would close the loop to training.
 - Tier-2 model training on the tensor/segments output, then redeploy to Android (still future).
+
+## SESSION 2026-06-13 — desktop performance notes & queued work
+
+### H:\ drive is the bottleneck (being replaced)
+The external **H:\** drive is very slow; several observed issues trace to it, not the app:
+- **"Cancel ALLDATA build" is sluggish**, especially mid-Coswara: cancel appears to wait for the
+  current `.tar` to finish unpacking before stopping, then runs a validity/consistency pass. QUEUED:
+  check the cancel flag *per archive entry* (not per archive) and skip the post-cancel pass.
+- **Image generation does NOT auto-start after the data build.** Confirmed *intended* that images don't
+  compete during the WAV/metadata build (good — keeps the data pass fast). But once `metadata.csv` is
+  written, the FFT/CWT image passes currently must be kicked manually. QUEUED: auto-initiate image
+  generation after metadata.csv completes; **GPU wavelets by default** to free CPU. Canceling image
+  production is also slow.
+- **FFT / GPU-wavelet passes are slow to *initiate*** while the H: disk sits idle — startup latency
+  (likely seek/spin-up), not compute.
+
+### Hardware migration (planned)
+User is installing **2× SATA HDDs** to replace H:. Plan: format one, move ALL data directories onto it
+(datasets incl. `public_dataset_v3` = COUGHVID, ALLDATA output, USB-import, `H:\train`), then re-run
+desktop functions and re-evaluate the perf concerns above (several may simply disappear). If the drives
+are fast enough, the working **code** dirs (FFTT04D/M/L) may migrate there too.
+
+### Training negatives for the speech/music FP retrain
+- `H:\train` holds **.mp3** files (several hours) for the hard-negative retrain. QUEUED "train-negative"
+  button: ingest autonomously, chop into appropriately-sized snippets, train the forest on them as
+  negatives **in random order**. Caveat: a **very limited (<20)** number of real coughs may have snuck
+  into the audio — tolerate that small label noise. Run AFTER the drive swap (H: too slow). Then
+  re-derive threshold, redeploy the model to all 3 apps, drop the 0.65 stopgap override.
+
+### Misc
+- `.tar` dedup (QUEUED): open archives only far enough to **list entries** and match, not fully unpack
+  (Coswara is `.tar`).
+- `public_dataset_v3` is NOT a missing dataset — it's COUGHVID's folder name (collectCoughvid aliases
+  `public_dataset_v3`/`public_dataset`). A low row count there earlier was just the zip still extracting
+  during the scan; re-running Build ALLDATA is idempotent (reuses converted WAVs).
+- Results-pane font enlarged 10 → 14pt this session.

@@ -148,7 +148,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         rightPanel.add(resultsLabel, BorderLayout.NORTH)
 
         analysisResultsArea.isEditable = false
-        analysisResultsArea.font = Font("Monospaced", Font.PLAIN, 10)
+        analysisResultsArea.font = Font("Monospaced", Font.PLAIN, 14)   // larger for readability
         rightPanel.add(JScrollPane(analysisResultsArea), BorderLayout.CENTER)
 
         centerPanel.leftComponent = leftPanel
