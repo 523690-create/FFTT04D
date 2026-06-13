@@ -91,25 +91,34 @@ object AllDataBuilder {
         val pool = Executors.newFixedThreadPool(workers)
         try {
             // --- Plain-file sources: enumerate jobs up front, convert in parallel ---------------
-            for (src in listOf(
-                ::collectCoughDataset, ::collectCoughvid, ::collectDataset1sec, ::collectEsc50
+            for ((name, src) in listOf<Pair<String, (File, File) -> List<Job>>>(
+                "CoughDataset" to ::collectCoughDataset, "COUGHVID" to ::collectCoughvid,
+                "dataset_1sec" to ::collectDataset1sec, "ESC-50" to ::collectEsc50
             )) {
                 if (cancelled) break
-                onProgress(Progress("scan", 0, 0, "Scanning for the next dataset… (large folders can take a while)"))
+                onProgress(Progress("scan", 0, 0, "Scanning for $name under ${sourcesRoot.name}\\ … (enumerating files can be slow on external drives)"))
                 val before = rows.size
                 val jobs = src(sourcesRoot, outDir)
-                if (jobs.isEmpty()) continue
+                if (jobs.isEmpty()) {
+                    onProgress(Progress("warn", 0, 0, "$name: not found or no audio clips — skipping"))
+                    continue
+                }
                 val label = jobs.first().row.source
+                onProgress(Progress("found", 0, jobs.size, "$name: ${jobs.size} clips found — converting to WAV…"))
                 runJobs(jobs, pool, label, onProgress)
                 bySource[label] = rows.size - before
+                onProgress(Progress("done", 0, 0, "$name done: +${rows.size - before} rows (running totals: converted ${converted.get()}, reused ${reused.get()}, failed ${failed.get()})"))
             }
 
             // --- Coswara: streamed from split tars, one date at a time (bounds temp disk) -------
             if (!cancelled) {
-                onProgress(Progress("scan", 0, 0, "Scanning Coswara (streaming/extracting tars)…"))
+                onProgress(Progress("scan", 0, 0, "Scanning Coswara (streaming/extracting split tars — slow on external drives)…"))
                 val before = rows.size
                 buildCoswara(sourcesRoot, outDir, pool, onProgress)
-                if (rows.size > before) bySource["Coswara"] = rows.size - before
+                if (rows.size > before) {
+                    bySource["Coswara"] = rows.size - before
+                    onProgress(Progress("done", 0, 0, "Coswara done: +${rows.size - before} rows"))
+                } else onProgress(Progress("warn", 0, 0, "Coswara: not found or no clips"))
             }
         } finally {
             pool.shutdown()
@@ -135,9 +144,13 @@ object AllDataBuilder {
                         phase: String, onProgress: (Progress) -> Unit) {
         val total = jobs.size
         val done = AtomicInteger()
+        val warned = AtomicInteger()
         val futures = jobs.map { job ->
             pool.submit {
-                if (!cancelled) convertOne(job)
+                if (!cancelled) {
+                    if (!convertOne(job) && warned.getAndIncrement() < 8)
+                        onProgress(Progress("warn", 0, 0, "  ⚠ could not convert ${job.input.name} (ffmpeg/decode failed)"))
+                }
                 val d = done.incrementAndGet()
                 if (d % 25 == 0 || d == total) {
                     val img = if (generateImages) ", imaged ${images.get()}" else ""
@@ -149,8 +162,8 @@ object AllDataBuilder {
         for (f in futures) try { f.get() } catch (_: Exception) {}
     }
 
-    /** Transcode one job (skip if a good output already exists) and record its row on success. */
-    private fun convertOne(job: Job) {
+    /** Transcode one job (skip if a good output already exists) and record its row. Returns success. */
+    private fun convertOne(job: Job): Boolean {
         try {
             val ok = if (job.output.isFile && job.output.length() > 44L) {
                 reused.incrementAndGet(); true
@@ -163,6 +176,7 @@ object AllDataBuilder {
                 synchronized(rows) { rows.add(job.row) }
                 if (generateImages) renderImages(job.output)
             }
+            return ok
         } finally {
             if (job.deleteInput) job.input.delete()
         }

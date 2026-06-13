@@ -307,10 +307,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             buildAllDataButton.text = "Cancel ALLDATA build"
             analysisResultsArea.text = "Building ALLDATA from ${sourcesRoot.absolutePath}\n -> ${outDir.absolutePath}\n\n"
         }
+        logLine("Build ALLDATA started — sources: ${sourcesRoot.absolutePath} → out: ${outDir.absolutePath} (images: ${if (AllDataBuilder.generateImages) "yes" else "no"})")
         thread {
             val startNs = System.nanoTime()
+            var lastPhase = ""
             val summary = AllDataBuilder.build(sourcesRoot, outDir) { p ->
                 tp.update(p.done, p.total, p.message)
+                // Log dataset/scan/obstacle milestones to the results pane (not every per-clip tick).
+                if (p.phase != lastPhase || p.phase in NOTABLE_PHASES) { logLine(p.message); lastPhase = p.phase }
             }
             val elapsedS = (System.nanoTime() - startNs) / 1e9
             val sb = StringBuilder()
@@ -365,8 +369,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             analysisResultsArea.caretPosition = analysisResultsArea.document.length
         }
         thread {
+            logLine("${mode.button}: started over ${folder.name}")
+            var nextLog = 0
             val summary = ImageBatch.run(folder, mode, token) { p ->
                 tp.update(p.done, p.total, p.message)
+                if (p.done >= nextLog || p.done == p.total) {
+                    logLine("${mode.button}: ${p.message}"); nextLog = p.done + (p.total / 10).coerceAtLeast(50)
+                }
             }
             val cps = if (summary.elapsedS > 0) summary.rendered / summary.elapsedS else 0.0
             val report = buildString {
@@ -424,8 +433,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             analysisResultsArea.caretPosition = analysisResultsArea.document.length
         }
         thread {
+            logLine("ISOLATE COUGHS: started over ${folders.size} folder(s)")
+            var nextLog = 0
             val s = CoughIsolator.run(folders, isolatingToken) { p ->
                 tp.update(p.done, p.total, p.message)
+                if (p.done >= nextLog || p.done == p.total) {
+                    logLine("ISOLATE: ${p.message}"); nextLog = p.done + (p.total / 10).coerceAtLeast(50)
+                }
             }
             val report = buildString {
                 append(if (s.cancelled) "=== ISOLATE COUGHS cancelled ===\n" else "=== ISOLATE COUGHS complete ===\n")
@@ -801,6 +815,18 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         SwingUtilities.invokeLater {
             statusLabel.text = message
         }
+    }
+
+    /** Build-progress phases worth logging verbatim to the results log (vs. the high-frequency
+     *  per-clip conversion ticks, which only update the progress bar). */
+    private val NOTABLE_PHASES = setOf("scan", "found", "warn", "done", "error", "csv")
+
+    /** Append a timestamped line to the analysis-results log (autoscroll, size-capped). */
+    private fun logLine(msg: String) = SwingUtilities.invokeLater {
+        analysisResultsArea.append("[${java.time.LocalTime.now().withNano(0)}] $msg\n")
+        val len = analysisResultsArea.document.length
+        if (len > 400_000) analysisResultsArea.replaceRange("", 0, len - 300_000)
+        analysisResultsArea.caretPosition = analysisResultsArea.document.length
     }
 
     /**
