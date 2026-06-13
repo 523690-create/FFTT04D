@@ -114,6 +114,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Trim cough WAVs down to the detected cough (ALLDATA + extras, picked at runtime).
         isolateButton = createButton("ISOLATE COUGHS") { onIsolateCoughs() }
         buttonPanel.add(isolateButton)
+        // Cloud meta-analysis: measure your own (extras) recordings against ALLDATA clouds.
+        buttonPanel.add(createButton("Cloud Match (extras)") { onCloudMatch() })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
         // Recordings list
@@ -442,6 +444,77 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
             tp.finish()
             isolating = false
+        }
+    }
+
+    /**
+     * Cloud meta-analysis: build the labeled cloud pool from ALLDATA, then measure each of the user's
+     * own (extras/USB) recordings against it by k-NN — nearest sound cloud + qualifier votes — and
+     * tag each with its CoughClassifier probability. Writes a report + CSV + 2D PCA map.
+     */
+    private fun onCloudMatch() {
+        if (isAnalyzing || buildingAllData) { showStatus("Busy…"); return }
+        val allData = pickDirectory("Cloud Match: ALLDATA folder (the cloud reference)",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
+        val extras = pickDirectory("Cloud Match: YOUR extras / USB recordings folder",
+            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath) ?: return
+        val maxPool = (JOptionPane.showInputDialog(this,
+            "Cloud pool size (recordings sampled from ALLDATA; more = slower, richer):", "6000")
+            ?: return).trim().toIntOrNull()?.coerceIn(200, 61184) ?: 6000
+        JOptionPane.showInputDialog(this,
+            "Cough detector threshold 0–1 (blank = model default ${"%.2f".format(CoughClassifier.threshold())}):", "")
+            ?.takeIf { it.isNotBlank() }?.trim()?.toDoubleOrNull()?.let { CoughClassifier.thresholdOverride = it.coerceIn(0.0, 1.0) }
+
+        isAnalyzing = true
+        val token = java.util.concurrent.atomic.AtomicBoolean(false)
+        val tp = TaskProgress("Cloud Match")
+        SwingUtilities.invokeLater {
+            analysisResultsArea.text = "Cloud meta-analysis\n ALLDATA: ${allData.absolutePath}\n extras: ${extras.absolutePath}\n\n"
+        }
+        thread {
+            val startNs = System.nanoTime()
+            val model = CloudAnalysis.buildModel(allData, maxPool, token) { p -> tp.update(p.done, p.total, p.msg) }
+            val recs = DatasetLoader.loadFolder(extras, "extras")
+            val results = ArrayList<Triple<String, Double, CloudAnalysis.Match>>()
+            val extraVecs = ArrayList<Pair<String, DoubleArray>>()
+            for ((i, r) in recs.withIndex()) {
+                val pcm = AudioDecoder.decode(r.audioFile) ?: continue
+                if (pcm.isEmpty()) continue
+                val v = CloudAnalysis.vectorFor(pcm)
+                if (!v.all { it.isFinite() }) continue
+                results.add(Triple(r.id, CoughClassifier.coughProb(pcm, 44100), CloudAnalysis.match(model, v)))
+                extraVecs.add(r.id to v)
+                tp.update(i + 1, recs.size, "Matching extras: ${i + 1}/${recs.size}")
+            }
+            val thr = CoughClassifier.threshold()
+            val sb = StringBuilder()
+            sb.append("=== CLOUD MATCH: ${results.size} extras vs ${model.pool.size}-recording pool ===\n")
+            sb.append("cough threshold ${"%.2f".format(thr)} · ${model.labelCounts.count { it.value >= 20 }} clouds\n\n")
+            for ((id, cp, m) in results) {
+                sb.append("• ${id.take(48)}  coughProb=${"%.2f".format(cp)} ${if (cp >= thr) "[COUGH]" else "[not-cough]"}\n")
+                sb.append("    nearest sound: ${m.sounds.take(2).joinToString { it.first }}\n")
+                if (m.quals.isNotEmpty()) sb.append("    qualifiers: ${m.quals.take(4).joinToString { it.first }}\n")
+            }
+            val csv = File(extras, "cloud_match.csv")
+            runCatching {
+                csv.writeText(buildString {
+                    append("id,cough_prob,is_cough,nearest_sound,top_qualifiers,nearest_neighbor,nn_distance\n")
+                    for ((id, cp, m) in results) append(
+                        "\"$id\",${"%.3f".format(cp)},${cp >= thr},\"${m.sounds.firstOrNull()?.first ?: ""}\"," +
+                        "\"${m.quals.take(4).joinToString(";") { it.first }}\",\"${m.neighbors.firstOrNull()?.first ?: ""}\"," +
+                        "${"%.3f".format(m.neighbors.firstOrNull()?.second ?: 0.0)}\n")
+                })
+            }
+            val png = File(extras, "cloud_pca.png")
+            runCatching { if (extraVecs.isNotEmpty()) CloudAnalysis.pcaScatter(model, extraVecs, png) }
+            val elapsed = (System.nanoTime() - startNs) / 1e9
+            sb.append("\nCSV: ${csv.path}\n2D map: ${png.path}\n${"%.1f".format(elapsed)}s\n")
+            val report = sb.toString()
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(report); analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                statusLabel.text = "Cloud Match: ${results.size} extras vs ${model.pool.size} pool in ${"%.1f".format(elapsed)}s"
+            }
+            tp.finish(); isAnalyzing = false
         }
     }
 

@@ -112,6 +112,12 @@ object CloudMetaAnalyzer {
         return t > f
     }
 
+    /** Just the 8-value paroxysm block for one analysed recording (cough events clustered into bouts). */
+    fun paroxysmFeatures(a: CoughAnalysis): DoubleArray {
+        val coughs = a.events.filter { it.speech.isLikelyCough }.sortedBy { it.segment.startSample }
+        return paroxysmBlock(coughs, a.totalSamples.toDouble() / a.sampleRate)
+    }
+
     /** Aggregated cough-DSP means + paroxysm block for one analysed recording. */
     fun recordingVector(a: CoughAnalysis): DoubleArray {
         val sr = a.sampleRate
