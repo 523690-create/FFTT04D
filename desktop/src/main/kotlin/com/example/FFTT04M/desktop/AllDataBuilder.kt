@@ -239,7 +239,7 @@ object AllDataBuilder {
 
     /** COUGHVID: flat webm/ogg/wav + per-file json; rich metadata_compiled.csv keyed by uuid. */
     private fun collectCoughvid(root: File, outDir: File): List<Job> {
-        val dir = findChild(root, "coughvid_20211012", "coughvid") ?: return emptyList()
+        val dir = findChild(root, "coughvid_20211012", "coughvid", "public_dataset_v3", "public_dataset") ?: return emptyList()
         val compiled = Csv.readKeyed(dir.resolve("metadata_compiled.csv"), keyCol = "uuid")
         return audioFiles(dir).map { f ->
             val uuid = f.nameWithoutExtension
@@ -380,12 +380,59 @@ object AllDataBuilder {
         (dir.listFiles { f -> f.isFile && f.extension.lowercase() in AUDIO_EXT } ?: emptyArray())
             .sortedBy { it.name }
 
-    /** First child dir of [root] matching any [names] exactly, else by case-insensitive prefix. */
-    private fun findChild(root: File, vararg names: String): File? {
+    /**
+     * First child dir of [root] matching any [names] (exact, then case-insensitive prefix), then
+     * **descends through unzip wrappers**: a folder whose real content sits one (or more) levels
+     * deeper inside a subfolder that also matches a requested name — e.g. `X/X` from extracting an
+     * archive "into a folder named after the zip", or `public_dataset_v3/coughvid_20211012`.
+     */
+    private fun findChild(root: File, vararg names: String): File? =
+        matchChild(root, names)?.let { drillToContent(it) }
+
+    private fun matchChild(root: File, names: Array<out String>): File? {
         val children = root.listFiles { f -> f.isDirectory } ?: return null
         for (n in names) children.firstOrNull { it.name.equals(n, true) }?.let { return it }
         for (n in names) children.firstOrNull { it.name.startsWith(n, true) }?.let { return it }
         return null
+    }
+
+    /**
+     * Automatic drill-down: descend through single-subfolder wrappers (any depth or naming — `X/X`
+     * from "extract into a folder named after the zip", or `public_dataset_v3/coughvid_20211012`)
+     * until reaching the folder that actually holds the dataset — i.e. one that has audio/CSV files,
+     * `YYYYMMDD` date dirs, an `audio/` subdir, or more than one subfolder. Content-based, so it works
+     * however the archive was unzipped without hard-coding wrapper names.
+     */
+    private fun drillToContent(start: File): File {
+        var d = start
+        repeat(6) {
+            val subs = d.listFiles { f -> f.isDirectory } ?: return d
+            // Content root if it has a recognisable marker (date dirs / audio dir / dataset CSV) or
+            // it isn't a single-subfolder wrapper. Marker checks are cheap (no listing huge flat dirs).
+            val marker = subs.any { it.name.matches(Regex("\\d{8}")) || it.name.equals("audio", true) } ||
+                d.resolve("metadata_compiled.csv").isFile || d.resolve("combined_data.csv").isFile ||
+                d.resolve("meta").isDirectory
+            if (marker || subs.size != 1) return d
+            d = subs[0]
+        }
+        return d
+    }
+
+    /** Report which datasets the builder resolves under [sourcesRoot] (fast — no full file scan). */
+    fun diagnose(sourcesRoot: File): String = buildString {
+        appendLine("Datasets under ${sourcesRoot.path}:")
+        fun line(label: String, dir: File?, detail: () -> String) =
+            appendLine(if (dir == null) "  $label: NOT FOUND" else "  $label -> ${dir.path}  [${detail()}]")
+        val cos = findChild(sourcesRoot, "Coswara-Data-dataset-paper-publication", "Coswara-Data", "Coswara")
+        line("Coswara", cos) { "${cos!!.listFiles { f -> f.isDirectory && f.name.matches(Regex("\\d{8}")) }?.size ?: 0} date dirs, combined_data.csv=${cos.resolve("combined_data.csv").isFile}" }
+        val cd = findChild(sourcesRoot, "CoughDataset-main", "CoughDataset")
+        line("CoughDataset", cd) { "covid=${cd!!.resolve("covid").isDirectory || cd.name.equals("covid", true)}" }
+        val cv = findChild(sourcesRoot, "coughvid_20211012", "coughvid", "public_dataset_v3", "public_dataset")
+        line("COUGHVID", cv) { "metadata_compiled.csv=${cv!!.resolve("metadata_compiled.csv").isFile}" }
+        val d1 = findChild(sourcesRoot, "dataset_1sec")
+        line("dataset_1sec", d1) { "folders=${(d1!!.listFiles { f -> f.isDirectory } ?: emptyArray()).joinToString(",") { it.name }}" }
+        val esc = findChild(sourcesRoot, "ESC-50-master", "ESC-50")
+        line("ESC-50", esc) { "audio=${esc!!.resolve("audio").isDirectory}, esc50.csv=${esc.resolve("meta/esc50.csv").isFile}" }
     }
 
     /** Canonical health bucket; raw value is always retained in metadata_json. */
