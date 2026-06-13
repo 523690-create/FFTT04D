@@ -80,6 +80,7 @@ object AllDataBuilder {
         usedNames.clear(); rows.clear()
         converted.set(0); reused.set(0); failed.set(0); images.set(0)
         outDir.mkdirs()
+        excludeDir = outDir.canonicalFile   // never re-ingest the output folder (guardrail vs ALLDATA→ALLDATA)
 
         if (!AudioDecoder.ffmpegAvailable()) {
             onProgress(Progress("error", 0, 0, "ffmpeg not found — cannot convert audio. Install Gyan.FFmpeg."))
@@ -94,6 +95,7 @@ object AllDataBuilder {
                 ::collectCoughDataset, ::collectCoughvid, ::collectDataset1sec, ::collectEsc50
             )) {
                 if (cancelled) break
+                onProgress(Progress("scan", 0, 0, "Scanning for the next dataset… (large folders can take a while)"))
                 val before = rows.size
                 val jobs = src(sourcesRoot, outDir)
                 if (jobs.isEmpty()) continue
@@ -104,6 +106,7 @@ object AllDataBuilder {
 
             // --- Coswara: streamed from split tars, one date at a time (bounds temp disk) -------
             if (!cancelled) {
+                onProgress(Progress("scan", 0, 0, "Scanning Coswara (streaming/extracting tars)…"))
                 val before = rows.size
                 buildCoswara(sourcesRoot, outDir, pool, onProgress)
                 if (rows.size > before) bySource["Coswara"] = rows.size - before
@@ -386,13 +389,29 @@ object AllDataBuilder {
      * deeper inside a subfolder that also matches a requested name — e.g. `X/X` from extracting an
      * archive "into a folder named after the zip", or `public_dataset_v3/coughvid_20211012`.
      */
-    private fun findChild(root: File, vararg names: String): File? =
-        matchChild(root, names)?.let { drillToContent(it) }
+    /** Build output folder, excluded from ALL dataset discovery so it can't be re-ingested into itself. */
+    @Volatile private var excludeDir: File? = null
+    private fun isExcluded(f: File): Boolean {
+        val ex = excludeDir ?: return false
+        return try { val p = f.canonicalFile.path; p == ex.path || p.startsWith(ex.path + File.separator) }
+        catch (e: Exception) { false }
+    }
 
-    private fun matchChild(root: File, names: Array<out String>): File? {
-        val children = root.listFiles { f -> f.isDirectory } ?: return null
-        for (n in names) children.firstOrNull { it.name.equals(n, true) }?.let { return it }
-        for (n in names) children.firstOrNull { it.name.startsWith(n, true) }?.let { return it }
+    /** Locate a dataset under [root] by BFS through the directory subtree (so it's found wherever it's
+     *  nested, not only as a direct child), SKIPPING the build output folder, then drill to its content. */
+    private fun findChild(root: File, vararg names: String): File? =
+        searchTree(root, names)?.let { drillToContent(it) }
+
+    private fun searchTree(root: File, names: Array<out String>): File? {
+        val queue = ArrayDeque<Pair<File, Int>>()
+        queue.add(root to 0)
+        while (queue.isNotEmpty()) {
+            val (dir, depth) = queue.removeFirst()
+            val subs = (dir.listFiles { f -> f.isDirectory && !isExcluded(f) } ?: continue).toList()
+            for (n in names) subs.firstOrNull { it.name.equals(n, true) }?.let { return it }
+            for (n in names) subs.firstOrNull { it.name.startsWith(n, true) }?.let { return it }
+            if (depth < 3) subs.forEach { queue.add(it to depth + 1) }   // descend up to 3 levels
+        }
         return null
     }
 
@@ -406,13 +425,13 @@ object AllDataBuilder {
     private fun drillToContent(start: File): File {
         var d = start
         repeat(6) {
-            val subs = d.listFiles { f -> f.isDirectory } ?: return d
-            // Content root if it has a recognisable marker (date dirs / audio dir / dataset CSV) or
-            // it isn't a single-subfolder wrapper. Marker checks are cheap (no listing huge flat dirs).
-            val marker = subs.any { it.name.matches(Regex("\\d{8}")) || it.name.equals("audio", true) } ||
-                d.resolve("metadata_compiled.csv").isFile || d.resolve("combined_data.csv").isFile ||
-                d.resolve("meta").isDirectory
-            if (marker || subs.size != 1) return d
+            // Cheap dataset-marker FILE checks FIRST, so we never enumerate a huge flat folder (e.g.
+            // COUGHVID's ~68k files on an external drive) just to look for subdirectories.
+            if (d.resolve("metadata_compiled.csv").isFile || d.resolve("combined_data.csv").isFile ||
+                d.resolve("meta").isDirectory) return d
+            val subs = d.listFiles { f -> f.isDirectory && !isExcluded(f) } ?: return d
+            val markerDir = subs.any { it.name.matches(Regex("\\d{8}")) || it.name.equals("audio", true) }
+            if (markerDir || subs.size != 1) return d
             d = subs[0]
         }
         return d
