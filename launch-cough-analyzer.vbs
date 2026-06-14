@@ -7,7 +7,9 @@ Dim fso, shell, root, libs, jar, javaw
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 
-root = "C:\AndroidStudio\FFTT04D"
+' Self-locating: the project root is the folder THIS script lives in, so the icon keeps working
+' wherever the project is moved/cloned (C:\…, D:\AndroidProjects\…, etc.) — no hard-coded path.
+root = fso.GetParentFolderName(WScript.ScriptFullName)
 libs = root & "\desktop\build\libs"
 
 ' 1) Prefer the libs dir; 2) fall back to a project-wide search for the app jar.
