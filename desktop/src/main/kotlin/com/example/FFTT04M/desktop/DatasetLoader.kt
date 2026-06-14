@@ -90,6 +90,61 @@ object DatasetLoader {
         return recordings.sortedBy { it.id }
     }
 
+    /**
+     * Load the consolidated ALLDATA corpus from its `metadata.csv` (one row per WAV), carrying each
+     * clip's per-row metadata (source, sound_type, is_cough, health_status, …) so the codebook's
+     * RespiratoryTaxonomy can group-tag correctly. This is the input for the JOINT phoneme codebook.
+     */
+    fun loadAllData(dir: File): List<AudioRecording> {
+        val csv = File(dir, "metadata.csv")
+        if (!csv.isFile) return emptyList()
+        val rows = parseCsv(csv.readText())
+        if (rows.size < 2) return emptyList()
+        val h = rows[0].map { it.trim() }
+        fun idx(n: String) = h.indexOf(n)
+        val iWav = idx("wav"); val iSrc = idx("source"); val iType = idx("sound_type")
+        val iCough = idx("is_cough"); val iHealth = idx("health_status")
+        val iAge = idx("age"); val iGen = idx("gender"); val iCountry = idx("country")
+        val out = ArrayList<AudioRecording>(rows.size)
+        for (r in rows.drop(1)) {
+            if (iWav < 0 || r.size <= iWav) continue
+            val wav = r[iWav].trim(); if (wav.isEmpty()) continue
+            val f = File(dir, wav); if (!f.isFile) continue
+            val st = r.getOrNull(iType)?.trim().orEmpty()
+            val meta = LinkedHashMap<String, String>()
+            meta["source"] = r.getOrNull(iSrc)?.trim().orEmpty().ifEmpty { "ALLDATA" }
+            if (st.isNotEmpty()) { meta["sound_type"] = st; meta["category"] = st } // both, for the taxonomy
+            r.getOrNull(iCough)?.trim()?.takeIf { it.isNotEmpty() }?.let { meta["is_cough"] = it }
+            r.getOrNull(iHealth)?.trim()?.takeIf { it.isNotEmpty() && it != "na" }?.let { meta["health_status"] = it }
+            r.getOrNull(iAge)?.trim()?.takeIf { it.isNotEmpty() }?.let { meta["age"] = it }
+            r.getOrNull(iGen)?.trim()?.takeIf { it.isNotEmpty() }?.let { meta["gender"] = it }
+            r.getOrNull(iCountry)?.trim()?.takeIf { it.isNotEmpty() }?.let { meta["country"] = it }
+            out.add(AudioRecording(id = f.nameWithoutExtension, audioFile = f, metadata = meta))
+        }
+        return out
+    }
+
+    /** Minimal RFC-4180 CSV parse (quotes, embedded commas, CRLF) — for ALLDATA's metadata.csv. */
+    private fun parseCsv(text: String): List<List<String>> {
+        val rows = ArrayList<List<String>>(); var field = StringBuilder()
+        var rec = ArrayList<String>(); var q = false; var i = 0
+        fun endF() { rec.add(field.toString()); field = StringBuilder() }
+        fun endR() { endF(); rows.add(rec); rec = ArrayList() }
+        while (i < text.length) { val c = text[i]
+            when {
+                q -> when { c == '"' && i + 1 < text.length && text[i + 1] == '"' -> { field.append('"'); i++ }
+                            c == '"' -> q = false; else -> field.append(c) }
+                c == '"' -> q = true
+                c == ',' -> endF()
+                c == '\r' -> { if (i + 1 < text.length && text[i + 1] == '\n') i++; endR() }
+                c == '\n' -> endR()
+                else -> field.append(c)
+            }; i++
+        }
+        if (field.isNotEmpty() || rec.isNotEmpty()) endR()
+        return rows
+    }
+
     /** Read a flat JSON object's top-level primitive members into a String map (via gson). */
     private fun flatJson(file: File): Map<String, String> {
         if (!file.isFile) return emptyMap()

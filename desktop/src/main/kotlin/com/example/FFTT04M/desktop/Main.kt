@@ -101,6 +101,12 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         buttonPanel.add(createButton("Request from USB Device") {
             loadFromUsb()
         })
+        // Load the consolidated ALLDATA corpus (metadata.csv-aware) — the input for the joint codebook.
+        buttonPanel.add(createButton("Load ALLDATA") {
+            val dir = pickDirectory("Select the ALLDATA folder (built via Build ALLDATA)",
+                "allDataIn", "D:\\AndroidProjects\\ALLDATA") ?: return@createButton
+            loadAllDataFolder(dir)
+        })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
         // Secondary image passes over a ready ALLDATA folder (resumable; skip clips already imaged).
@@ -168,6 +174,20 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         panel.add(bottomPanel, BorderLayout.SOUTH)
 
         contentPane = panel
+    }
+
+    /** Load the consolidated ALLDATA corpus (metadata.csv-aware) for the joint codebook. */
+    private fun loadAllDataFolder(dir: File) {
+        if (isAnalyzing) { showStatus("Busy…"); return }
+        thread {
+            showStatus("Loading ALLDATA from ${dir.name}…")
+            val list = DatasetLoader.loadAllData(dir)
+            if (list.isEmpty()) { showStatus("No metadata.csv/WAVs under ${dir.absolutePath} (build ALLDATA first)"); return@thread }
+            recordings.clear(); recordings.addAll(list)
+            selectedDataset = null
+            updateRecordingsList()
+            showStatus("ALLDATA: ${recordings.size} clips loaded — now click Discover Codebook")
+        }
     }
 
     private fun loadDataset() {

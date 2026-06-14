@@ -24,7 +24,8 @@ object RespiratoryTaxonomy {
         when {
             soundType.startsWith("cough") -> return Label(Group.RESPIRATORY, "cough")
             soundType.startsWith("breathing") -> return Label(Group.RESPIRATORY, "breathing")
-            soundType.startsWith("vowel") || soundType.startsWith("counting") -> return Label(Group.SPEECH, "speech")
+            soundType.startsWith("vowel") || soundType.startsWith("counting") ||
+                soundType.startsWith("speech") -> return Label(Group.SPEECH, "speech")
         }
 
         // ESC-50 / labelled categories.
