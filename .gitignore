@@ -48,3 +48,6 @@ xcuserdata/
 
 # Desktop per-build version-letter counter (per-machine, like the mobile icon counter)
 desktop/version_letter_index.txt
+
+# Local NVIDIA CUDA runtime DLLs (redist binaries; place per HANDOFF, not version-controlled)
+desktop/native/
