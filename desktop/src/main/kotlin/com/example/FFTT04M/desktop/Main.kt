@@ -136,9 +136,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val metaButton = createButton("Meta-Analysis (Tensor)") {
             metaAnalysis()
         }
+        val codebookButton = createButton("Discover Codebook") {
+            discoverCodebook()
+        }
         analysisPanel.add(startButton)
         analysisPanel.add(metaButton)
         analysisPanel.add(exportButton)
+        analysisPanel.add(codebookButton)
         leftPanel.add(analysisPanel, BorderLayout.SOUTH)
 
         // Right: Results display
@@ -788,6 +792,48 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 out.writeText(MetaAnalyzer.tensorCsv(tensor))
                 showStatus("Tensor exported: ${out.name} (${tensor.n}×${tensor.dim}) in ${out.parent}")
             } catch (e: Exception) { showStatus("Tensor export failed: ${e.message}") }
+        }
+    }
+
+    /**
+     * Acoustic Unit Discovery: cluster the loaded sound DB into one joint codebook of "phonemes"
+     * (WholeClipFeatures → z-score → k-means → group-tagged units) and export codebook.json — the
+     * artifact the M apps load to keep RESPIRATORY tokens and reject SPEECH/NOISE.
+     */
+    private fun discoverCodebook() {
+        if (recordings.isEmpty()) { showStatus("Load a dataset first, then Discover Codebook"); return }
+        if (isAnalyzing) { showStatus("Busy…"); return }
+        val kStr = JOptionPane.showInputDialog(this, "Number of acoustic units (K):", "64") ?: return
+        val k = kStr.trim().toIntOrNull()?.coerceIn(2, 1024)
+            ?: run { showStatus("Invalid K"); return }
+        if (k > recordings.size) { showStatus("K ($k) exceeds clips (${recordings.size})"); return }
+        isAnalyzing = true
+        thread {
+            try {
+                showStatus("Discovering codebook (K=$k) over ${recordings.size} clips on ${engine.workers} cores…")
+                val res = AcousticUnitDiscovery.discover(recordings, k) { d, t ->
+                    if (d % 25 == 0 || d == t) showStatus("Featurising $d/$t…")
+                }
+                val cb = res.codebook
+                val sb = StringBuilder()
+                sb.append("=== CODEBOOK (K=$k) ===\n")
+                sb.append("${cb.units.size} units · ${cb.event_count} events · mean purity ${String.format("%.2f", res.meanPurity)}\n")
+                sb.append("group event-counts: ${res.groupCounts}\n\n")
+                for (u in cb.units) sb.append(String.format("  %-16s [%-11s] n=%-4d purity=%.2f%n", u.id, u.group, u.size, u.purity))
+                val report = sb.toString()
+                SwingUtilities.invokeLater { analysisResultsArea.text = report; analysisResultsArea.caretPosition = 0 }
+
+                val lastDir = exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
+                    ?: File(System.getProperty("user.home"), "Documents")
+                val out = incrementUntilFree(nextFreeFile(lastDir, "codebook", "json"))
+                AcousticUnitDiscovery.write(cb, out)
+                out.parentFile?.let { exportPrefs.put("dir", it.absolutePath) }
+                showStatus("Codebook: ${cb.units.size} units -> ${out.name} (in ${out.parent})")
+            } catch (e: Exception) {
+                showStatus("Codebook discovery failed: ${e.message}")
+            } finally {
+                isAnalyzing = false
+            }
         }
     }
 

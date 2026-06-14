@@ -1,7 +1,30 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-12.
+Date: 2026-06-13.
+
+## SESSION 2026-06-13 — Acoustic Unit Discovery (cough "phoneme" codebook) — BUILT, NOT YET RUN
+Workspace is now **D:\AndroidProjects** (fresh clones; datasets still being imported by the user).
+Plan agreed: treat each discrete respiratory event-type as an acoustic unit ("phoneme"); desktop does
+the hard discovery and exports ONE joint codebook; the M apps load it to keep RESPIRATORY tokens and
+reject SPEECH/NOISE (train-on-desktop / infer-on-device, same pattern as cough_forest.txt.gz).
+- **New: `AcousticUnitDiscovery.kt`** — decode + `WholeClipFeatures` (14-dim, byte-identical on M, so
+  the codebook is portable) → z-score (`CoughSimilarity.standardize`) → **k-means** (k-means++, fixed
+  seed 42 = reproducible) → tag each unit's coarse group by labelled-majority + purity + a centroid
+  exemplar. Exports `codebook.json` = {feature_names, standardization mean/std, units[{id,group,fine,
+  centroid,size,purity,exemplar}]}. Device decode = extract WholeClipFeatures → standardize with these
+  stats → nearest centroid → keep if group==RESPIRATORY.
+- **New: `RespiratoryTaxonomy.kt`** — metadata→{RESPIRATORY,SPEECH,NOISE,UNKNOWN}+fine. Heuristic &
+  extensible (Coswara sound_type, ESC-50 category, CoughDataset1, USB). stridor/wheeze have no public
+  data yet → those units won't appear until collected.
+- **UI:** "Discover Codebook" button (prompts K, default 64) → runs on the loaded `recordings`,
+  writes codebook_NNN.json (persistent dir + increment), reports units/groups/purity.
+- **STATUS: compiles + fatJar builds (14 MB). NOT run on data — user is still importing DBs; first
+  real discovery run is TOMORROW.** Group-tagging should be label-supervised (it is) to keep keep/
+  reject accuracy high; v1 operates per loaded dataset — a "load all sources" sweep is a tomorrow add.
+- **Next:** run discovery on the full corpus; then build the M-side codebook decode (replace/augment
+  the forest gate with nearest-centroid respiratory tokenization; store token id in cough metadata).
+
 
 > **This is the desktop repo.** Earlier versions of this file were a copy of the *mobile* app's
 > handoff (Nexus 7, APK signing, EQ labels, etc.) — none of that applies here. The authoritative
