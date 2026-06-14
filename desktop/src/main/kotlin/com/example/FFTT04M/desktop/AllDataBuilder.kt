@@ -93,7 +93,8 @@ object AllDataBuilder {
             // --- Plain-file sources: enumerate jobs up front, convert in parallel ---------------
             for ((name, src) in listOf<Pair<String, (File, File) -> List<Job>>>(
                 "CoughDataset" to ::collectCoughDataset, "COUGHVID" to ::collectCoughvid,
-                "dataset_1sec" to ::collectDataset1sec, "ESC-50" to ::collectEsc50
+                "dataset_1sec" to ::collectDataset1sec, "ESC-50" to ::collectEsc50,
+                "UrbanSound8K" to ::collectUrbanSound8K, "train" to ::collectTrain
             )) {
                 if (cancelled) break
                 onProgress(Progress("scan", 0, 0, "Scanning for $name under ${sourcesRoot.name}\\ … (enumerating files can be slow on external drives)"))
@@ -132,6 +133,7 @@ object AllDataBuilder {
             w.newLine()
             for (r in rows.sortedWith(compareBy({ it.source }, { it.wav }))) { w.write(r.toCsv()); w.newLine() }
         }
+        File(outDir, "_tmp_train").deleteRecursively()   // remove any leftover speech-segment chunks
 
         return Summary(
             rows.size, converted.get(), reused.get(), failed.get(), images.get(),
@@ -237,6 +239,34 @@ object AllDataBuilder {
         }
     }
 
+    // ---- metadata merge (boolean-aware) --------------------------------------------------------
+
+    // Word booleans seen across the datasets (Coswara True/blank & y/n; COUGHVID True/False).
+    // Numeric 0/1 are NOT treated as booleans (e.g. cough_detected="0.0" is a real probability).
+    private val TRUE_TOKENS = setOf("true", "yes", "y")
+    private val FALSE_TOKENS = setOf("false", "no", "n")
+
+    /**
+     * Merge a source's key/value pairs into [meta] with CORRECT boolean handling, so misleading
+     * metadata never transfers:
+     *  - a **true-like** field contributes only its KEY as a present qualifier (`key=true`) — e.g. a
+     *    Coswara `smoker=True` column or a COUGHVID `wheezing_1=True` annotation becomes the tag name;
+     *  - a **false-like** field is OMITTED entirely (no `key=false` — this was the transfer bug);
+     *  - any other non-blank value is kept verbatim as `key=value` (age, gender, status, …).
+     * Applies identically to CSV boolean-flag columns and JSON boolean qualifiers.
+     */
+    private fun mergeMeta(meta: MutableMap<String, String>, src: Map<String, String>) {
+        for ((k, raw) in src) {
+            val v = raw.trim()
+            if (v.isEmpty()) continue
+            when (v.lowercase()) {
+                in TRUE_TOKENS -> meta[k] = "true"     // keep the qualifier name; presence == true
+                in FALSE_TOKENS -> { /* reject: misleading false qualifier */ }
+                else -> meta[k] = v                    // genuine value column
+            }
+        }
+    }
+
     // ---- per-dataset collectors ----------------------------------------------------------------
 
     /** CoughDataset-main: a `covid/` folder of cough clips, all presumed COVID. */
@@ -263,8 +293,8 @@ object AllDataBuilder {
             // Merge per-file json (datetime/cough_detected/lat/long) with the compiled csv row.
             val meta = LinkedHashMap<String, String>()
             meta["source"] = "COUGHVID"
-            Json.flat(dir.resolve("$uuid.json")).forEach { (k, v) -> meta[k] = v }
-            compiled[uuid]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
+            mergeMeta(meta, Json.flat(dir.resolve("$uuid.json")))
+            compiled[uuid]?.let { mergeMeta(meta, it) }
             jobFor(outDir, "coughvid", uuid, f, false, Row(
                 wav = "", source = "COUGHVID", originalId = uuid, soundType = "cough",
                 isCough = "true", healthStatus = canonStatus(meta["status"]),
@@ -310,6 +340,56 @@ object AllDataBuilder {
             ))
         }
     }
+
+    /** UrbanSound8K: 10 environmental classes (none are coughs → all negatives). Real metadata in
+     *  metadata\UrbanSound8K.csv keyed by slice_file_name; audio under audio\fold1..fold10\. */
+    private fun collectUrbanSound8K(root: File, outDir: File): List<Job> {
+        val dir = findChild(root, "UrbanSound8K") ?: return emptyList()
+        val meta = Csv.readKeyed(dir.resolve("metadata/UrbanSound8K.csv"), keyCol = "slice_file_name")
+        val audioRoot = dir.resolve("audio").takeIf { it.isDirectory } ?: dir
+        val files = (audioRoot.listFiles { f -> f.isDirectory } ?: emptyArray())
+            .flatMap { audioFiles(it) }.ifEmpty { audioFiles(audioRoot) }
+        return files.map { f ->
+            val row = meta[f.name] ?: emptyMap()
+            val cls = row["class"] ?: "unknown"
+            val m = LinkedHashMap<String, String>(); m["source"] = "UrbanSound8K"; mergeMeta(m, row)
+            jobFor(outDir, "urban8k", f.nameWithoutExtension, f, false, Row(
+                wav = "", source = "UrbanSound8K", originalId = f.nameWithoutExtension, soundType = cls,
+                isCough = "false", healthStatus = "na", age = "", gender = "", country = "",
+                coughDetected = "", metadataJson = gson.toJson(m)
+            ))
+        }
+    }
+
+    /** Long-form speech (old-time radio): no per-file metadata, blanket-labelled "mostly speech"
+     *  negatives. Each episode is ffmpeg-segmented into [TRAIN_SEG_SEC]s WAV chunks (capped per file)
+     *  so ALLDATA gets clip-sized speech, not multi-hundred-MB whole episodes. */
+    private fun collectTrain(root: File, outDir: File): List<Job> {
+        val dir = findChild(root, "train") ?: return emptyList()
+        val tmp = File(outDir, "_tmp_train").apply { mkdirs() }
+        val jobs = ArrayList<Job>()
+        var capped = 0
+        for (f in audioFiles(dir)) {
+            if (cancelled) break
+            val chunks = AudioDecoder.segmentToWav(f, tmp, "tr_" + sanitize.replace(f.nameWithoutExtension.take(36), "_"),
+                seconds = TRAIN_SEG_SEC)
+            val use = if (chunks.size > TRAIN_MAX_CHUNKS) { capped++; chunks.take(TRAIN_MAX_CHUNKS).also { drop -> chunks.drop(TRAIN_MAX_CHUNKS).forEach { it.delete() } } } else chunks
+            for (chunk in use) {
+                val id = chunk.nameWithoutExtension
+                val m = mapOf("source" to "train", "label" to "mostly speech", "file" to f.name)
+                jobs.add(jobFor(outDir, "train", id, chunk, true, Row(
+                    wav = "", source = "train", originalId = id, soundType = "speech",
+                    isCough = "false", healthStatus = "na", age = "", gender = "", country = "",
+                    coughDetected = "", metadataJson = gson.toJson(m)
+                )))
+            }
+        }
+        if (capped > 0) System.err.println("train: capped $capped episode(s) to $TRAIN_MAX_CHUNKS × ${TRAIN_SEG_SEC}s chunks")
+        return jobs
+    }
+
+    private const val TRAIN_SEG_SEC = 6
+    private const val TRAIN_MAX_CHUNKS = 60   // ≤6 min of each long episode (bounds the speech pool)
 
     // ---- Coswara (streamed split-tar extraction) -----------------------------------------------
 
@@ -362,8 +442,8 @@ object AllDataBuilder {
                 val meta = LinkedHashMap<String, String>()
                 meta["source"] = "Coswara"; meta["record_folder"] = dateDir.name
                 meta["participant"] = participant; meta["sound_type"] = soundType
-                combined[participant]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
-                perParticipantJson[participant]?.forEach { (k, v) -> if (v.isNotBlank()) meta[k] = v }
+                combined[participant]?.let { mergeMeta(meta, it) }
+                perParticipantJson[participant]?.let { mergeMeta(meta, it) }
                 jobFor(outDir, "coswara", participant, tmp, true, Row(
                     wav = "", source = "Coswara", originalId = participant, soundType = soundType,
                     isCough = if (soundType.startsWith("cough", true)) "true" else "false",
@@ -466,6 +546,10 @@ object AllDataBuilder {
         line("dataset_1sec", d1) { "folders=${(d1!!.listFiles { f -> f.isDirectory } ?: emptyArray()).joinToString(",") { it.name }}" }
         val esc = findChild(sourcesRoot, "ESC-50-master", "ESC-50")
         line("ESC-50", esc) { "audio=${esc!!.resolve("audio").isDirectory}, esc50.csv=${esc.resolve("meta/esc50.csv").isFile}" }
+        val u8 = findChild(sourcesRoot, "UrbanSound8K")
+        line("UrbanSound8K", u8) { "metadata=${u8!!.resolve("metadata/UrbanSound8K.csv").isFile}, audio=${u8.resolve("audio").isDirectory}" }
+        val tr = findChild(sourcesRoot, "train")
+        line("train", tr) { "${(tr!!.listFiles { f -> f.isFile && f.extension.lowercase() in AUDIO_EXT } ?: emptyArray()).size} audio files (mostly speech)" }
     }
 
     /** Canonical health bucket; raw value is always retained in metadata_json. */

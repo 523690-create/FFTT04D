@@ -118,6 +118,33 @@ object AudioDecoder {
         }
     }
 
+    /**
+     * Split [input] into fixed [seconds]-long canonical [sampleRate] Hz mono 16-bit WAV chunks in
+     * [outDir] (`<prefix>_000.wav`, `_001.wav`, …). Returns the chunk files sorted, or empty on
+     * failure. Used to turn long-form audio (e.g. radio speech) into clip-sized negatives.
+     */
+    fun segmentToWav(input: File, outDir: File, prefix: String, seconds: Int = 6, sampleRate: Int = 44100): List<File> {
+        val ff = ffmpegExe() ?: return emptyList()
+        return try {
+            outDir.mkdirs()
+            val pattern = File(outDir, "${prefix}_%03d.wav").absolutePath
+            val p = ProcessBuilder(
+                ff, "-y", "-hide_banner", "-loglevel", "error",
+                "-i", input.absolutePath,
+                "-ar", sampleRate.toString(), "-ac", "1", "-c:a", "pcm_s16le",
+                "-f", "segment", "-segment_time", seconds.toString(), pattern
+            ).redirectErrorStream(true).start()
+            val drain = Thread { try { p.inputStream.readBytes() } catch (_: Exception) {} }
+            drain.isDaemon = true; drain.start()
+            p.waitFor()
+            if (p.exitValue() != 0) return emptyList()
+            (outDir.listFiles { f -> f.isFile && f.name.startsWith("${prefix}_") && f.extension.equals("wav", true) }
+                ?: emptyArray()).sortedBy { it.name }
+        } catch (e: Exception) {
+            System.err.println("segmentToWav failed for ${input.name}: ${e.message}"); emptyList()
+        }
+    }
+
     // Resolved lazily and cached. null => not found.
     @Volatile private var ffmpegResolved = false
     @Volatile private var ffmpegCached: String? = null

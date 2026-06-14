@@ -3,6 +3,24 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13.
 
+## SESSION 2026-06-13b — ALLDATA metadata extraction fix + train / UrbanSound8K sources
+Fixes a real transfer bug + adds two sources (user is still importing audio; full ALLDATA build runs
+tomorrow — code compiles + fatJar builds, metadata rule validated against the real CSVs).
+- **Boolean metadata was transferred wrong.** The old merges (`if (v.isNotBlank()) meta[k]=v`) copied
+  boolean flags verbatim → e.g. COUGHVID `respiratory_condition=False` on 17,107 rows, Coswara
+  `smoker=False`/`smoker=n`. New **`AllDataBuilder.mergeMeta`** (used by COUGHVID, Coswara, and the new
+  collectors): a **true-like** field (`true/yes/y`) contributes only its KEY as a qualifier
+  (`key=true`); a **false-like** field (`false/no/n`) is OMITTED; anything else is kept as `key=value`.
+  Numeric 0/1 are NOT treated as boolean (cough_detected="0.0" is a real probability). This is exactly
+  the "reject misleading metadata incl. false-attached" rule.
+- **New `collectUrbanSound8K`** — real metadata (metadata/UrbanSound8K.csv keyed by slice_file_name;
+  audio/fold1..10/), all classes are non-cough negatives (is_cough=false, sound_type=class).
+- **New `collectTrain`** — long-form radio speech (52 × ~25-min mp3) ffmpeg-segmented into 6 s WAV
+  chunks (capped 60/episode via `AudioDecoder.segmentToWav`) labelled "mostly speech" negatives.
+- ALLDATA→ALLDATA still guarded (excludeDir). `diagnose()` now lists UrbanSound8K + train.
+- Residual: 2 Coswara rows have a state name in the `smoker` column (upstream CSV shift) — flagged,
+  not auto-repaired.
+
 ## SESSION 2026-06-13 — Acoustic Unit Discovery (cough "phoneme" codebook) — BUILT, NOT YET RUN
 Workspace is now **D:\AndroidProjects** (fresh clones; datasets still being imported by the user).
 Plan agreed: treat each discrete respiratory event-type as an acoustic unit ("phoneme"); desktop does
