@@ -14,13 +14,44 @@ import kotlin.math.sqrt
  */
 object MetaAnalyzer {
 
+    // Acoustic features only. Demographics (age/gender) are NOT cough features — they're emitted as
+    // separate descriptive columns by tensorCsv, not mixed into the feature vector.
     val featureNames: List<String> =
         listOf("ridge_curv", "ridge_slope", "ridge_cfreq", "duration_s",
                 "ridge_energy", "ridge_bw", "q_ratio", "fmax_hz") +
-        (0 until 13).map { "mfcc_$it" } +
-        listOf("age")
+        (0 until 13).map { "mfcc_$it" }
 
-    data class Row(val label: String, val isCough: Boolean, val raw: DoubleArray)
+    /** Provenance/demographics parsed from a recording id, kept OUT of the feature vector and the
+     *  label so the CSV's first column isn't polluted with age/sex (user request). */
+    data class Meta(
+        val clipId: String, val source: String, val soundType: String,
+        val age: String, val gender: String, val health: String,
+    )
+
+    data class Row(val label: String, val isCough: Boolean, val raw: DoubleArray, val meta: Meta)
+
+    private val GENDERS = setOf("male", "female", "other", "m", "f", "man", "woman")
+    private val AGE_RE = Regex("^a(\\d{1,3})$")
+
+    /** Parse the ALLDATA filename id `source__origId__sound__(cough|noncough)__health__a<age>__<gender>__country`.
+     *  Optional fields are detected by pattern (age = `a\d+`, gender = known word) so positions can shift.
+     *  Non-dataset (transferred) clips with no `__` just yield a clean id and blank demographics. */
+    private fun parseMeta(recId: String): Meta {
+        val parts = recId.split("__")
+        val source = parts.getOrElse(0) { "" }
+        val soundType = parts.getOrElse(2) { "" }
+        var age = ""; var gender = ""
+        for (p in parts) {
+            AGE_RE.find(p)?.let { age = it.groupValues[1] }
+            if (p.lowercase() in GENDERS) gender = p.lowercase()
+        }
+        val flag = parts.indexOfFirst { it == "cough" || it == "noncough" }
+        val health = if (flag >= 0 && flag + 1 < parts.size) parts[flag + 1] else ""
+        // Stable, demographics-free id: source + original id (or the whole id if it isn't ALLDATA-formatted).
+        val clipId = if (parts.size >= 2) listOf(source, parts[1]).filter { it.isNotBlank() }.joinToString("__")
+                     else recId
+        return Meta(clipId, source, soundType, age, gender, health)
+    }
 
     data class Tensor(
         val rows: List<Row>,
@@ -32,24 +63,25 @@ object MetaAnalyzer {
         val dim get() = featureNames.size
     }
 
-    /** Per-event feature vector; missing MFCC/age default to 0 (z-score handles scale). */
-    private fun eventVector(e: CoughEvent, rec: AudioRecording): DoubleArray {
+    /** Per-event acoustic feature vector; missing MFCC defaults to 0 (z-score handles scale). */
+    private fun eventVector(e: CoughEvent): DoubleArray {
         val base = e.featureVector()                 // 8 DSP dims
         val mfccMean = e.mfcc?.mean ?: DoubleArray(0)
         val mfcc13 = DoubleArray(13) { if (it < mfccMean.size) mfccMean[it] else 0.0 }
-        val age = (rec.metadata["age"] ?: rec.metadata["a"])?.toString()?.toDoubleOrNull() ?: 0.0
-        return base + mfcc13 + doubleArrayOf(age)
+        return base + mfcc13
     }
 
     fun buildTensor(results: List<ParallelCoughAnalyzer.ClipResult>): Tensor {
         val rows = ArrayList<Row>()
         for (r in results) {
             val a = r.analysis ?: continue
+            val meta = parseMeta(r.recording.id)
             for (e in a.events) {
                 rows.add(Row(
-                    label = "${r.recording.id}#${e.index}",
+                    label = "${meta.clipId}#${e.index}",
                     isCough = e.speech.isLikelyCough,
-                    raw = eventVector(e, r.recording),
+                    raw = eventVector(e),
+                    meta = meta,
                 ))
             }
         }
@@ -97,19 +129,28 @@ object MetaAnalyzer {
         return Summary(n, t.dim, coughCount, if (cnt > 0) sum / cnt else 0.0, mn, mx, nn, true)
     }
 
-    /** Standardized tensor as CSV (label,is_cough,<features...>) for external tools / training. */
+    /** Standardized tensor as CSV for external tools / training. Demographics/provenance are now
+     *  their own columns (clip_id, source, sound_type, age, gender, health) so the first column is a
+     *  clean id and `is_cough` is the lone target — no age/sex buried in the label. */
     fun tensorCsv(t: Tensor, standardized: Boolean = true): String {
         val sb = StringBuilder()
-        sb.append("label,is_cough,").append(featureNames.joinToString(",")).append('\n')
+        sb.append("clip_id,source,sound_type,age,gender,health,is_cough,")
+            .append(featureNames.joinToString(",")).append('\n')
         for (idx in t.rows.indices) {
             val row = t.rows[idx]
+            val m = row.meta
             val vec = if (standardized) t.standardized[idx] else row.raw
-            sb.append('"').append(row.label.replace("\"", "\"\"")).append('"').append(',')
+            sb.append(q(row.label)).append(',')
+                .append(q(m.source)).append(',').append(q(m.soundType)).append(',')
+                .append(q(m.age)).append(',').append(q(m.gender)).append(',').append(q(m.health)).append(',')
             sb.append(if (row.isCough) 1 else 0).append(',')
             sb.append(vec.joinToString(",") { fmt(it) }).append('\n')
         }
         return sb.toString()
     }
+
+    /** CSV-quote a string field (RFC4180). */
+    private fun q(s: String): String = '"' + s.replace("\"", "\"\"") + '"'
 
     private fun fmt(v: Double): String =
         if (v.isNaN() || v.isInfinite()) "0" else String.format(java.util.Locale.US, "%.6g", v)
