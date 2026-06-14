@@ -194,11 +194,20 @@ object AllDataBuilder {
         if (pcm.isEmpty()) return
         if (!png.isFile) try { SpectrogramRenderer.renderFftPng(pcm, 44100, png); images.incrementAndGet() }
             catch (e: Exception) { System.err.println("FFT image failed ${wav.name}: ${e.message}") }
-        // CWT is the compute hot path; run it on the NVIDIA GPU (RTX) via cuFFT when available
-        // (GpuFft.available() guards it — falls back to the CPU FFT if no driver/DLLs).
-        if (!jpg.isFile) try { SpectrogramRenderer.renderCwtJpg(pcm, 44100, jpg, useGpu = true); images.incrementAndGet() }
+        // CWT is the compute hot path. HETEROGENEOUS scheduling: the single GPU is ~2.7x faster than
+        // ONE CPU thread but ~7.5x slower than all 20 cores together, so we let the GPU process a clip
+        // ONLY when it's free (one-permit), while the other worker threads render on CPU — GPU
+        // throughput ADDS to the CPU pool instead of serializing every clip through one device.
+        if (!jpg.isFile) {
+            val onGpu = GpuFft.available() && gpuPermit.tryAcquire()
+            try { SpectrogramRenderer.renderCwtJpg(pcm, 44100, jpg, useGpu = onGpu); images.incrementAndGet() }
             catch (e: Exception) { System.err.println("CWT image failed ${wav.name}: ${e.message}") }
+            finally { if (onGpu) gpuPermit.release() }
+        }
     }
+
+    /** One concurrent GPU CWT at a time (GpuFft is single-device/@Synchronized); the rest go to CPU. */
+    private val gpuPermit = java.util.concurrent.Semaphore(1)
 
     // ---- output-name allocation ----------------------------------------------------------------
 

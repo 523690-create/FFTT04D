@@ -6,14 +6,19 @@ Date: 2026-06-13.
 ## HARDWARE (this desktop, 2026-06-13) + acceleration status
 - **GPU: NVIDIA RTX 4060 Ti** (cuFFT path applies) · **CPU: Intel Core Ultra 7 265 (20C)** ·
   **NPU: Intel AI Boost** · iGPU: Intel Graphics.
-- **ALLDATA CWT now runs on the GPU** (`renderImages` → `renderCwtJpg(..., useGpu=true)`); guarded by
-  `GpuFft.available()` so it falls back to CPU if CUDA is missing.
-- **To actually engage the RTX:** drop the **CUDA 12.6** runtime DLLs into
-  `desktop/native/cuda/` (or set env `FFTT04D_CUDA_DIR`): **`cudart64_12.dll`, `cufft64_11.dll`,
-  `nvJitLink_120_0.dll`** (from the NVIDIA CUDA 12.6 redist; JCuda dep is 12.6.0). Until then it's CPU.
-- ffmpeg audio transcode is CPU/IO-bound (already one-per-core, 20 cores) — GPU/NPU don't help there;
-  the GPU win is the CWT graphics. **NPU (AI Boost) is for the future NEURAL tier** (EAT/CNN log-mel
-  inference via ONNX-Runtime + OpenVINO EP), NOT FFT/CWT/transcode — wire it when that model lands.
+- **CUDA 12.6 DLLs are installed** at `desktop/native/cuda/` (`cudart64_12.dll`, `cufft64_11.dll`,
+  `nvJitLink_120_0.dll`, from the NVIDIA 12.6.3 redist — JCuda dep is 12.6.0). `GpuFft.available()`
+  now returns **true** on this box. (The toolkit at v13.0 is the WRONG version for JCuda 12.6 — not used.)
+  GpuFft DLL discovery walks up from the jar so the icon/VBS launch finds them with no env var.
+- **Measured (warm, 5 s clips):** GPU(serialized) **60.8 ms/clip** vs CPU **162.8 ms/clip** single-thread,
+  but ~**8.1 ms/clip** across 20 cores. So one serialized GPU is ~7.5× SLOWER than the 20-core CPU pool
+  for short clips — funnelling every clip through the GPU (`useGpu=true` everywhere) would SLOW the build.
+- **Fix: HETEROGENEOUS CWT** — `renderImages` runs a clip on the GPU only when a 1-permit semaphore is
+  free, else CPU; the GPU's throughput ADDS to the 20 CPU cores (≈+13%) instead of serializing.
+  A bigger GPU win would need cross-clip batching / multiple CUDA streams (GpuFft is single-device today).
+- ffmpeg audio transcode is CPU/IO-bound (one-per-core, 20 cores) — GPU/NPU don't help there.
+  **NPU (AI Boost) is for the future NEURAL tier** (EAT/CNN log-mel via ONNX-Runtime + OpenVINO EP),
+  NOT FFT/CWT/transcode — wire it when that model lands.
 
 ## SESSION 2026-06-13b — ALLDATA metadata extraction fix + train / UrbanSound8K sources
 Fixes a real transfer bug + adds two sources (user is still importing audio; full ALLDATA build runs

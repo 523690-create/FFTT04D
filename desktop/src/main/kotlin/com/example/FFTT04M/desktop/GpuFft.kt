@@ -113,7 +113,10 @@ object GpuFft {
         val candidates = buildList {
             System.getenv("FFTT04D_CUDA_DIR")?.let { add(File(it)) }
             add(File(System.getProperty("user.dir"), "native/cuda"))
-            jarDir()?.let { add(File(it, "native/cuda")); add(File(it.parentFile, "native/cuda")) }
+            // Walk up from the jar (…/desktop/build/libs/app.jar) so `desktop/native/cuda` is found
+            // however the app is launched (icon/VBS/CLI) without needing an env var or specific cwd.
+            var d: File? = jarDir()
+            repeat(4) { d?.let { add(File(it, "native/cuda")); d = it.parentFile } }
             System.getenv("CUDA_PATH")?.let { add(File(it, "bin")) }
         }
         val dir = candidates.firstOrNull { d -> names.all { File(d, it).isFile } } ?: return
