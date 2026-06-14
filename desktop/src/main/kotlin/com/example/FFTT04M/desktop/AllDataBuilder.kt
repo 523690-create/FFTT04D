@@ -194,7 +194,9 @@ object AllDataBuilder {
         if (pcm.isEmpty()) return
         if (!png.isFile) try { SpectrogramRenderer.renderFftPng(pcm, 44100, png); images.incrementAndGet() }
             catch (e: Exception) { System.err.println("FFT image failed ${wav.name}: ${e.message}") }
-        if (!jpg.isFile) try { SpectrogramRenderer.renderCwtJpg(pcm, 44100, jpg); images.incrementAndGet() }
+        // CWT is the compute hot path; run it on the NVIDIA GPU (RTX) via cuFFT when available
+        // (GpuFft.available() guards it — falls back to the CPU FFT if no driver/DLLs).
+        if (!jpg.isFile) try { SpectrogramRenderer.renderCwtJpg(pcm, 44100, jpg, useGpu = true); images.incrementAndGet() }
             catch (e: Exception) { System.err.println("CWT image failed ${wav.name}: ${e.message}") }
     }
 
