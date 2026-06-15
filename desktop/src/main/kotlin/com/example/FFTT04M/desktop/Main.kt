@@ -145,10 +145,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val codebookButton = createButton("Discover Codebook") {
             discoverCodebook()
         }
+        val matchRefButton = createButton("Export Match Ref (M app)") {
+            exportMatchRef()
+        }
         analysisPanel.add(startButton)
         analysisPanel.add(metaButton)
         analysisPanel.add(exportButton)
         analysisPanel.add(codebookButton)
+        analysisPanel.add(matchRefButton)
         leftPanel.add(analysisPanel, BorderLayout.SOUTH)
 
         // Right: Results display
@@ -884,6 +888,52 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 out.writeText(MetaAnalyzer.tensorCsv(tensor))
                 showStatus("Tensor exported: ${out.name} (${tensor.n}×${tensor.dim}) in ${out.parent}")
             } catch (e: Exception) { showStatus("Tensor export failed: ${e.message}") }
+        }
+    }
+
+    /**
+     * Build the compact `cough_ref.json` the M app bundles for on-device nearest-match auto-labeling.
+     * Requires a prior Analyze All (uses the same tensor as Meta-Analysis). Defaults the save dialog
+     * to the M app's assets folder if it can be located beside this project, so the next M build
+     * bundles it automatically.
+     */
+    private fun exportMatchRef() {
+        if (lastResults.isEmpty()) { showStatus("Run Analyze All first, then Export Match Ref"); return }
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        thread {
+            showStatus("Building match reference…")
+            val tensor = MetaAnalyzer.buildTensor(lastResults)
+            if (tensor.n == 0) { showStatus("No cough events to build a reference from"); return@thread }
+            // Prefer the sibling M assets dir (…/FFTT04M/app/src/main/assets) so it lands where it ships.
+            val mAssets = sequenceOf(
+                File(System.getProperty("user.dir")).parentFile?.let { File(it, "FFTT04M/app/src/main/assets") },
+                File("D:/AndroidProjects/FFTT04M/app/src/main/assets"),
+            ).filterNotNull().firstOrNull { it.isDirectory }
+            val lastDir = mAssets ?: exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
+                ?: File(System.getProperty("user.home"), "Documents")
+            val pick = arrayOfNulls<File>(1)
+            SwingUtilities.invokeAndWait {
+                val chooser = JFileChooser(lastDir).apply {
+                    dialogTitle = "Export cough_ref.json for the M app — Cancel to skip"
+                    selectedFile = File(lastDir, "cough_ref.json")
+                    fileFilter = FileNameExtensionFilter("JSON (*.json)", "json")
+                }
+                if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) pick[0] = chooser.selectedFile
+            }
+            var out = pick[0] ?: run { showStatus("Match ref not exported"); return@thread }
+            if (out.extension.lowercase() != "json") out = File(out.parentFile, out.name + ".json")
+            out.parentFile?.let { exportPrefs.put("dir", it.absolutePath) }
+            try {
+                val (n, buckets) = MatchRefExporter.write(tensor, out)
+                showStatus("Match ref: $n refs from $buckets classes → ${out.name} (in ${out.parent})")
+                SwingUtilities.invokeLater {
+                    analysisResultsArea.append("\n=== MATCH REF for M app ===\n")
+                    analysisResultsArea.append("wrote $n reference vectors ($buckets source|sound|health classes) + mean/std\n")
+                    analysisResultsArea.append("file: ${out.absolutePath}\n")
+                    analysisResultsArea.append("▶ Next: rebuild the M app so it bundles this asset; on-device clips get auto-match comments.\n")
+                    analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                }
+            } catch (e: Exception) { showStatus("Match ref export failed: ${e.message}") }
         }
     }
 
