@@ -274,19 +274,47 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
 
             showStatus("Pulling recordings from ${device.model} via USB…")
+            val tp = TaskProgress("USB pull")
+            tp.update(0, 0, "Pulling from ${device.model}…")   // indeterminate during the adb pull
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append("=== USB IMPORT from ${device.model} (${device.serial}) ===\n")
+                analysisResultsArea.append("destination: ${importRoot.absolutePath}\n")
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+            }
             val res = UsbImporter.pull(device, importRoot)
+            tp.finish()
             if (!res.ok) {
                 SwingUtilities.invokeLater {
+                    analysisResultsArea.append("FAILED: ${res.message}\n\n")
                     JOptionPane.showMessageDialog(this, res.message, "USB import", JOptionPane.WARNING_MESSAGE)
                 }
                 showStatus(res.message); return@thread
+            }
+            // Verbose per-file transfer log so the desktop end shows exactly what came across.
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append("source on device: ${res.srcDir}\n")
+                analysisResultsArea.append("pulled ${res.wavCount} file(s) · ${UsbImporter.humanBytes(res.totalBytes)}\n")
+                res.files.sortedBy { it.name }.forEach { f ->
+                    analysisResultsArea.append(
+                        String.format("  %-52s %10s%n", f.name.take(52), UsbImporter.humanBytes(f.length())))
+                }
+                analysisResultsArea.append("\n")
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
             }
             recordings.clear()
             recordings.addAll(DatasetLoader.loadDeviceImport(res.dir, device.model))
             selectedDataset = null
             updateRecordingsList()
-            // Acknowledge back to the phone so its Offer dialog confirms the transfer.
+            // Acknowledge back to the phone so its Offer dialog confirms the transfer (and, on the
+            // phone, unlocks the option to delete the now-safely-copied recordings — the phone decides).
             val acked = UsbImporter.sendAck(device, res.wavCount)
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(
+                    if (acked) "acknowledged ${res.wavCount} to phone (it may now offer to delete them)\n"
+                    else "WARNING: could not write ack back to phone; it won't offer to delete its copies\n")
+                analysisResultsArea.append("\n▶ Next: 'Analyze All' → choose 'USB import folder' to run the DSP engine.\n\n")
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+            }
             showStatus("USB: imported ${recordings.size} from ${device.model}" +
                 if (acked) " · acknowledged to phone" else "")
         }
@@ -376,8 +404,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
         if (mode == ImageBatch.Mode.CWT_GPU && !GpuFft.available()) {
             val go = JOptionPane.showConfirmDialog(this,
-                "No NVIDIA GPU / cuFFT available — this pass will run on the CPU instead.\nProceed?",
-                "GPU wavelets", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE)
+                "No NVIDIA GPU / cuFFT detected — this CWT pass will run on the CPU instead.\n\n" +
+                "This is fine: only the SPEED of CWT image generation changes, the output images are\n" +
+                "identical. The CPU path is perfectly usable for typical dataset sizes (it is just slower\n" +
+                "on very large batches).\n\n" +
+                "To enable GPU acceleration: an NVIDIA GPU with the CUDA toolkit (cuFFT) on the PATH.\n\n" +
+                "Run this pass on the CPU now?",
+                "GPU wavelets", JOptionPane.OK_CANCEL_OPTION, JOptionPane.INFORMATION_MESSAGE)
             if (go != JOptionPane.OK_OPTION) return
         }
         // Defaults to the ALLDATA output folder used by Build ALLDATA (same pref key).
@@ -649,7 +682,12 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             sb.append("=== Tier-1 DSP ANALYSIS (${engine.workers} cores) ===\n")
             sb.append(String.format("%d clips in %.1fs  ·  %.1f clips/s\n", n, elapsedS,
                 if (elapsedS > 0) n / elapsedS else 0.0))
-            sb.append("$totalEvents events detected · $totalCoughs cough-like · $skipped skipped\n\n")
+            sb.append("$totalEvents events detected · $totalCoughs cough-like · $skipped skipped\n")
+            sb.append("(cough-like = passed the speech/noise rejector; skipped = unreadable/too short)\n")
+            sb.append("\n▶ Next steps:\n")
+            sb.append("   • 'Meta-Analysis (Tensor)' builds the z-scored feature matrix + exports a training CSV.\n")
+            sb.append("   • 'Discover Codebook' clusters events into acoustic units (codebook.json).\n")
+            sb.append("   • 'Export segments.jsonl' for the per-event segments. Per-clip detail follows below.\n\n")
             for (r in results) sb.append(formatResult(r))
             val out = sb.toString()
             SwingUtilities.invokeLater { analysisResultsArea.text = out; analysisResultsArea.caretPosition = 0 }
@@ -765,27 +803,58 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private fun metaAnalysis() {
         if (lastResults.isEmpty()) { showStatus("Run Analyze All first, then Meta-Analysis"); return }
         if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        val tp = TaskProgress("Meta-Analysis")
         thread {
             showStatus("Building cough tensor…")
+            tp.update(0, 0, "Building tensor over ${lastResults.size} clips…")   // indeterminate
             val tensor = MetaAnalyzer.buildTensor(lastResults)
-            if (tensor.n == 0) { showStatus("No cough events to tensorize"); return@thread }
+            if (tensor.n == 0) { tp.finish(); showStatus("No cough events to tensorize"); return@thread }
+            tp.update(0, 0, "Measuring distances over ${tensor.n} events…")
             val s = MetaAnalyzer.analyze(tensor)
 
             val sb = StringBuilder()
             sb.append("=== META-ANALYSIS: cough tensor ===\n")
-            sb.append("tensor shape: ${s.n} events × ${s.dim} features\n")
-            sb.append("cough-like events: ${s.coughCount} / ${s.n}\n")
-            sb.append("features: ${MetaAnalyzer.featureNames.joinToString(", ")}\n\n")
+            sb.append("tensor shape: ${s.n} events × ${s.dim} features  (${lastResults.size} clips analysed)\n")
+            sb.append("cough-like events: ${s.coughCount} / ${s.n} (${pct(s.coughCount, s.n)})\n")
+            sb.append("values are z-scored per column (mean 0, sd 1) so all features weigh equally in distance.\n\n")
+
+            // Per-feature raw mean ± sd (the standardization basis) — shows each feature's natural range.
+            sb.append("feature                 raw mean       raw sd\n")
+            for (i in MetaAnalyzer.featureNames.indices) {
+                sb.append(String.format("  %-20s %12.4g %12.4g%n",
+                    MetaAnalyzer.featureNames[i], tensor.mean.getOrElse(i) { 0.0 }, tensor.std.getOrElse(i) { 0.0 }))
+            }
+
+            // Demographic / provenance breakdown parsed from clip ids (kept out of the feature vector).
+            fun tally(label: String, sel: (MetaAnalyzer.Row) -> String) {
+                val counts = tensor.rows.groupingBy { sel(it).ifBlank { "(unknown)" } }.eachCount()
+                    .entries.sortedByDescending { it.value }
+                sb.append("\nby $label: ")
+                sb.append(counts.joinToString("  ") { "${it.key}=${it.value}" }.take(160))
+                sb.append("\n")
+            }
+            tally("source") { it.meta.source }
+            tally("health") { it.meta.health }
+            tally("gender") { it.meta.gender }
+
+            sb.append("\n")
             if (s.pairwiseComputed) {
                 sb.append(String.format("pairwise Euclidean distance — mean %.3f, min %.3f, max %.3f%n",
                     s.meanDist, s.minDist, s.maxDist))
+                sb.append("(small min vs large max = the set spans near-duplicates through very different coughs)\n")
             } else {
                 sb.append("(>3000 events: skipped full pairwise matrix; nearest-neighbours below)\n")
             }
             sb.append("\nnearest neighbour (most similar cough) — sampled:\n")
             for ((a, b, d) in s.nnExamples) sb.append(String.format("  %-28s ~ %-28s  d=%.3f%n", a, b, d))
+
+            sb.append("\n▶ Next steps:\n")
+            sb.append("   • Export the standardized tensor CSV (dialog opening now) to train a model.\n")
+            sb.append("   • 'Discover Codebook' to cluster these events into acoustic units.\n")
+            sb.append("   • 'Build ALLDATA' / image buttons to generate spectrogram training images.\n")
             val report = sb.toString()
             SwingUtilities.invokeLater { analysisResultsArea.text = report; analysisResultsArea.caretPosition = 0 }
+            tp.finish()
             showStatus("Tensor: ${s.n}×${s.dim}. Export tensor CSV? use the dialog…")
 
             // Offer to save the standardized tensor as CSV.
@@ -823,35 +892,50 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private fun discoverCodebook() {
         if (recordings.isEmpty()) { showStatus("Load a dataset first, then Discover Codebook"); return }
         if (isAnalyzing) { showStatus("Busy…"); return }
-        val kStr = JOptionPane.showInputDialog(this, "Number of acoustic units (K):", "64") ?: return
+        val kStr = JOptionPane.showInputDialog(this,
+            "Number of acoustic units (K) to cluster the sound DB into.\n\n" +
+            "K is how many distinct \"acoustic phonemes\" k-means will learn across all loaded clips —\n" +
+            "the vocabulary the M/L apps load (codebook.json) to keep RESPIRATORY tokens and reject\n" +
+            "speech/noise. More units = finer detail but needs more clips per unit; 64–256 is typical.\n" +
+            "Must be ≥2 and ≤ the number of loaded clips (${recordings.size}).",
+            "64") ?: return
         val k = kStr.trim().toIntOrNull()?.coerceIn(2, 1024)
             ?: run { showStatus("Invalid K"); return }
         if (k > recordings.size) { showStatus("K ($k) exceeds clips (${recordings.size})"); return }
         isAnalyzing = true
+        val tp = TaskProgress("Codebook")
         thread {
             try {
                 showStatus("Discovering codebook (K=$k) over ${recordings.size} clips on ${engine.workers} cores…")
                 val res = AcousticUnitDiscovery.discover(recordings, k) { d, t ->
+                    tp.update(d, t, "Featurising $d/$t")
                     if (d % 25 == 0 || d == t) showStatus("Featurising $d/$t…")
                 }
                 val cb = res.codebook
                 val sb = StringBuilder()
                 sb.append("=== CODEBOOK (K=$k) ===\n")
                 sb.append("${cb.units.size} units · ${cb.event_count} events · mean purity ${String.format("%.2f", res.meanPurity)}\n")
-                sb.append("group event-counts: ${res.groupCounts}\n\n")
+                sb.append("group event-counts: ${res.groupCounts}\n")
+                sb.append("(purity = fraction of each unit's events sharing its dominant group; higher is cleaner)\n\n")
                 for (u in cb.units) sb.append(String.format("  %-16s [%-11s] n=%-4d purity=%.2f%n", u.id, u.group, u.size, u.purity))
-                val report = sb.toString()
-                SwingUtilities.invokeLater { analysisResultsArea.text = report; analysisResultsArea.caretPosition = 0 }
 
                 val lastDir = exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
                     ?: File(System.getProperty("user.home"), "Documents")
                 val out = incrementUntilFree(nextFreeFile(lastDir, "codebook", "json"))
                 AcousticUnitDiscovery.write(cb, out)
                 out.parentFile?.let { exportPrefs.put("dir", it.absolutePath) }
+                sb.append("\nsaved: ${out.absolutePath}\n")
+                sb.append("\n▶ Next steps:\n")
+                sb.append("   • Copy codebook.json into the M/L app assets to update its RESPIRATORY token set.\n")
+                sb.append("   • Low mean purity? raise K or load more/cleaner clips, then re-run.\n")
+                sb.append("   • 'Meta-Analysis (Tensor)' to inspect the per-event feature matrix.\n")
+                val report = sb.toString()
+                SwingUtilities.invokeLater { analysisResultsArea.text = report; analysisResultsArea.caretPosition = 0 }
                 showStatus("Codebook: ${cb.units.size} units -> ${out.name} (in ${out.parent})")
             } catch (e: Exception) {
                 showStatus("Codebook discovery failed: ${e.message}")
             } finally {
+                tp.finish()
                 isAnalyzing = false
             }
         }
@@ -882,6 +966,10 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             statusLabel.text = message
         }
     }
+
+    /** Percentage helper for verbose reports. */
+    private fun pct(n: Int, total: Int): String =
+        if (total <= 0) "0%" else String.format("%.0f%%", 100.0 * n / total)
 
     /** Build-progress phases worth logging verbatim to the results log (vs. the high-frequency
      *  per-clip conversion ticks, which only update the progress bar). */

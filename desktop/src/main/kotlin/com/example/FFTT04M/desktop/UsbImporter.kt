@@ -23,7 +23,19 @@ object UsbImporter {
     private const val ACK_NAME = "fftt_usb_ack.json"
 
     data class Device(val serial: String, val model: String)
-    data class PullResult(val ok: Boolean, val wavCount: Int, val dir: File, val message: String)
+    data class PullResult(
+        val ok: Boolean, val wavCount: Int, val dir: File, val message: String,
+        val files: List<File> = emptyList(), val srcDir: String = "", val totalBytes: Long = 0L,
+    )
+
+    /** Human-readable byte size (e.g. "3.4 MB") for transfer logs. */
+    fun humanBytes(n: Long): String {
+        if (n < 1024) return "$n B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var v = n.toDouble() / 1024; var i = 0
+        while (v >= 1024 && i < units.size - 1) { v /= 1024; i++ }
+        return String.format("%.1f %s", v, units[i])
+    }
     /** An active offer the phone published via SHARE → "Offer recordings to desktop". */
     data class Offer(val deviceModel: String, val app: String, val count: Int, val createdMs: Long)
 
@@ -92,8 +104,11 @@ object UsbImporter {
             return PullResult(false, 0, dest,
                 "No recordings found on ${device.model}. Run SHARE → 'USB Upload (to desktop)' on the device first.")
         }
-        val wavs = dest.walkTopDown().count { it.isFile && it.extension.equals("wav", true) }
-        return PullResult(true, wavs, dest, "Pulled $wavs recording(s) from ${device.model} ($pulledFrom)")
+        val wavFiles = dest.walkTopDown().filter { it.isFile && it.extension.equals("wav", true) }.toList()
+        val bytes = wavFiles.sumOf { it.length() }
+        return PullResult(true, wavFiles.size, dest,
+            "Pulled ${wavFiles.size} recording(s) (${humanBytes(bytes)}) from ${device.model} ($pulledFrom)",
+            files = wavFiles, srcDir = pulledFrom, totalBytes = bytes)
     }
 
     // ---- Cooperative handshake -----------------------------------------------------------------
