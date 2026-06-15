@@ -29,6 +29,8 @@ object GpuFft {
     @Volatile private var probed = false
     @Volatile private var ok = false
     @Volatile private var device: String? = null
+    @Volatile private var dllDir: String? = null          // which folder the CUDA redist DLLs loaded from
+    @Volatile private var reason: String? = null          // why GPU is unavailable (for accurate UI)
 
     // Persistent device resources (guarded by the object monitor via @Synchronized methods).
     private val plans = HashMap<Long, cufftHandle>()
@@ -42,19 +44,25 @@ object GpuFft {
         probed = true
         ok = try {
             preloadCudaRuntime()
+            if (dllDir == null)
+                System.err.println("GpuFft: CUDA redist DLLs not found in any candidate folder; " +
+                    "relying on PATH/jcuda-natives only.")
             JCuda.setExceptionsEnabled(true)
             JCufft.setExceptionsEnabled(true)
             val count = IntArray(1)
             JCuda.cudaGetDeviceCount(count)
-            if (count[0] <= 0) false else {
+            if (count[0] <= 0) { reason = "no CUDA device reported by the driver"; false } else {
                 JCuda.cudaSetDevice(0)
                 val prop = cudaDeviceProp()
                 JCuda.cudaGetDeviceProperties(prop, 0)
                 device = prop.getName().trim()
                 // Confirm the cuFFT path actually executes (call core directly — ok isn't set yet).
-                core(floatArrayOf(1f, 0f, 2f, 0f, 3f, 0f, 4f, 0f), 4, 1) != null
+                if (core(floatArrayOf(1f, 0f, 2f, 0f, 3f, 0f, 4f, 0f), 4, 1) != null) true
+                else { reason = "cuFFT self-test failed"; false }
             }
         } catch (e: Throwable) {
+            reason = (e.message ?: e.toString()).lineSequence().firstOrNull()?.take(160) +
+                if (dllDir == null) " (CUDA redist DLLs were not located — see folder search)" else ""
             System.err.println("GpuFft unavailable: ${e.message}")
             false
         }
@@ -62,6 +70,9 @@ object GpuFft {
     }
 
     fun deviceName(): String? = device
+
+    /** Human-readable reason GPU is unavailable (null when available or not yet probed). */
+    fun unavailableReason(): String? = reason
 
     /**
      * Batched **inverse** C2C FFT of [batch] signals of length [n], interleaved as `batch*n` complex
@@ -110,17 +121,26 @@ object GpuFft {
      */
     private fun preloadCudaRuntime() {
         val names = listOf("nvJitLink_120_0.dll", "cudart64_12.dll", "cufft64_11.dll")
-        val candidates = buildList {
-            System.getenv("FFTT04D_CUDA_DIR")?.let { add(File(it)) }
-            add(File(System.getProperty("user.dir"), "native/cuda"))
-            // Walk up from the jar (…/desktop/build/libs/app.jar) so `desktop/native/cuda` is found
-            // however the app is launched (icon/VBS/CLI) without needing an env var or specific cwd.
+        // The DLLs live in `<module>/native/cuda`, i.e. `desktop/native/cuda`. Depending on how the
+        // app is launched the "current location" is the module dir (Gradle/IDE: cwd=desktop), the repo
+        // root (icon/.bat/.vbs: cwd=FFTT04D), the fat jar (…/desktop/build/libs), or the classes dir
+        // (…/desktop/build/classes/kotlin/main). So at every base we try BOTH `native/cuda` and
+        // `desktop/native/cuda`, and we walk up far enough to reach the module from a deep classes dir.
+        val subPaths = listOf("native/cuda", "desktop/native/cuda")
+        val bases = buildList {
+            add(File(System.getProperty("user.dir")))
             var d: File? = jarDir()
-            repeat(4) { d?.let { add(File(it, "native/cuda")); d = it.parentFile } }
+            repeat(8) { d?.let { add(it); d = it.parentFile } }
+        }
+        val candidates = buildList {
+            // An explicit override may point straight at the DLLs.
+            System.getenv("FFTT04D_CUDA_DIR")?.let { add(File(it)) }
+            for (b in bases) for (s in subPaths) add(File(b, s))
             System.getenv("CUDA_PATH")?.let { add(File(it, "bin")) }
         }
         val dir = candidates.firstOrNull { d -> names.all { File(d, it).isFile } } ?: return
         for (nm in names) try { System.load(File(dir, nm).absolutePath) } catch (_: Throwable) {}
+        dllDir = dir.absolutePath
     }
 
     private fun jarDir(): File? = try {

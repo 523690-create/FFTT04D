@@ -403,12 +403,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         imagingTokens[button]?.let { it.set(true); showStatus("Cancelling ${mode.button}…"); return }
 
         if (mode == ImageBatch.Mode.CWT_GPU && !GpuFft.available()) {
+            val why = GpuFft.unavailableReason()?.let { "Reason: $it\n\n" } ?: ""
             val go = JOptionPane.showConfirmDialog(this,
-                "No NVIDIA GPU / cuFFT detected — this CWT pass will run on the CPU instead.\n\n" +
+                "GPU (cuFFT) acceleration is not active — this CWT pass will run on the CPU instead.\n\n" +
+                why +
                 "This is fine: only the SPEED of CWT image generation changes, the output images are\n" +
                 "identical. The CPU path is perfectly usable for typical dataset sizes (it is just slower\n" +
                 "on very large batches).\n\n" +
-                "To enable GPU acceleration: an NVIDIA GPU with the CUDA toolkit (cuFFT) on the PATH.\n\n" +
+                "If you DO have an NVIDIA GPU: the bundled CUDA DLLs (desktop/native/cuda) must be found.\n" +
+                "Launch via CoughAnalyzer.bat / the desktop icon, or set FFTT04D_CUDA_DIR to that folder.\n\n" +
                 "Run this pass on the CPU now?",
                 "GPU wavelets", JOptionPane.OK_CANCEL_OPTION, JOptionPane.INFORMATION_MESSAGE)
             if (go != JOptionPane.OK_OPTION) return
