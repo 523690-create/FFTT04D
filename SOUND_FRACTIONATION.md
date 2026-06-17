@@ -1,6 +1,8 @@
 # Sound Fractionation — research + build plan (FFTT04D desktop)
 
-Status: **researched & speced, NOT yet implemented.** Written 2026-06-17 for the next session.
+Status: **implemented & committed** (2026-06-17, commit `afd96ee`).
+All 7 methods live in `desktop/src/main/kotlin/…/fractionation/`. Methods 1–5 and 7 are pure Kotlin;
+method 6 (HuBERT) is an ONNX-gated stub. UI: "Fractionate" panel with 7 buttons + "Recommended Workflows" popup.
 Raw research from Gemini 2.5 Flash is preserved verbatim in `research/`:
 - `research/AUD_paradigm_part1.md` — MFA verdict + AUD/self-supervised method comparison
 - `research/AUD_paradigm_part2.md` — pipeline, public datasets, Riva/VoxPopuli verdict, minimal first step
