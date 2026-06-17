@@ -25,6 +25,13 @@ dependencies {
     // TAR/GZIP support for Coswara dataset extraction
     implementation("org.apache.commons:commons-compress:1.24.0")
 
+    // Optional HuBERT acoustic-unit inference (fractionation method 6). Code is gated at runtime by
+    // HubertKMeansUnits.available (a model-file probe, mirroring the GpuFft pattern): when
+    // desktop/native/hubert/hubert_base.onnx is absent the method is an inert no-op, so this jar is
+    // only exercised once a model is dropped in. Pinned to a Java 8-compatible ONNX Runtime to match
+    // the Java 8 toolchain above (bump in lockstep if the toolchain moves up).
+    implementation("com.microsoft.onnxruntime:onnxruntime:1.16.3")
+
     // Optional GPU acceleration (NVIDIA): JCuda runtime + cuFFT, with Windows x86_64 natives.
     // The natives jars bundle the CUDA runtime/cuFFT libs, so only an NVIDIA driver is required
     // (no CUDA toolkit install). GpuFft falls back to the CPU FFT if any of this fails to load.
@@ -42,6 +49,16 @@ dependencies {
 
 application {
     mainClass.set("com.example.FFTT04M.desktop.MainKt")
+}
+
+// Headless validation runner for the fractionation methods (SOUND_FRACTIONATION.md §3).
+// Usage: ./gradlew :desktop:fractionateCli --args="D:\AndroidProjects\true_cough"
+tasks.register<JavaExec>("fractionateCli") {
+    group = "application"
+    description = "Run all pure-Kotlin fractionation methods over a folder; dump JSONL + overlay PNGs."
+    mainClass.set("com.example.FFTT04M.desktop.FractionateCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
 }
 
 // Create fat JAR for direct execution (visible window)
