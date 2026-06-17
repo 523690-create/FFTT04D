@@ -1,6 +1,7 @@
 package com.example.FFTT04M.desktop
 
 import com.example.FFTT04M.desktop.cough.CoughEvent
+import com.example.FFTT04M.desktop.fractionation.*
 import javax.swing.*
 import javax.swing.filechooser.FileNameExtensionFilter
 import java.awt.*
@@ -41,6 +42,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private lateinit var isolateButton: JButton
     @Volatile private var isolating = false
     private val isolatingToken = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val fractionateTokens =
+        java.util.concurrent.ConcurrentHashMap<JButton, java.util.concurrent.atomic.AtomicBoolean>()
 
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
@@ -153,7 +157,31 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         analysisPanel.add(exportButton)
         analysisPanel.add(codebookButton)
         analysisPanel.add(matchRefButton)
-        leftPanel.add(analysisPanel, BorderLayout.SOUTH)
+
+        // Fractionation controls
+        val fracPanel = JPanel(GridLayout(0, 2, 6, 6))
+        fracPanel.border = BorderFactory.createTitledBorder("Fractionate ▾")
+        val fracMethods: List<Pair<String, Fractionator>> = listOf(
+            "Energy Onset" to EnergyOnset(),
+            "Spectral Flux" to SpectralFluxOnset(),
+            "Syllable Nucleus" to SyllableNucleus(),
+            "Cough Phases" to CoughPhasesFractionator(),
+            "Feature Changepoint" to FeatureChangepoint(),
+            "Feature Clusters" to FeatureClusterBoundaries(),
+            "HuBERT K-Means" to HubertKMeansUnits,
+        )
+        for ((label, frac) in fracMethods) {
+            val btn = createButton(label) {}
+            btn.addActionListener { onFractionate(frac, btn) }
+            fracPanel.add(btn)
+        }
+        fracPanel.add(createButton("Recommended Workflows") { showWorkflowsDialog() })
+
+        val southPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+        southPanel.add(analysisPanel)
+        southPanel.add(Box.createVerticalStrut(6))
+        southPanel.add(fracPanel)
+        leftPanel.add(southPanel, BorderLayout.SOUTH)
 
         // Right: Results display
         val rightPanel = JPanel(BorderLayout(5, 5))
@@ -1065,6 +1093,140 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         return JButton(text).apply {
             addActionListener { action() }
         }
+    }
+
+    private fun onFractionate(frac: Fractionator, button: JButton) {
+        // Already running → cancel
+        fractionateTokens[button]?.let { it.set(true); showStatus("Cancelling ${frac.name}…"); return }
+
+        if (frac is HubertKMeansUnits && !HubertKMeansUnits.available) {
+            JOptionPane.showMessageDialog(this,
+                HubertKMeansUnits.unavailableReason,
+                "HuBERT K-Means Units", JOptionPane.INFORMATION_MESSAGE)
+            return
+        }
+
+        if (recordings.isEmpty()) {
+            showStatus("Load a dataset first (no recordings loaded)")
+            return
+        }
+
+        val token = java.util.concurrent.atomic.AtomicBoolean(false)
+        fractionateTokens[button] = token
+        val origText = button.text
+        val tp = TaskProgress(frac.name)
+        SwingUtilities.invokeLater {
+            button.text = "Cancel ${frac.name}"
+            analysisResultsArea.append("\n=== ${frac.name} over ${recordings.size} clip(s) ===\n")
+            analysisResultsArea.caretPosition = analysisResultsArea.document.length
+        }
+
+        thread {
+            logLine("${frac.name}: started on ${recordings.size} clip(s)")
+            var totalSegs = 0; var done = 0; var failed = 0
+            val segLines = StringBuilder()
+            val allSegments = mutableListOf<Triple<String, String, List<Segment>>>()  // id, file, segs
+            for ((idx, rec) in recordings.withIndex()) {
+                if (token.get()) break
+                tp.update(idx, recordings.size, "${frac.name} $idx/${recordings.size}")
+                try {
+                    val pcm = AudioDecoder.decode(rec.audioFile)
+                    if (pcm == null) { failed++; continue }
+                    val segs = frac.fractionate(pcm, rec.sampleRate)
+                    totalSegs += segs.size
+                    allSegments.add(Triple(rec.id, rec.audioFile.name, segs))
+                    if (recordings.size <= 5) {
+                        segLines.append("  ${rec.audioFile.name}: ${segs.size} segment(s)\n")
+                        for (s in segs) {
+                            val lbl = buildString {
+                                if (s.label != null) append("[${s.label}] ")
+                                if (s.clusterId != null) append("#${s.clusterId} ")
+                            }
+                            segLines.append("    ${lbl}${s.startMs}ms – ${s.endMs}ms (${s.endMs - s.startMs}ms)\n")
+                        }
+                    }
+                    done++
+                } catch (e: Exception) {
+                    failed++
+                    logLine("${frac.name}: error on ${rec.audioFile.name}: ${e.message}")
+                }
+            }
+            val cancelled = token.get()
+
+            // Export segments.jsonl with method field
+            val outDir = File(System.getProperty("user.home"), "FFTT04M_fractionation")
+            outDir.mkdirs()
+            val outFile = File(outDir, "${frac.name.replace(" ", "_")}_segments.jsonl")
+            try {
+                outFile.bufferedWriter().use { w ->
+                    for ((id, fileName, segs) in allSegments) {
+                        for (s in segs) {
+                            val lbl = s.label?.let { "\"$it\"" } ?: "null"
+                            val cid = s.clusterId?.toString() ?: "null"
+                            w.write("""{"id":"$id","file":"$fileName","method":"${frac.name}","startMs":${s.startMs},"endMs":${s.endMs},"label":$lbl,"clusterId":$cid}""")
+                            w.newLine()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                logLine("${frac.name}: could not write JSONL: ${e.message}")
+            }
+
+            val summary = buildString {
+                append(if (cancelled) "=== ${frac.name} CANCELLED ===\n" else "=== ${frac.name} complete ===\n")
+                append("$done clip(s) processed · $failed failed · $totalSegs segments total\n")
+                if (segLines.isNotEmpty()) append(segLines)
+                if (!cancelled) append("Segments exported → ${outFile.absolutePath}\n")
+            }
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(summary)
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                button.text = origText
+                showStatus(if (cancelled) "${frac.name} cancelled" else "${frac.name}: $totalSegs segments from $done clips")
+            }
+            tp.finish()
+            fractionateTokens.remove(button)
+        }
+    }
+
+    private fun showWorkflowsDialog() {
+        val text = """
+            Recommended Fractionation Workflows
+            ====================================
+
+            1. Cough-Only Fast Triage
+               Energy Onset (sensitivity ~2.0, min-interval 200 ms)
+               → then Cough Phases within each hit.
+               Fast yes/no triage: find loud transients, confirm burst→voiced structure.
+
+            2. Build a Phoneme Codebook (pure-Kotlin)
+               Feature Cluster Boundaries (or Feature Changepoint for boundaries)
+               across the whole DB → per-segment 14-dim vector →
+               feed existing AcousticUnitDiscovery k-means at sub-segment granularity
+               → export codebook. Low-risk first end-to-end path; reuses current code.
+
+            3. Build a Phoneme Codebook (high-precision)
+               HuBERT K-Means Units for boundaries + embeddings → k-means codebook.
+               Best quality; needs ONNX. Use once #2 is validated and ONNX is wired.
+
+            4. Separate Speech vs Cough vs Ambient
+               Spectral Flux Onset to cut events → per-event features →
+               classify each via RespiratoryTaxonomy group (RESPIRATORY/SPEECH/NOISE).
+               Produces typing/horn = NOISE tokens, speech tokens distinct from cough.
+
+            5. High-Precision Research Segmentation
+               Spectral Flux Onset (coarse)
+               → Feature Changepoint (refine boundaries)
+               → Cough Phases / Syllable Nucleus (label sub-structure).
+               For careful manual dataset construction.
+        """.trimIndent()
+
+        val area = JTextArea(text, 28, 60)
+        area.isEditable = false
+        area.font = Font("Monospaced", Font.PLAIN, 12)
+        area.lineWrap = false
+        JOptionPane.showMessageDialog(this, JScrollPane(area),
+            "Recommended Workflows", JOptionPane.INFORMATION_MESSAGE)
     }
 }
 
