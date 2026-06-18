@@ -35,7 +35,10 @@ dependencies {
     // DLL) that also needs cuDNN 9 + CUDA-12 cuBLAS on the native search path. The ORT jars are built
     // on Java 11 but RUN on Java 8+, so both satisfy the Java 8 toolchain above. The CUDA-12 Java
     // path is only correct on recent ORT (see microsoft/onnxruntime#19960), hence the newer GPU pin.
-    val useOnnxGpu = (project.findProperty("useOnnxGpu") as String?)?.toBoolean() ?: false
+    // Presence of -PuseOnnxGpu enables it; -PuseOnnxGpu=false disables. (A bare -PuseOnnxGpu sets the
+    // value to "" — treat empty as "on" so the flag works without =true.)
+    val useOnnxGpuProp = project.findProperty("useOnnxGpu")?.toString()?.lowercase()
+    val useOnnxGpu = useOnnxGpuProp != null && useOnnxGpuProp !in listOf("false", "0", "no")
     if (useOnnxGpu) {
         implementation("com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0")
     } else {
