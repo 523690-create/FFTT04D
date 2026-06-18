@@ -24,6 +24,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
     private val statusLabel = JLabel("Ready")
     private val recordingsList = JList<String>(DefaultListModel())
+    private val recordingsGrid = RecordingsGridPanel()
     // Active tasks each get their own bar stacked here, so concurrent passes don't fight one bar.
     private val progressStack = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val analysisResultsArea = JTextArea(10, 60)
@@ -128,13 +129,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         buttonPanel.add(createButton("Cloud Match (extras)") { onCloudMatch() })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
 
-        // Recordings list
+        // Recordings grid (✓ multi-select | FFT thumbnail | comments | MFCC map)
         val listLabel = JLabel("Loaded Recordings:")
         listLabel.font = Font("Dialog", Font.BOLD, 12)
         val listPanel = JPanel(BorderLayout(5, 5))
         listPanel.add(listLabel, BorderLayout.NORTH)
-        (recordingsList.model as DefaultListModel<String>).clear()
-        listPanel.add(JScrollPane(recordingsList), BorderLayout.CENTER)
+        recordingsGrid.onRecordingsChanged = { surviving ->
+            recordings.clear(); recordings.addAll(surviving); updateRecordingsList()
+        }
+        listPanel.add(recordingsGrid, BorderLayout.CENTER)
         leftPanel.add(listPanel, BorderLayout.CENTER)
 
         // Analysis controls
@@ -635,6 +638,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             shown.forEach { rec -> model.addElement("${rec.id}: ${rec.label() ?: "unknown"}") }
             if (recordings.size > shown.size)
                 model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
+            recordingsGrid.setRecordings(shown)
         }
     }
 

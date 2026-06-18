@@ -59,11 +59,14 @@ class MfccExtractor(
         }
     }
 
-    fun extract(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): MfccFeatures {
-        val n = (endSample - startSample).coerceAtLeast(0)
+    /**
+     * Per-frame MFCC sequence over `[startSample, endSample)` — each entry is [numCoeffs] cepstral
+     * coefficients. This is the raw matrix a heatmap / sequence model wants; [extract] summarizes it.
+     */
+    fun frames(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): List<DoubleArray> {
         val win = max(8, (winMs / 1000 * sampleRate).roundToInt())
         val hop = max(1, (hopMs / 1000 * sampleRate).roundToInt())
-        if (n < win) return MfccFeatures(numCoeffs, DoubleArray(numCoeffs), DoubleArray(numCoeffs), 0)
+        if ((endSample - startSample) < win) return emptyList()
         val fftSize = FFTUtils.nextPowerOfTwo(win)
         val fb = melFilterbank(sampleRate, fftSize)
 
@@ -81,6 +84,11 @@ class MfccExtractor(
             frames.add(dct(logMel))
             pos += hop
         }
+        return frames
+    }
+
+    fun extract(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): MfccFeatures {
+        val frames = frames(x, startSample, endSample, sampleRate)
         if (frames.isEmpty()) return MfccFeatures(numCoeffs, DoubleArray(numCoeffs), DoubleArray(numCoeffs), 0)
 
         val mean = DoubleArray(numCoeffs); val std = DoubleArray(numCoeffs)
