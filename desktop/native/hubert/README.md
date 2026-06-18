@@ -6,9 +6,11 @@ until a `hubert_base.onnx` model is present here, mirroring the GPU-optional pat
 ## Generate the model
 
 ```bash
-pip install torch transformers onnx
+pip install torch transformers onnx onnxscript
 python export_hubert_onnx.py
 ```
+
+(`onnxscript` is pulled in by torch 2.6+ even though the script forces the classic exporter.)
 
 This writes `hubert_base.onnx` (~360 MB) into this folder. Restart the desktop app and the
 **HuBERT K-Means** button activates automatically. Verify headless with:

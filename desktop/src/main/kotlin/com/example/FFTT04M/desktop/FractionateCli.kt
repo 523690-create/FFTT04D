@@ -23,7 +23,7 @@ import javax.imageio.ImageIO
  */
 object FractionateCli {
 
-    private val methods: List<Fractionator> = listOf(
+    private val pureKotlinMethods: List<Fractionator> = listOf(
         EnergyOnset(),
         SpectralFluxOnset(),
         SyllableNucleus(),
@@ -32,14 +32,20 @@ object FractionateCli {
         FeatureClusterBoundaries(),
     )
 
-    // One distinct colour per method lane / overlay.
+    // One distinct colour per method lane / overlay (7th for HuBERT when active).
     private val laneColors = listOf(
         Color(0xFF5252), Color(0xFFB300), Color(0x69F0AE),
-        Color(0x40C4FF), Color(0xE040FB), Color(0xFFFFFF),
+        Color(0x40C4FF), Color(0xE040FB), Color(0xFFFFFF), Color(0xFFD740),
     )
 
     @JvmStatic
     fun main(args: Array<String>) {
+        // Include HuBERT (method 6) as a 7th method when its ONNX model is present.
+        val methods: List<Fractionator> =
+            if (HubertKMeansUnits.available) pureKotlinMethods + HubertKMeansUnits
+            else pureKotlinMethods
+        if (!HubertKMeansUnits.available)
+            println("(HuBERT method INACTIVE — ${HubertKMeansUnits.unavailableReason})\n")
         val inDir = File(args.getOrNull(0) ?: "D:\\AndroidProjects\\true_cough")
         val outDir = File(args.getOrNull(1) ?: File(System.getProperty("user.home"), "FFTT04M_fractionation_validation").path)
         outDir.mkdirs()
@@ -119,21 +125,6 @@ object FractionateCli {
                 String.format("%.2f", avg).padStart(10) +
                 "${st.nonTrivial}/${st.clips}".padStart(18))
         }
-        // Method 6 (HuBERT) is ONNX-gated — report its status so the gate is verifiable headless.
-        println("\n=== HuBERT K-Means Units (ONNX-gated) ===")
-        if (HubertKMeansUnits.available) {
-            println("ACTIVE — model found; running on first clip as a smoke test:")
-            val pcm = AudioDecoder.decode(files.first())
-            if (pcm != null) {
-                val segs = HubertKMeansUnits.fractionate(pcm, 44100)
-                println("  ${files.first().name}: ${segs.size} segment(s); first label/cluster=${segs.firstOrNull()?.clusterId}")
-            }
-        } else {
-            println("INACTIVE — ${HubertKMeansUnits.unavailableReason}")
-            val seg = HubertKMeansUnits.fractionate(FloatArray(16000), 16000)
-            println("  fallback segment on probe: ${seg.firstOrNull()?.label}  (no crash → gate OK)")
-        }
-
         println("\nJSONL + overlays written to: $outDir")
     }
 
@@ -144,6 +135,7 @@ object FractionateCli {
         "Cough Phases" -> "CoughPh"
         "Feature Changepoint" -> "Changept"
         "Feature Cluster Boundaries" -> "Clusters"
+        "HuBERT K-Means Units" -> "HuBERT"
         else -> n.take(8)
     }
 

@@ -20,14 +20,14 @@ MODEL_ID = "facebook/hubert-base-ls960"
 
 
 def main() -> None:
-    print(f"Loading {MODEL_ID} …")
+    print(f"Loading {MODEL_ID} ...")
     model = HubertModel.from_pretrained(MODEL_ID)
     model.eval()
 
     # 1 second of dummy 16 kHz audio. Dynamic axes make the real sample/frame counts free.
     dummy = torch.randn(1, 16000, dtype=torch.float32)
 
-    print(f"Exporting → {OUT}")
+    print(f"Exporting -> {OUT}")
     torch.onnx.export(
         model,
         (dummy,),
@@ -40,9 +40,10 @@ def main() -> None:
         },
         opset_version=14,
         do_constant_folding=True,
+        dynamo=False,   # classic TorchScript exporter: honors the names/dynamic_axes above verbatim
     )
     size_mb = os.path.getsize(OUT) / (1024 * 1024)
-    print(f"Done — {OUT} ({size_mb:.0f} MB). The fractionation 'HuBERT K-Means' button is now live.")
+    print(f"Done - {OUT} ({size_mb:.0f} MB). The fractionation 'HuBERT K-Means' button is now live.")
 
 
 if __name__ == "__main__":
