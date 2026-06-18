@@ -25,6 +25,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private val statusLabel = JLabel("Ready")
     private val recordingsList = JList<String>(DefaultListModel())
     private val recordingsGrid = RecordingsGridPanel()
+    private lateinit var recordingsHostPanel: JPanel   // where the grid docks in the main window
+    private var recordingsPopout: JFrame? = null
     // Active tasks each get their own bar stacked here, so concurrent passes don't fight one bar.
     private val progressStack = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val analysisResultsArea = JTextArea(10, 60)
@@ -132,8 +134,15 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Recordings grid (✓ multi-select | FFT thumbnail | comments | MFCC map)
         val listLabel = JLabel("Loaded Recordings:")
         listLabel.font = Font("Dialog", Font.BOLD, 12)
+        val popOutBtn = JButton("⇱ Pop out")
+        popOutBtn.toolTipText = "Detach the recordings grid into its own resizable window"
+        popOutBtn.addActionListener { toggleRecordingsPopout(popOutBtn) }
+        val listHeader = JPanel(BorderLayout())
+        listHeader.add(listLabel, BorderLayout.WEST)
+        listHeader.add(popOutBtn, BorderLayout.EAST)
         val listPanel = JPanel(BorderLayout(5, 5))
-        listPanel.add(listLabel, BorderLayout.NORTH)
+        recordingsHostPanel = listPanel
+        listPanel.add(listHeader, BorderLayout.NORTH)
         recordingsGrid.onRecordingsChanged = { surviving ->
             recordings.clear(); recordings.addAll(surviving); updateRecordingsList()
         }
@@ -640,6 +649,35 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
             recordingsGrid.setRecordings(shown)
         }
+    }
+
+    /** Detach the recordings grid into its own resizable window, or dock it back if already out. */
+    private fun toggleRecordingsPopout(btn: JButton) {
+        if (recordingsPopout == null) {
+            recordingsHostPanel.remove(recordingsGrid)
+            recordingsHostPanel.revalidate(); recordingsHostPanel.repaint()
+            recordingsPopout = JFrame("Loaded Recordings").apply {
+                size = Dimension(760, 640)
+                setLocationRelativeTo(this@AnalyzerWindow)
+                contentPane.add(recordingsGrid)
+                defaultCloseOperation = JFrame.DO_NOTHING_ON_CLOSE   // dock back instead of disposing
+                addWindowListener(object : java.awt.event.WindowAdapter() {
+                    override fun windowClosing(e: java.awt.event.WindowEvent?) = dockRecordings(btn)
+                })
+                isVisible = true
+            }
+            btn.text = "⇲ Dock"
+        } else {
+            dockRecordings(btn)
+        }
+    }
+
+    private fun dockRecordings(btn: JButton) {
+        recordingsPopout?.let { f -> f.contentPane.remove(recordingsGrid); f.dispose() }
+        recordingsPopout = null
+        recordingsHostPanel.add(recordingsGrid, BorderLayout.CENTER)
+        recordingsHostPanel.revalidate(); recordingsHostPanel.repaint()
+        btn.text = "⇱ Pop out"
     }
 
     /**

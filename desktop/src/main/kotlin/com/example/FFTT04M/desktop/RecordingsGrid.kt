@@ -22,6 +22,7 @@ import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.TableCellRenderer
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Persisted **manual** comments, kept in a file SEPARATE from any auto-generated comments so they
@@ -81,15 +82,24 @@ object MfccHeatmap {
         val frames = mfcc.frames(pcm, 0, pcm.size, sr)
         if (frames.isEmpty()) { g.dispose(); return img }
         val nc = frames[0].size
-        var lo = Double.MAX_VALUE; var hi = -Double.MAX_VALUE
-        for (fr in frames) for (v in fr) { if (v < lo) lo = v; if (v > hi) hi = v }
-        val mid = (lo + hi) / 2.0
-        val cw = w.toDouble() / frames.size
+        val nf = frames.size
+
+        // Per-coefficient z-score normalization across time. MFCC coeff 0 (log-energy) and the higher
+        // coeffs live on very different scales, so a single global min/max washes everything to one
+        // color; normalizing each coefficient against its OWN mean/std gives a balanced heatmap.
+        val mean = DoubleArray(nc); val std = DoubleArray(nc)
+        for (fr in frames) for (c in 0 until nc) mean[c] += fr[c]
+        for (c in 0 until nc) mean[c] /= nf
+        for (fr in frames) for (c in 0 until nc) { val d = fr[c] - mean[c]; std[c] += d * d }
+        for (c in 0 until nc) std[c] = sqrt(std[c] / nf)
+
+        val cw = w.toDouble() / nf
         val ch = h.toDouble() / nc
         for (fi in frames.indices) {
             val fr = frames[fi]
             for (c in 0 until nc) {
-                g.color = divergingColor(fr[c], lo, mid, hi)
+                val z = if (std[c] > 1e-9) (fr[c] - mean[c]) / std[c] else 0.0
+                g.color = divergingColor((z / 2.5).coerceIn(-1.0, 1.0))   // ±2.5σ → full blue/red
                 val x = (fi * cw).toInt()
                 val y = (h - (c + 1) * ch).toInt()   // coeff 0 at the bottom
                 g.fillRect(x, y, max(1, (cw + 1).toInt()), max(1, (ch + 1).toInt()))
@@ -99,15 +109,13 @@ object MfccHeatmap {
         return img
     }
 
-    private fun divergingColor(v: Double, lo: Double, mid: Double, hi: Double): Color {
-        if (hi <= lo) return Color.GRAY
-        return if (v < mid) {                                   // blue → white
-            val t = ((v - lo) / (mid - lo)).coerceIn(0.0, 1.0)
-            Color((255 * t).toInt(), (255 * t).toInt(), 255)
-        } else {                                                // white → red
-            val t = ((v - mid) / (hi - mid)).coerceIn(0.0, 1.0)
-            Color(255, (255 * (1 - t)).toInt(), (255 * (1 - t)).toInt())
-        }
+    /** Diverging blue(-1) → white(0) → red(+1) map for a normalized value [t] in [-1, 1]. */
+    private fun divergingColor(t: Double): Color = if (t < 0) {
+        val f = (t + 1).coerceIn(0.0, 1.0)                       // -1→blue, 0→white
+        Color((255 * f).toInt(), (255 * f).toInt(), 255)
+    } else {
+        val f = (1 - t).coerceIn(0.0, 1.0)                       // 0→white, +1→red
+        Color(255, (255 * f).toInt(), (255 * f).toInt())
     }
 }
 
