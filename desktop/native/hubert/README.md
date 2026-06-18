@@ -21,6 +21,31 @@ This writes `hubert_base.onnx` (~360 MB) into this folder. Restart the desktop a
 
 The `=== HuBERT K-Means Units ===` section should report `ACTIVE` instead of `INACTIVE`.
 
+## GPU acceleration (optional, NVIDIA CUDA)
+
+Method 6 runs on **CPU by default**. To use the GPU (e.g. an RTX card), build the desktop module
+with the opt-in flag so it pulls the CUDA-12 ONNX Runtime instead of the CPU one:
+
+```bash
+./gradlew :desktop:fatJar -PuseOnnxGpu
+```
+
+`HubertKMeansUnits` then tries the CUDA execution provider and **falls back to CPU** if anything is
+missing (mirrors `GpuFft`). For CUDA to actually engage you also need these DLLs on the native search
+path (`desktop/native/cuda/`, beside the CUDA bits already there, or `$FFTT04D_CUDA_DIR`):
+
+- `cudart64_12.dll`, `cufft64_11.dll` — already present (shared with the cuFFT path)
+- `cublas64_12.dll`, `cublasLt64_12.dll` — from the CUDA 12 redist
+- `cudnn64_9.dll` + its `cudnn_*64_9.dll` companions — from the **cuDNN 9** redist
+
+All are public on NVIDIA's redist server (no login):
+`https://developer.download.nvidia.com/compute/cuda/redist/` and
+`https://developer.download.nvidia.com/compute/cudnn/redist/`. The validation CLI prints the live
+provider — `execution provider: CUDA` vs `CPU` — so you can confirm the GPU is in use.
+
+> Note: ONNX Runtime's CUDA-12 build is linked against `_12` libs; the machine's CUDA **Toolkit 13**
+> (`cublas64_13` etc.) won't substitute — drop the `_12`/cuDNN-9 redist DLLs in explicitly.
+
 ## How discovery works
 
 `HubertKMeansUnits.locateModel()` looks, in order:

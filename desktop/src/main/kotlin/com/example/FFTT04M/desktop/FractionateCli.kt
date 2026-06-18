@@ -44,7 +44,9 @@ object FractionateCli {
         val methods: List<Fractionator> =
             if (HubertKMeansUnits.available) pureKotlinMethods + HubertKMeansUnits
             else pureKotlinMethods
-        if (!HubertKMeansUnits.available)
+        if (HubertKMeansUnits.available)
+            println("(HuBERT method ACTIVE — execution provider: ${HubertKMeansUnits.provider})\n")
+        else
             println("(HuBERT method INACTIVE — ${HubertKMeansUnits.unavailableReason})\n")
         val inDir = File(args.getOrNull(0) ?: "D:\\AndroidProjects\\true_cough")
         val outDir = File(args.getOrNull(1) ?: File(System.getProperty("user.home"), "FFTT04M_fractionation_validation").path)

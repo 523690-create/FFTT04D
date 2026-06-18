@@ -28,9 +28,19 @@ dependencies {
     // Optional HuBERT acoustic-unit inference (fractionation method 6). Code is gated at runtime by
     // HubertKMeansUnits.available (a model-file probe, mirroring the GpuFft pattern): when
     // desktop/native/hubert/hubert_base.onnx is absent the method is an inert no-op, so this jar is
-    // only exercised once a model is dropped in. Pinned to a Java 8-compatible ONNX Runtime to match
-    // the Java 8 toolchain above (bump in lockstep if the toolchain moves up).
-    implementation("com.microsoft.onnxruntime:onnxruntime:1.16.3")
+    // only exercised once a model is dropped in.
+    //
+    // CPU by default (onnxruntime, pinned to a Java 8-runtime-compatible release). Build with
+    // -PuseOnnxGpu to swap in the CUDA-12 GPU build instead — a much larger jar (~400 MB provider
+    // DLL) that also needs cuDNN 9 + CUDA-12 cuBLAS on the native search path. The ORT jars are built
+    // on Java 11 but RUN on Java 8+, so both satisfy the Java 8 toolchain above. The CUDA-12 Java
+    // path is only correct on recent ORT (see microsoft/onnxruntime#19960), hence the newer GPU pin.
+    val useOnnxGpu = (project.findProperty("useOnnxGpu") as String?)?.toBoolean() ?: false
+    if (useOnnxGpu) {
+        implementation("com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0")
+    } else {
+        implementation("com.microsoft.onnxruntime:onnxruntime:1.16.3")
+    }
 
     // Optional GPU acceleration (NVIDIA): JCuda runtime + cuFFT, with Windows x86_64 natives.
     // The natives jars bundle the CUDA runtime/cuFFT libs, so only an NVIDIA driver is required

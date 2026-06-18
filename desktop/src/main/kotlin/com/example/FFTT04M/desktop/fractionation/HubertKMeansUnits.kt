@@ -40,6 +40,10 @@ object HubertKMeansUnits : Fractionator {
     @Volatile private var session: OrtSession? = null
     @Volatile private var env: OrtEnvironment? = null
     @Volatile private var inputName: String? = null
+    @Volatile private var activeProvider = "CPU"     // "CUDA" once the GPU EP initialises
+
+    /** Which ONNX execution provider the live session uses: "CUDA" (GPU) or "CPU". */
+    val provider: String get() = activeProvider
 
     /** True when a HuBERT ONNX model is present and a session was created. Probed once, then cached. */
     val available: Boolean
@@ -54,7 +58,7 @@ object HubertKMeansUnits : Fractionator {
                     false
                 } else {
                     val e = OrtEnvironment.getEnvironment()
-                    val s = e.createSession(model.absolutePath, OrtSession.SessionOptions())
+                    val s = e.createSession(model.absolutePath, buildSessionOptions())
                     val inName = s.inputNames.firstOrNull()
                     if (inName == null) {
                         reason = "model exposes no inputs"; false
@@ -164,6 +168,55 @@ object HubertKMeansUnits : Fractionator {
             } else out.add(s)
         }
         return out
+    }
+
+    // ---- execution provider selection (CUDA with CPU fallback) ------------------------------------
+
+    /**
+     * Build session options preferring the CUDA execution provider, falling back to CPU on any
+     * failure (CPU-only onnxruntime jar, no GPU, or missing cuDNN/cuBLAS). Mirrors the best-effort
+     * GpuFft pattern: try the accelerator, never hard-fail. Sets [activeProvider] accordingly.
+     */
+    private fun buildSessionOptions(): OrtSession.SessionOptions {
+        val opts = OrtSession.SessionOptions()
+        return try {
+            preloadCudaLibs()          // so onnxruntime_providers_cuda.dll can resolve its deps
+            opts.addCUDA(0)
+            activeProvider = "CUDA"
+            opts
+        } catch (t: Throwable) {
+            activeProvider = "CPU"
+            System.err.println("HuBERT: CUDA EP unavailable (" +
+                "${(t.message ?: t.toString()).lineSequence().firstOrNull()?.take(120)}); using CPU.")
+            try { opts.close() } catch (_: Throwable) {}   // addCUDA may have partially mutated it
+            OrtSession.SessionOptions()
+        }
+    }
+
+    // CUDA-12 runtime + cuDNN-9 dependency DLLs, in dependency-first order. Best-effort: any that are
+    // present get preloaded by absolute path so the CUDA provider resolves them without a PATH edit.
+    private val cudaLibOrder = listOf(
+        "cudart64_12.dll", "cublasLt64_12.dll", "cublas64_12.dll", "cufft64_11.dll",
+        "cudnn64_9.dll", "cudnn_graph64_9.dll", "cudnn_engines_precompiled64_9.dll",
+        "cudnn_engines_runtime_compiled64_9.dll", "cudnn_heuristic64_9.dll",
+        "cudnn_ops64_9.dll", "cudnn_adv64_9.dll", "cudnn_cnn64_9.dll",
+    )
+
+    @Volatile private var cudaPreloaded = false
+    private fun preloadCudaLibs() {
+        if (cudaPreloaded) return
+        cudaPreloaded = true
+        val subPaths = listOf("native/cuda", "desktop/native/cuda", "native/hubert", "desktop/native/hubert")
+        val bases = buildList {
+            System.getenv("FFTT04D_CUDA_DIR")?.let { add(File(it)) }
+            add(File(System.getProperty("user.dir")))
+            var d: File? = jarDir(); repeat(8) { d?.let { add(it); d = it.parentFile } }
+        }
+        val dirs = buildList { for (b in bases) for (s in subPaths) add(File(b, s)) }
+        for (nm in cudaLibOrder) {
+            val f = dirs.map { File(it, nm) }.firstOrNull { it.isFile } ?: continue
+            try { System.load(f.absolutePath) } catch (_: Throwable) {}
+        }
     }
 
     // ---- model discovery (parity with GpuFft's DLL search) ----------------------------------------
