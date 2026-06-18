@@ -49,7 +49,7 @@ object FractionateCli {
         else
             println("(HuBERT method INACTIVE — ${HubertKMeansUnits.unavailableReason})\n")
         val inDir = File(args.getOrNull(0) ?: "D:\\AndroidProjects\\true_cough")
-        val outDir = File(args.getOrNull(1) ?: File(System.getProperty("user.home"), "FFTT04M_fractionation_validation").path)
+        val outDir = File(args.getOrNull(1) ?: Workspace.dir("fractionation_validation").path)
         outDir.mkdirs()
         val pngDir = File(outDir, "overlays").apply { mkdirs() }
 

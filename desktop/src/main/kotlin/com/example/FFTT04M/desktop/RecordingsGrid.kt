@@ -29,7 +29,7 @@ import kotlin.math.sqrt
  * can be used as human labels for later re-learning. Map of recording-id → comment text.
  */
 object ManualComments {
-    private val file = File(System.getProperty("user.home"), "FFTT04M/manual_comments.json")
+    private val file = Workspace.file("manual_comments.json")
     private val gson = Gson()
     private val map: MutableMap<String, String> = load()
 

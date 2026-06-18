@@ -1,7 +1,9 @@
 # Workspace move + consolidation plan (D: → NVMe G:)
 
-Status: **planned, not executed.** Do not run any step until the D: BitLocker decrypt has
-finished and the system is stable (no more BitLocker-recovery crashes). Authored 2026-06-18.
+Status: **Part 1 (data consolidation) DONE 2026-06-18** — `Workspace` refactor committed; C: data
+migrated to `D:\AndroidProjects\data\`. **Part 2 (physical move) pending** the user's Disk-Management
+step. D: decrypt is finished. Chosen variant: **volume mount point** (data at G: root, mount G: at
+`D:\AndroidProjects`, drop the G: letter) — no dependency on the G: drive letter.
 
 ## Why
 The current workspace lives on `D:\AndroidProjects`, a drive that was crashing to BitLocker
@@ -76,22 +78,27 @@ are still found.
 3. Re-run the path inventory on FFTT04M and FFTT04L (same grep as below) — no surprises.
 4. Close the app, stop Gradle daemons (`gradlew --stop`), close anything holding files open.
 
-**Copy (resumable — the anti-pain part)**
+**Copy (resumable — the anti-pain part).** For a volume mount point the data must sit at the **G:
+root** (the mounted folder shows the volume root):
 ```
-robocopy D:\AndroidProjects G:\AndroidProjects /MIR /MT:16 /R:1 /W:1 /Z /NP /LOG:G:\move.log
+robocopy D:\AndroidProjects G:\ /MIR /MT:16 /R:1 /W:1 /Z /NP /XF G:\MOVE_PLAN.md /LOG:C:\move.log
 ```
-- `/MIR` mirror (re-runnable to catch deltas), `/Z` restartable for interrupted files.
-- Under Option C **keep `.venv` and `native\`** (do NOT exclude) — the `D:` paths survive the
-  junction, so the venv and the model/DLLs work as-is.
+- `/MIR` mirror (re-runnable to catch deltas), `/Z` restartable for interrupted files. Log on C: so
+  it isn't on either end of the copy. `/XF` keeps the standalone plan copy from being deleted by /MIR.
+- **Keep `.venv` and `native\`** (do NOT exclude) — `D:\AndroidProjects\…` survives the mount, so the
+  venv and model/DLLs work as-is. (Also includes the new `data\`.)
 - Re-run robocopy → a complete copy reports 0 files copied (your verification).
 
-**Switch to the junction**
+**Switch to the volume mount point** (Disk Management, or elevated cmd — needs admin + a reboot):
 ```
-rename D:\AndroidProjects AndroidProjects_old
-mklink /J D:\AndroidProjects G:\AndroidProjects
+rename D:\AndroidProjects AndroidProjects_old      :: keep the original as backup
+mkdir  D:\AndroidProjects                          :: empty target for the mount
+:: Disk Management → right-click the NVMe volume → Change Drive Letter and Paths →
+::   Add… → "Mount in the following empty NTFS folder" → D:\AndroidProjects
+::   then Remove the G: drive letter (optional; binds to the volume, not a letter)
+:: CLI equivalent: mountvol D:\AndroidProjects \\?\Volume{GUID}\   (get GUID via `mountvol`)
 ```
-(`mklink /J` junctions don't need admin. `D:\AndroidProjects` must not exist when you run it — hence
-the rename.)
+Reboot, then verify before deleting `AndroidProjects_old`.
 
 **Verify before deleting `_old`**
 - `cd D:\AndroidProjects\FFTT04D && gradlew :desktop:compileKotlin`

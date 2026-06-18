@@ -260,7 +260,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         if (isAnalyzing) { showStatus("Busy analyzing…"); return }
         // Ask where to land the pulled recordings (on the EDT, before the worker thread starts).
         val importRoot = pickDirectory("Choose folder to import USB recordings into",
-            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+            "usbImport", Workspace.dir("usb_import").absolutePath)
             ?: run { showStatus("USB import cancelled"); return }
         thread {
             if (!UsbImporter.adbAvailable()) {
@@ -517,7 +517,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val allData = pickDirectory("ISOLATE: ALLDATA folder (Cancel to skip it)",
             "allDataOut", "C:\\AndroidStudio\\ALLDATA")
         val extras = pickDirectory("ISOLATE: extras / USB recordings folder (Cancel to skip it)",
-            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+            "usbImport", Workspace.dir("usb_import").absolutePath)
         val folders = listOfNotNull(allData, extras)
         if (folders.isEmpty()) { showStatus("ISOLATE cancelled — no folder chosen"); return }
 
@@ -575,7 +575,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val allData = pickDirectory("Cloud Match: ALLDATA folder (the cloud reference)",
             "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
         val extras = pickDirectory("Cloud Match: YOUR extras / USB recordings folder",
-            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath) ?: return
+            "usbImport", Workspace.dir("usb_import").absolutePath) ?: return
         val maxPool = (JOptionPane.showInputDialog(this,
             "Cloud pool size (recordings sampled from ALLDATA; more = slower, richer):", "6000")
             ?: return).trim().toIntOrNull()?.coerceIn(200, 61184) ?: 6000
@@ -706,7 +706,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         val allDataDir = if (wantAllData) pickDirectory("Select the ALLDATA folder to analyze",
             "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return else null
         val usbDir = if (wantUsb) pickDirectory("Select the USB import folder to analyze",
-            "usbImport", File(System.getProperty("user.home"), "FFTT04M_usb_import").absolutePath)
+            "usbImport", Workspace.dir("usb_import").absolutePath)
             ?: return else null
 
         isAnalyzing = true
@@ -1196,7 +1196,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             val cancelled = token.get()
 
             // Export segments.jsonl with method field
-            val outDir = File(System.getProperty("user.home"), "FFTT04M_fractionation")
+            val outDir = Workspace.dir("fractionation")
             outDir.mkdirs()
             val outFile = File(outDir, "${frac.name.replace(" ", "_")}_segments.jsonl")
             try {
