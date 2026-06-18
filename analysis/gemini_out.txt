@@ -1,0 +1,326 @@
+﻿Here are concise, idiomatic Kotlin/Swing suggestions for your features:
+
+---
+
+### (1) Collapsible/Expandable/Pop-out Recordings Panel
+
+Use a `JSplitPane` for collapsibility and a dedicated `JPanel` as a container for `recordingsList` to facilitate reparenting.
+
+```kotlin
+// In AnalyzerWindow class
+private val recordingsPanelContainer = JPanel(BorderLayout()) // Container for recordingsList
+private val recordingsList = JList<String>() // Your existing JList
+private val mainSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+
+init {
+    recordingsPanelContainer.add(JScrollPane(recordingsList), BorderLayout.CENTER)
+    mainSplitPane.leftComponent = recordingsPanelContainer
+    // mainSplitPane.rightComponent = ... (your main content)
+    // add(mainSplitPane, BorderLayout.CENTER)
+
+    // Add a button/menu item to toggle collapse/expand
+    val toggleButton = JButton("Toggle Recordings Panel")
+    toggleButton.addActionListener {
+        mainSplitPane.dividerLocation = if (mainSplitPane.dividerLocation > 0) 0 else 200 // Adjust 200 as needed
+    }
+
+    // Add a button/menu item to pop out
+    val popOutButton = JButton("Pop Out Recordings")
+    popOutButton.addActionListener { popOutRecordingsPanel() }
+}
+
+private var detachedFrame: JFrame? = null
+
+private fun popOutRecordingsPanel() {
+    if (detachedFrame == null) {
+        // 1. Remove from current parent
+        mainSplitPane.remove(recordingsPanelContainer)
+        mainSplitPane.dividerLocation = 0 // Collapse the space it occupied
+
+        // 2. Create new JFrame
+        detachedFrame = JFrame("Recordings").apply {
+            size = Dimension(300, 600)
+            locationRelativeTo(this@AnalyzerWindow)
+            add(recordingsPanelContainer, BorderLayout.CENTER) // Add the same component
+            isVisible = true
+            // Handle closing: re-dock or just hide
+            defaultCloseOperation = WindowConstants.DO_NOTHING_ON_CLOSE
+            addWindowListener(object : WindowAdapter() {
+                override fun windowClosing(e: WindowEvent?) {
+                    dockRecordingsPanel()
+                }
+            })
+        }
+    } else {
+        detachedFrame?.toFront() // Bring to front if already popped out
+    }
+}
+
+private fun dockRecordingsPanel() {
+    detachedFrame?.apply {
+        // 1. Remove from detached frame
+        remove(recordingsPanelContainer)
+        dispose()
+    }
+    detachedFrame = null
+
+    // 2. Add back to main window
+    mainSplitPane.leftComponent = recordingsPanelContainer
+    mainSplitPane.dividerLocation = 200 // Restore default size
+    mainSplitPane.revalidate()
+    mainSplitPane.repaint()
+}
+```
+
+---
+
+### (2) Grid/Gallery View of Recordings
+
+Use `JList` with `HORIZONTAL_WRAP` and a custom `ListCellRenderer`.
+
+```kotlin
+// Data class for your recording (simplified)
+data class AudioRecording(val id: String, val audioFile: File, val sampleRate: Int, val comments: String, val topMatches: List<String>)
+
+// In AnalyzerWindow class
+private val recordingsGridList = JList<AudioRecording>().apply {
+    layoutOrientation = JList.HORIZONTAL_WRAP // Key for grid layout
+    visibleRowCount = -1 // Allows wrapping
+    fixedCellWidth = 200 // Fixed size for cells
+    fixedCellHeight = 250 // Adjust as needed
+    cellRenderer = RecordingCellRenderer()
+    selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION // For multi-selection
+}
+private val gridScrollPane = JScrollPane(recordingsGridList)
+
+// Thumbnail Caching
+private val thumbnailCache = ConcurrentHashMap<String, ImageIcon>() // recording ID -> thumbnail
+
+// Asynchronous thumbnail loading (using Kotlin Coroutines)
+private fun loadThumbnailAsync(recording: AudioRecording, targetWidth: Int, targetHeight: Int, callback: (ImageIcon?) -> Unit) {
+    val cached = thumbnailCache[recording.id]
+    if (cached != null) {
+        callback(cached)
+        return
+    }
+
+    // Use a background dispatcher for heavy work, then switch to Swing for UI update
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val pcm = AudioDecoder.decode(recording.audioFile)
+            if (pcm != null) {
+                val tempPngFile = File.createTempFile("spectrogram", ".png")
+                SpectrogramRenderer.renderFftPng(pcm, recording.sampleRate, tempPngFile)
+                val originalImage = ImageIO.read(tempPngFile)
+                tempPngFile.delete() // Clean up temp file
+
+                val scaledImage = originalImage.getScaledInstance(targetWidth, targetHeight, Image.SCALE_SMOOTH)
+                val icon = ImageIcon(scaledImage)
+                thumbnailCache[recording.id] = icon
+                withContext(Dispatchers.Swing) {
+                    callback(icon)
+                }
+            } else {
+                withContext(Dispatchers.Swing) { callback(null) }
+            }
+        } catch (e: Exception) {
+            println("Error loading thumbnail for ${recording.id}: ${e.message}")
+            withContext(Dispatchers.Swing) { callback(null) }
+        }
+    }
+}
+
+// Custom ListCellRenderer
+inner class RecordingCellRenderer : ListCellRenderer<AudioRecording> {
+    private val panel = JPanel(BorderLayout(5, 5)).apply {
+        border = BorderFactory.createEmptyBorder(5, 5, 5, 5)
+    }
+    private val thumbnailLabel = JLabel().apply {
+        preferredSize = Dimension(180, 120) // Match fixedCellWidth/Height minus padding
+        horizontalAlignment = JLabel.CENTER
+        verticalAlignment = JLabel.CENTER
+        border = BorderFactory.createLineBorder(Color.LIGHT_GRAY)
+    }
+    private val captionLabel = JLabel().apply {
+        horizontalAlignment = JLabel.CENTER
+        font = font.deriveFont(Font.PLAIN, 10f)
+    }
+    private val checkbox = JCheckBox().apply {
+        isOpaque = false // Make background transparent
+    }
+
+    init {
+        val topPanel = JPanel(BorderLayout()).apply {
+            add(checkbox, BorderLayout.NORTH) // Checkbox in top-left corner
+            add(thumbnailLabel, BorderLayout.CENTER)
+        }
+        panel.add(topPanel, BorderLayout.CENTER)
+        panel.add(captionLabel, BorderLayout.SOUTH)
+    }
+
+    override fun getListCellRendererComponent(
+        list: JList<out AudioRecording>?, value: AudioRecording, index: Int,
+        isSelected: Boolean, cellHasFocus: Boolean
+    ): Component {
+        captionLabel.text = value.topMatches.joinToString(", ")
+        checkbox.isSelected = isSelected // Checkbox reflects JList selection
+
+        thumbnailLabel.icon = null // Clear previous icon
+        loadThumbnailAsync(value, thumbnailLabel.preferredSize.width, thumbnailLabel.preferredSize.height) { icon ->
+            if (icon != null && value == list?.model?.getElementAt(index)) { // Ensure it's still the correct item
+                thumbnailLabel.icon = icon
+            } else {
+                thumbnailLabel.text = "No Spectrogram"
+            }
+        }
+
+        panel.background = if (isSelected) list?.selectionBackground else list?.background
+        panel.foreground = if (isSelected) list?.selectionForeground else list?.foreground
+        return panel
+    }
+}
+
+// Wiring Left/Right Click
+init {
+    recordingsGridList.addMouseListener(object : MouseAdapter() {
+        override fun mouseClicked(e: MouseEvent) {
+            val index = recordingsGridList.locationToIndex(e.point)
+            if (index == -1) return
+
+            val recording = recordingsGridList.model.getElementAt(index)
+
+            if (SwingUtilities.isLeftMouseButton(e) && e.clickCount == 1) {
+                // Play audio
+                try {
+                    val audioInputStream = AudioSystem.getAudioInputStream(recording.audioFile)
+                    val clip = AudioSystem.getClip()
+                    clip.open(audioInputStream)
+                    clip.start()
+                    // Add a LineListener to close clip when finished
+                    clip.addLineListener { event ->
+                        if (event.type == LineEvent.Type.STOP) {
+                            clip.close()
+                            audioInputStream.close()
+                        }
+                    }
+                } catch (ex: Exception) {
+                    JOptionPane.showMessageDialog(this@AnalyzerWindow, "Error playing audio: ${ex.message}", "Playback Error", JOptionPane.ERROR_MESSAGE)
+                }
+            } else if (SwingUtilities.isRightMouseButton(e)) {
+                // Show JPopupMenu
+                val popup = JPopupMenu()
+                popup.add(JMenuItem("Delete").apply { addActionListener { /* Handle delete for recording */ } })
+                popup.add(JMenuItem("Move").apply { addActionListener { /* Handle move for recording */ } })
+                popup.add(JMenuItem("Edit Comments").apply { addActionListener { /* Handle edit for recording */ } })
+                popup.show(recordingsGridList, e.x, e.y)
+            }
+        }
+    })
+}
+```
+
+---
+
+### (3) Render MFCC Heatmap Natively
+
+Create a `BufferedImage`, draw on its `Graphics2D`, and display it in a `JLabel`.
+
+```kotlin
+import java.awt.*
+import java.awt.image.BufferedImage
+import javax.swing.*
+import kotlin.math.*
+
+// In AnalyzerWindow or a dedicated utility class
+fun createMfccHeatmap(mfccData: Array<FloatArray>, width: Int, height: Int): BufferedImage {
+    if (mfccData.isEmpty() || mfccData[0].isEmpty()) {
+        return BufferedImage(width, height, BufferedImage.TYPE_INT_RGB).apply {
+            val g = createGraphics()
+            g.color = Color.BLACK
+            g.fillRect(0, 0, width, height)
+            g.dispose()
+        }
+    }
+
+    val numFrames = mfccData.size
+    val numCoeffs = mfccData[0].size
+
+    // 1. Find min/max for normalization
+    var minVal = Float.MAX_VALUE
+    var maxVal = Float.MIN_VALUE
+    mfccData.forEach { frame ->
+        frame.forEach { coeff ->
+            minVal = min(minVal, coeff)
+            maxVal = max(maxVal, coeff)
+        }
+    }
+
+    val range = maxVal - minVal
+    val midVal = (minVal + maxVal) / 2f // Midpoint for diverging colormap
+
+    val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+    val g2d = image.createGraphics()
+
+    // Calculate cell dimensions
+    val cellWidth = width.toFloat() / numFrames
+    val cellHeight = height.toFloat() / numCoeffs
+
+    for (frameIdx in 0 until numFrames) {
+        for (coeffIdx in 0 until numCoeffs) {
+            val value = mfccData[frameIdx][coeffIdx]
+
+            // 2. Normalize and map to color
+            val normalizedValue: Float
+            val color: Color
+
+            if (range == 0f) { // All values are the same
+                color = Color.GRAY
+            } else {
+                // Diverging colormap: e.g., Blue (low) -> White (mid) -> Red (high)
+                normalizedValue = (value - minVal) / range // 0.0 to 1.0
+
+                // Interpolate between colors
+                color = when {
+                    value < midVal -> { // Blue to White
+                        val t = (value - minVal) / (midVal - minVal) // 0.0 to 1.0 for lower half
+                        Color(
+                            (255 * t + 0 * (1 - t)).toInt(), // R: 0 -> 255
+                            (255 * t + 0 * (1 - t)).toInt(), // G: 0 -> 255
+                            (255 * t + 255 * (1 - t)).toInt() // B: 255 -> 255
+                        )
+                    }
+                    else -> { // White to Red
+                        val t = (value - midVal) / (maxVal - midVal) // 0.0 to 1.0 for upper half
+                        Color(
+                            (255 * t + 255 * (1 - t)).toInt(), // R: 255 -> 255
+                            (0 * t + 255 * (1 - t)).toInt(),  // G: 255 -> 0
+                            (0 * t + 255 * (1 - t)).toInt()   // B: 255 -> 0
+                        )
+                    }
+                }
+            }
+
+            g2d.color = color
+            g2d.fillRect(
+                (frameIdx * cellWidth).toInt(),
+                (height - (coeffIdx + 1) * cellHeight).toInt(), // Y-axis inverted for coeffs (0 at bottom)
+                ceil(cellWidth).toInt(),
+                ceil(cellHeight).toInt()
+            )
+        }
+    }
+
+    g2d.dispose()
+    return image
+}
+
+// Example usage:
+// Assuming you have mfccData: Array<FloatArray> from MfccExtractor
+// val mfccData: Array<FloatArray> = MfccExtractor.extractMfccs(...)
+
+// val heatmapImage = createMfccHeatmap(mfccData, 800, 300) // 800px wide, 300px high
+// val heatmapLabel = JLabel(ImageIcon(heatmapImage))
+// add(heatmapLabel, BorderLayout.CENTER) // Add to your UI
+```
+
+[finishReason: STOP]

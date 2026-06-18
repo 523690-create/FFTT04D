@@ -1,0 +1,38 @@
+Boundary-agreement analysis  (tolerance ±50 ms, 7 methods)
+Files covered: 1442
+
+Segment counts (total boundaries, mean per file):
+  Cough Phases                    866 boundaries    0.6/file
+  Energy Onset                   3778 boundaries    2.6/file
+  Feature Changepoint            3117 boundaries    2.2/file
+  Feature Cluster Boundaries      607 boundaries    0.4/file
+  HuBERT K-Means Units           4194 boundaries  466.0/file
+  Spectral Flux Onset            4849 boundaries    3.4/file
+  Syllable Nucleus               3259 boundaries    2.3/file
+
+=== Ranking by agreement with reference 'HuBERT K-Means Units' ===
+  1. Syllable Nucleus             F1=0.000  (over 0 files)
+  2. Spectral Flux Onset          F1=0.000  (over 0 files)
+  3. Feature Cluster Boundaries   F1=0.000  (over 0 files)
+  4. Feature Changepoint          F1=0.000  (over 0 files)
+  5. Energy Onset                 F1=0.000  (over 0 files)
+  6. Cough Phases                 F1=0.000  (over 0 files)
+
+=== Full pairwise mean-F1 matrix ===
+                             Cough Ph Energy O Feature  Feature  HuBERT K Spectral Syllable
+  Cough Phases                   1.00     0.07     0.09     0.69     0.00     0.06     0.14
+  Energy Onset                   0.07     1.00     0.42     0.03     0.00     0.73     0.16
+  Feature Changepoint            0.09     0.42     1.00     0.03     0.00     0.25     0.21
+  Feature Cluster Boundaries     0.69     0.03     0.03     1.00     0.00     0.03     0.14
+  HuBERT K-Means Units           0.00     0.00     0.00     0.00     1.00     0.00     0.00
+  Spectral Flux Onset            0.06     0.73     0.25     0.03     0.00     1.00     0.41
+  Syllable Nucleus               0.14     0.16     0.21     0.14     0.00     0.41     1.00
+
+=== Overall agreement (mean F1 vs all other methods) ===
+  Spectral Flux Onset          0.249
+  Energy Onset                 0.234
+  Syllable Nucleus             0.177
+  Cough Phases                 0.174
+  Feature Changepoint          0.166
+  Feature Cluster Boundaries   0.153
+  HuBERT K-Means Units         0.000

@@ -1,0 +1,58 @@
+======================================================================
+OLLAMA qwen2.5-coder:7b
+======================================================================
+### TASK 1: Methods Agreeing the Most
+
+The top 2-3 agreeing pairs are:
+
+1. **HuBERT vs. Feature Changepoint** - F1 = 0.40
+2. **HuBERT vs. Spectral Flux Onset** - F1 = 0.35
+3. **HuBERT vs. Energy Onset** - F1 = 0.35
+
+### TASK 2: Ranking Methods by Agreement with HuBERT (Gold Standard)
+
+1. **Feature Changepoint** - F1 = 0.31  
+   Reason: It has the highest agreement with HuBERT among all methods, indicating that it is quite similar in terms of boundary placement.
+
+2. **Spectral Flux Onset** - F1 = 0.35  
+   Reason: While slightly lower than Feature Changepoint, it still shows a good level of agreement with HuBERT.
+
+3. **Energy Onset** - F1 = 0.35  
+   Reason: Similar to Spectral Flux Onset, it provides decent agreement but is not as precise as the top two.
+
+4. **Cough Phases** - F1 = 0.12  
+   Reason: The coarsest method, which naturally has lower agreement with HuBERT due to its less granular nature.
+
+5. **Feature Cluster Boundaries** - F1 = 0.11  
+   Reason: This method is the least granular and thus has the lowest agreement with HuBERT.
+
+6. **Syllable Nucleus** - F1 = 0.30  
+   Reason: While better than Cough Phases, it still falls below average in terms of agreement with HuBERT.
+
+======================================================================
+GPT4ALL Llama-3-8B
+======================================================================
+Based on the provided data, here are the answers to the tasks:
+
+**Task 1: Which methods agree with EACH OTHER the most? Name the top 2-3 agreeing pairs and the F1.**
+
+The top 3 agreeing pairs are:
+* Energy Onset and Feature Changepoint (F1 = 0.49)
+* Spectral Flux Onset and HuBERT K-Means (F1 = 0.46)
+* Syllable Nucleus and Feature Cluster Boundaries (F1 = 0.10)
+
+These pairs agree with each other more frequently than the others, indicating that they are cutting the audio into similar segments.
+
+**Task 2: Treating HuBERT as the gold standard, RANK the other 6 methods from MOST to LEAST agreement with HuBERT, as a numbered list with the F1 and a one-line reason each (consider granularity).**
+
+Here is the ranked list:
+
+1. Spectral Flux Onset (F1 = 0.35) - Similarities in spectral flux patterns lead to high agreement.
+2. Energy Onset (F1 = 0.35) - Both methods rely on energy changes, resulting in moderate agreement.
+3. Feature Changepoint (F1 = 0.31) - Shared reliance on feature-based analysis leads to decent agreement.
+4. Syllable Nucleus (F1 = 0.30) - Similarities in segmenting audio into syllabic units result in good agreement, despite different approaches.
+5. Cough Phases (F1 = 0.12) - Coarse segmentation approach results in lower agreement with HuBERT's finer granularity.
+6. Feature Cluster Boundaries (F1 = 0.11) - Low agreement due to vastly different segmenting strategies and granularities.
+
+Note that the ranking is based on the F1 score, which measures the harmonic mean of precision and recall for each method compared to HuBERT.
+
