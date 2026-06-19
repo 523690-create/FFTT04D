@@ -1176,11 +1176,16 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             val total = snapshot.size
             val showDetail = total <= 5
 
-            // Process clips across a worker pool: the per-clip CPU work (decode/resample/k-means)
-            // overlaps across cores and keeps the single GPU continuously fed (ONNX run() is
-            // thread-safe). Capped at 8 to bound GPU VRAM on the HuBERT path; otherwise the loop was
-            // a serial decode→infer→cluster chain that saturated nothing.
-            val poolSize = minOf(engine.workers, 8).coerceAtLeast(1)
+            // Process clips across a worker pool so per-clip CPU work (decode/resample/k-means)
+            // overlaps and the GPU stays fed (ONNX run() is thread-safe). HuBERT-on-CUDA is capped
+            // low: ONNX's GPU memory arena grows to the concurrent peak and never shrinks, so too
+            // many in-flight inferences exhaust VRAM on an 8 GB card (clips can be 20-30 s) and the
+            // run stutters. The GPU serialises kernels anyway, so 3 in flight keeps it busy. The
+            // pure-Kotlin methods (CPU-bound) keep full parallelism.
+            val poolSize = when {
+                frac is HubertKMeansUnits && HubertKMeansUnits.provider == "CUDA" -> 3
+                else -> minOf(engine.workers, 8).coerceAtLeast(1)
+            }
             val pool = java.util.concurrent.Executors.newFixedThreadPool(poolSize)
             for (rec in snapshot) {
                 pool.submit {
