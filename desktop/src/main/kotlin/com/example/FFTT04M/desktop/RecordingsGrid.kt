@@ -58,15 +58,22 @@ object AudioPlayer {
     private val queue = ArrayDeque<File>()
     private var dialog: JDialog? = null
     private var label: JLabel? = null
+    @Volatile private var failedAny = false
 
     @Synchronized fun playSequence(files: List<File>) {
-        stop(); queue.addAll(files)
+        stop(); failedAny = false; queue.addAll(files)
         SwingUtilities.invokeLater { ensureDialog().isVisible = true }
         next()
     }
 
+    /** End of the sequence: auto-close the popup on success, but keep it (with the diagnostic) on failure. */
+    private fun onSequenceEnd() {
+        if (failedAny) setBody("Done (with errors).")
+        else SwingUtilities.invokeLater { dialog?.isVisible = false }
+    }
+
     @Synchronized private fun next() {
-        val f = queue.removeFirstOrNull() ?: run { setBody("Done."); return }
+        val f = queue.removeFirstOrNull() ?: run { onSequenceEnd(); return }
         try {
             val src = AudioSystem.getAudioInputStream(f)
             val base = src.format
@@ -89,6 +96,7 @@ object AudioPlayer {
     }
 
     private fun fail(f: File, msg: String) {
+        failedAny = true
         System.err.println("play failed ${f.name}: $msg")
         setBody("&#9888; <b>Playback failed</b>: ${escapeHtml(f.name)}" +
             "<br><span style='color:#f88'>${escapeHtml(msg)}</span>" +
@@ -106,7 +114,8 @@ object AudioPlayer {
         val lbl = JLabel(" ").apply { border = BorderFactory.createEmptyBorder(12, 14, 8, 14) }
         d.contentPane.layout = java.awt.BorderLayout()
         d.contentPane.add(lbl, java.awt.BorderLayout.CENTER)
-        d.contentPane.add(JPanel().apply { add(JButton("Stop").apply { addActionListener { stop() } }) },
+        d.contentPane.add(JPanel().apply { add(JButton("Stop").apply {
+            addActionListener { stop(); SwingUtilities.invokeLater { dialog?.isVisible = false } } }) },
             java.awt.BorderLayout.SOUTH)
         d.defaultCloseOperation = JDialog.HIDE_ON_CLOSE
         d.addWindowListener(object : java.awt.event.WindowAdapter() {

@@ -114,6 +114,17 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 "allDataIn", "D:\\AndroidProjects\\ALLDATA") ?: return@createButton
             loadAllDataFolder(dir)
         })
+        // Load any folder of WAVs (e.g. mobile/USB device recordings) so they run through the SAME
+        // fractionation/analysis pipeline as ALLDATA — for direct comparison. Defaults to the
+        // device-import location; recurses; picks up <base>.json / <base>.txt sidecars if present.
+        buttonPanel.add(createButton("Load Folder (device)…") {
+            val dir = pickDirectory("Select a folder of recordings (e.g. device/USB import) to analyze",
+                "loadFolder", Workspace.dir("usb_import").absolutePath) ?: return@createButton
+            val list = DatasetLoader.loadFolder(dir, "device:${dir.name}")
+            if (list.isEmpty()) { showStatus("No .wav files found under ${dir.name}"); return@createButton }
+            recordings.clear(); recordings.addAll(list); updateRecordingsList()
+            showStatus("Loaded ${list.size} recording(s) from ${dir.name} — run any analysis to compare with ALLDATA")
+        })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
         // Secondary image passes over a ready ALLDATA folder (resumable; skip clips already imaged).
