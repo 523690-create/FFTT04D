@@ -206,6 +206,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private val rows = mutableListOf<Row>()
     private val fftCache = ConcurrentHashMap<String, ImageIcon>()
     private val mfccCache = ConcurrentHashMap<String, ImageIcon>()
+    private val cwtCache = ConcurrentHashMap<String, ImageIcon>()
     private val renderPool = Executors.newFixedThreadPool(
         max(1, Runtime.getRuntime().availableProcessors() / 2))
     private val pending = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -217,13 +218,13 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private val THUMB_H = 104
 
     private val model = object : AbstractTableModel() {
-        private val cols = arrayOf("✓", "FFT", "Comments", "MFCC")
+        private val cols = arrayOf("✓", "FFT", "Comments", "MFCC", "Wavelet")
         override fun getRowCount() = rows.size
         override fun getColumnCount() = cols.size
         override fun getColumnName(c: Int) = cols[c]
         override fun getColumnClass(c: Int): Class<*> = when (c) {
             0 -> java.lang.Boolean::class.java
-            1, 3 -> ImageIcon::class.java
+            1, 3, 4 -> ImageIcon::class.java
             else -> String::class.java
         }
         override fun isCellEditable(r: Int, c: Int) = c == 0
@@ -233,7 +234,8 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                 0 -> row.checked
                 1 -> fftIcon(row.rec)
                 2 -> commentHtml(row.rec)
-                else -> mfccIcon(row.rec)
+                3 -> mfccIcon(row.rec)
+                else -> cwtIcon(row.rec)   // c == 4: pre-generated CWT .jpg from disk
             }
         }
         override fun setValueAt(v: Any?, r: Int, c: Int) {
@@ -246,7 +248,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             val vr = rowAtPoint(e.point); val c = columnAtPoint(e.point)
             if (vr < 0) return super.getToolTipText(e)
             val r = convertRowIndexToModel(vr)
-            return if (r in rows.indices && (c == 1 || c == 3)) rows[r].rec.audioFile.absolutePath
+            return if (r in rows.indices && (c == 1 || c == 3 || c == 4)) rows[r].rec.audioFile.absolutePath
             else super.getToolTipText(e)
         }
     }
@@ -264,11 +266,12 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     init {
         table.rowHeight = THUMB_H + 12
         table.fillsViewportHeight = true
-        table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
+        table.autoResizeMode = JTable.AUTO_RESIZE_OFF   // fixed-width image cols + horizontal scroll
         table.columnModel.getColumn(0).apply { preferredWidth = 30; maxWidth = 36 }
         table.columnModel.getColumn(1).preferredWidth = THUMB_W + 12
-        table.columnModel.getColumn(2).preferredWidth = 260
+        table.columnModel.getColumn(2).preferredWidth = 300
         table.columnModel.getColumn(3).preferredWidth = THUMB_W + 12
+        table.columnModel.getColumn(4).preferredWidth = THUMB_W + 12
 
         val commentRenderer = object : DefaultTableCellRenderer() {
             override fun getTableCellRendererComponent(t: JTable, v: Any?, sel: Boolean, foc: Boolean, r: Int, c: Int): Component {
@@ -280,6 +283,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         table.columnModel.getColumn(2).cellRenderer = commentRenderer
         table.columnModel.getColumn(1).cellRenderer = IconRenderer()
         table.columnModel.getColumn(3).cellRenderer = IconRenderer()
+        table.columnModel.getColumn(4).cellRenderer = IconRenderer()
 
         table.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) = maybePopup(e)
@@ -424,7 +428,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                 moved++
             }
         }
-        fftCache.clear(); mfccCache.clear()
+        fftCache.clear(); mfccCache.clear(); cwtCache.clear()
         model.fireTableDataChanged()
         onRecordingsChanged?.invoke(rows.map { it.rec })
         showInfo("Moved $moved/${targets.size} clip(s) to ${dir.name}")
@@ -483,6 +487,32 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
     private fun mfccIcon(rec: AudioRecording): ImageIcon? = thumb(rec, mfccCache) { pcm, sr ->
         MfccHeatmap.render(pcm, sr, THUMB_W, THUMB_H)
+    }
+
+    /** Pre-generated CWT scalogram (`<wav>.jpg` from the CWT image batch) — loaded from disk off the
+     *  EDT, cached, never recomputed (CWT is the heavy one). Null (placeholder) when the jpg is absent
+     *  — generate it with the CWT CPU/GPU button. */
+    private fun cwtIcon(rec: AudioRecording): ImageIcon? {
+        cwtCache[rec.id]?.let { return it }
+        val jpg = File(rec.audioFile.parentFile, "${rec.audioFile.nameWithoutExtension}.jpg")
+        if (!jpg.isFile) return null
+        val key = "cwt:" + rec.id
+        if (pending.add(key)) {
+            renderPool.submit {
+                try {
+                    val img = ImageIO.read(jpg)
+                    if (img != null) {
+                        cwtCache[rec.id] = ImageIcon(img.getScaledInstance(THUMB_W, THUMB_H, Image.SCALE_SMOOTH))
+                        SwingUtilities.invokeLater {
+                            val r = rows.indexOfFirst { it.rec.id == rec.id }
+                            if (r >= 0) model.fireTableRowsUpdated(r, r)
+                        }
+                    }
+                } catch (e: Exception) { System.err.println("cwt load ${rec.id}: ${e.message}") }
+                finally { pending.remove(key) }
+            }
+        }
+        return null
     }
 
     private fun thumb(rec: AudioRecording, cache: ConcurrentHashMap<String, ImageIcon>,
