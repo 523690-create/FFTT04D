@@ -213,8 +213,18 @@ object PhonemeCodebookCli {
         }
     }
 
-    private fun letterFor(label: String): String = letterMap[label]
-        ?: label.split(" ", "-", "_").filter { it.isNotBlank() }.joinToString("") { it.first().uppercaseChar().toString() }.take(2)
+    private val assignedLetters = HashMap<String, String>()
+    private val usedLetters = HashSet<String>()
+    /** A unique letter code per label — collisions (e.g. croup vs another C-word) get C2, C3, … */
+    @Synchronized private fun letterFor(label: String): String {
+        assignedLetters[label]?.let { return it }
+        val base = (letterMap[label] ?: label.split(" ", "-", "_").filter { it.isNotBlank() }
+            .joinToString("") { it.first().uppercaseChar().toString() }.take(2)).ifBlank { "X" }
+        var cand = base; var i = 1
+        while (cand in usedLetters) { i++; cand = "$base$i" }
+        usedLetters += cand; assignedLetters[label] = cand
+        return cand
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun loadCodebook(f: File): Triple<List<Phoneme>, DoubleArray, DoubleArray>? = try {
