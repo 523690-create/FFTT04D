@@ -237,17 +237,29 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             }
         }
         override fun setValueAt(v: Any?, r: Int, c: Int) {
-            if (c == 0) { rows[r].checked = v as? Boolean ?: false; fireTableCellUpdated(r, c) }
+            if (c == 0) { rows[r].checked = v as? Boolean ?: false; fireTableCellUpdated(r, c); updateCount() }
         }
     }
 
     private val table = object : JTable(model) {
         override fun getToolTipText(e: MouseEvent): String? {
-            val r = rowAtPoint(e.point); val c = columnAtPoint(e.point)
+            val vr = rowAtPoint(e.point); val c = columnAtPoint(e.point)
+            if (vr < 0) return super.getToolTipText(e)
+            val r = convertRowIndexToModel(vr)
             return if (r in rows.indices && (c == 1 || c == 3)) rows[r].rec.audioFile.absolutePath
             else super.getToolTipText(e)
         }
     }
+
+    private val sorter = javax.swing.table.TableRowSorter(model)
+    private val searchField = JTextField(16)
+    private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates"))
+    private val countLabel = JLabel(" ")
+    @Volatile private var dupIds: Set<String> = emptySet()
+    @Volatile private var dupComputed = false
+
+    // Bidirectional synonyms for search (snore = snoring, …).
+    private val synonyms = mapOf("snore" to "snoring", "snoring" to "snore")
 
     init {
         table.rowHeight = THUMB_H + 12
@@ -274,17 +286,107 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             override fun mouseReleased(e: MouseEvent) = maybePopup(e)
             override fun mouseClicked(e: MouseEvent) {
                 if (!SwingUtilities.isLeftMouseButton(e) || e.clickCount != 1) return
-                val r = table.rowAtPoint(e.point); val c = table.columnAtPoint(e.point)
+                val vr = table.rowAtPoint(e.point); val c = table.columnAtPoint(e.point)
+                if (vr < 0) return
+                val r = table.convertRowIndexToModel(vr)
                 if (r in rows.indices && c == 1) AudioPlayer.playSequence(listOf(rows[r].rec.audioFile))
             }
         })
 
+        // Filter / search / selection toolbar.
+        table.rowSorter = sorter
+        searchField.toolTipText = "Search id / comment / metadata — synonyms apply (snore = snoring)"
+        searchField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
+        })
+        showCombo.addActionListener {
+            if (showCombo.selectedIndex == 3 && !dupComputed) computeDuplicatesThen { applyFilter() } else applyFilter()
+        }
+        val bar = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2))
+        bar.add(JLabel("Find:")); bar.add(searchField); bar.add(showCombo)
+        bar.add(JButton("✓ visible").apply { addActionListener { setVisibleChecked(true) } })
+        bar.add(JButton("✗ visible").apply { addActionListener { setVisibleChecked(false) } })
+        bar.add(JButton("✗ all").apply { addActionListener { deselectAll() } })
+        bar.add(countLabel)
+        add(bar, java.awt.BorderLayout.NORTH)
         add(JScrollPane(table), java.awt.BorderLayout.CENTER)
     }
 
+    // ---- filtering / search / selection ----------------------------------------------------------
+
+    private fun applyFilter() {
+        val q = searchField.text.trim().lowercase()
+        val mode = showCombo.selectedIndex
+        sorter.rowFilter = object : javax.swing.RowFilter<javax.swing.table.TableModel, Int>() {
+            override fun include(entry: Entry<out javax.swing.table.TableModel, out Int>): Boolean {
+                val row = rows.getOrNull(entry.identifier) ?: return false
+                when (mode) {
+                    1 -> if (!row.checked) return false                       // Checked
+                    2 -> if (!hasComment(row.rec)) return false               // Has comment
+                    3 -> if (row.rec.id !in dupIds) return false              // Duplicates
+                }
+                return q.isEmpty() || matches(searchable(row.rec), q)
+            }
+        }
+        updateCount()
+    }
+
+    private fun matches(hay: String, query: String): Boolean =
+        query.split(" ").filter { it.isNotBlank() }.all { w ->
+            (listOf(w) + (synonyms[w]?.let { listOf(it) } ?: emptyList())).any { hay.contains(it) }
+        }
+
+    private fun searchable(rec: AudioRecording): String = buildString {
+        append(rec.id.lowercase()); append(' ')
+        rec.metadata.values.forEach { append(it.toString().lowercase()); append(' ') }
+        ManualComments.get(rec.id)?.let { append(it.lowercase()) }
+    }
+
+    private fun hasComment(rec: AudioRecording): Boolean =
+        ManualComments.get(rec.id) != null || rec.metadata["comment"]?.toString()?.isNotBlank() == true
+
+    private fun setVisibleChecked(checked: Boolean) {
+        for (vr in 0 until table.rowCount) rows[table.convertRowIndexToModel(vr)].checked = checked
+        model.fireTableDataChanged(); applyFilter()
+    }
+
+    private fun deselectAll() { rows.forEach { it.checked = false }; model.fireTableDataChanged(); applyFilter() }
+
+    private fun updateCount() {
+        countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"
+    }
+
+    /** Background: flag recordings whose audio content is byte-identical to another (size-grouped, then MD5). */
+    private fun computeDuplicatesThen(after: () -> Unit) {
+        countLabel.text = "  finding duplicates…"
+        renderPool.submit {
+            val dups = HashSet<String>()
+            rows.groupBy { it.rec.audioFile.length() }.forEach { (sz, group) ->
+                if (sz > 0L && group.size >= 2)
+                    group.groupBy { hashFile(it.rec.audioFile) }
+                        .forEach { (h, g) -> if (h != null && g.size > 1) g.forEach { dups.add(it.rec.id) } }
+            }
+            dupIds = dups; dupComputed = true
+            SwingUtilities.invokeLater(after)
+        }
+    }
+
+    private fun hashFile(f: File): String? = try {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        f.inputStream().use { ins ->
+            val buf = ByteArray(1 shl 16)
+            while (true) { val n = ins.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    } catch (e: Exception) { null }
+
     private fun maybePopup(e: MouseEvent) {
         if (!e.isPopupTrigger) return
-        val r = table.rowAtPoint(e.point)
+        val vr = table.rowAtPoint(e.point)
+        if (vr < 0) return
+        val r = table.convertRowIndexToModel(vr)
         if (r !in rows.indices) return
         val targets = checkedOrRow(r)
         JPopupMenu().apply {
@@ -346,7 +448,8 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     fun setRecordings(list: List<AudioRecording>) {
         rows.clear()
         list.forEach { rows.add(Row(it)) }
-        model.fireTableDataChanged()
+        dupComputed = false; dupIds = emptySet()
+        model.fireTableDataChanged(); applyFilter()
     }
 
     fun checkedRecordings(): List<AudioRecording> = rows.filter { it.checked }.map { it.rec }
