@@ -66,6 +66,17 @@ Ship A first (smallest, reuses `AcousticUnitDiscovery`/`WholeClipFeatures`), the
 - Distance threshold for "unknown" (tune on held-out commented clips).
 - Whether to weight by clip duration / cough phase.
 
+## PREREQUISITE — unify comment storage (next build)
+Comments currently live in **two** places, which the codebook must reconcile:
+- **Desktop-entered** → `data/manual_comments.json` (`id → comment`, via the grid right-click).
+- **Mobile-ported** → a `<base>.txt` sidecar next to the WAV → loaded into `metadata["comment"]`
+  (`DatasetLoader.loadFolder`), shown as `comment=…` in the metadata line, *not* the ✍ manual line.
+
+Fix: on load, import any `metadata["comment"]` into `ManualComments` (keyed by id) if not already
+present, so `manual_comments.json` is the single source of truth both for the grid's ✍ line and for
+this codebook. (Edits already write there; this just folds in the mobile-origin ones.) Do this before
+building the codebook so device-labeled clips aren't silently dropped.
+
 ## Status of related pieces
 - Manual comments capture: **done** (recordings grid → right-click → Add manual comment →
   `data/manual_comments.json`). See [[fractionation-validation-hubert]] for the fractionation methods
