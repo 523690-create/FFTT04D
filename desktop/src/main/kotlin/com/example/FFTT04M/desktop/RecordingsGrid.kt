@@ -368,6 +368,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         bar.add(JButton("✗ screen").apply { toolTipText = "Uncheck only the rows currently on screen"; addActionListener { setVisibleChecked(false) } })
         bar.add(JButton("✗ all").apply { addActionListener { deselectAll() } })
         bar.add(JButton("Delete dups…").apply { toolTipText = "Delete redundant copies (keep one per content-identical group)"; addActionListener { deleteDuplicates() } })
+        bar.add(JButton("↻ decodes").apply { toolTipText = "Reload phoneme decodes from data/codebooks (after re-running the codebook)"; addActionListener { reloadDecodes() } })
         bar.add(countLabel)
         add(bar, java.awt.BorderLayout.NORTH)
         add(JScrollPane(table), java.awt.BorderLayout.CENTER)
@@ -430,6 +431,8 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private fun markDecode(targets: List<AudioRecording>, correct: Boolean) {
         DecodeFeedback.setAll(targets.map { it.id }, correct); model.fireTableDataChanged()
     }
+
+    private fun reloadDecodes() { DecodeStore.reload(); model.fireTableDataChanged() }
 
     private fun updateCount() {
         countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"

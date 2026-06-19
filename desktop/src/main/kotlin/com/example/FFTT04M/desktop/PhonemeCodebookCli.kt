@@ -44,51 +44,62 @@ object PhonemeCodebookCli {
         val fragsById = loadFragments(fragFile)                     // id -> [(startMs,endMs)]
         println("labels=${labels.size}  wavs=${wavById.size}  clips-with-frags=${fragsById.size}")
 
-        // ---- 1. featurize fragments of LABELLED clips ----
-        data class FV(val label: String, val vec: DoubleArray)
-        val labelled = ArrayList<FV>()
-        var usedClips = 0
-        for ((id, label) in labels) {
-            val wav = wavById[id] ?: continue
-            val frags = fragsById[id] ?: continue
-            val pcm = AudioDecoder.decode(wav) ?: continue
-            usedClips++
-            for ((sMs, eMs) in frags) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)) }
-        }
-        println("labelled clips used=$usedClips  fragments=${labelled.size}")
-        if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
-
-        // ---- 2. z-normalize ----
-        val mean = DoubleArray(13); val std = DoubleArray(13)
-        for (f in labelled) for (i in 0 until 13) mean[i] += f.vec[i]
-        for (i in 0 until 13) mean[i] /= labelled.size
-        for (f in labelled) for (i in 0 until 13) { val d = f.vec[i] - mean[i]; std[i] += d * d }
-        for (i in 0 until 13) std[i] = sqrt(std[i] / labelled.size).coerceAtLeast(1e-9)
-        labelled.forEach { znorm(it.vec, mean, std) }
-
-        // ---- 3. per-label k-means → phonemes ----
-        val byLabel = labelled.groupBy { it.label }
-        val phonemes = ArrayList<Phoneme>()
-        for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
-            val letter = letterFor(label)
-            val kLabel = max(1, (K.toDouble() * frags.size / labelled.size).roundToInt())
-            val vecs = frags.map { it.vec }
-            val (centroids, assign) = kmeans(vecs, kLabel)
-            for (ci in centroids.indices) {
-                val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
-                if (members.isEmpty()) continue
-                val dists = members.map { dist(it, centroids[ci]) }.sorted()
-                val radius = dists[(dists.size * 0.9).toInt().coerceIn(0, dists.size - 1)]
-                phonemes.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
-            }
-        }
-        println("phonemes=${phonemes.size} across ${byLabel.size} labels: " +
-            byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
-
+        val codebookArg = args.getOrNull(3)        // when set: decode-only, reuse this codebook
         val gson = GsonBuilder().setPrettyPrinting().create()
-        File(outDir, "${tag}_phonemes.json").writeText(gson.toJson(mapOf(
-            "tag" to tag, "k" to K, "feature" to "WholeClipFeatures[13] (minus syllabic), z-normed",
-            "norm" to mapOf("mean" to mean, "std" to std), "phonemes" to phonemes)))
+        val phonemes: List<Phoneme>; val mean: DoubleArray; val std: DoubleArray
+
+        if (codebookArg != null) {
+            // ---- decode-only: apply an existing codebook (e.g. p3's) to this dataset ----
+            val cb = loadCodebook(File(codebookArg))
+            if (cb == null) { println("Could not load codebook: $codebookArg"); return }
+            phonemes = cb.first; mean = cb.second; std = cb.third
+            println("decode-only: loaded ${phonemes.size} phonemes from ${File(codebookArg).name}")
+        } else {
+            // ---- 1. featurize fragments of LABELLED clips ----
+            data class FV(val label: String, val vec: DoubleArray)
+            val labelled = ArrayList<FV>()
+            var usedClips = 0
+            for ((id, label) in labels) {
+                val wav = wavById[id] ?: continue
+                val frags = fragsById[id] ?: continue
+                val pcm = AudioDecoder.decode(wav) ?: continue
+                usedClips++
+                for ((sMs, eMs) in frags) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)) }
+            }
+            println("labelled clips used=$usedClips  fragments=${labelled.size}")
+            if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
+
+            // ---- 2. z-normalize ----
+            val m = DoubleArray(13); val s = DoubleArray(13)
+            for (f in labelled) for (i in 0 until 13) m[i] += f.vec[i]
+            for (i in 0 until 13) m[i] /= labelled.size
+            for (f in labelled) for (i in 0 until 13) { val d = f.vec[i] - m[i]; s[i] += d * d }
+            for (i in 0 until 13) s[i] = sqrt(s[i] / labelled.size).coerceAtLeast(1e-9)
+            labelled.forEach { znorm(it.vec, m, s) }
+
+            // ---- 3. per-label k-means → phonemes ----
+            val byLabel = labelled.groupBy { it.label }
+            val built = ArrayList<Phoneme>()
+            for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
+                val letter = letterFor(label)
+                val kLabel = max(1, (K.toDouble() * frags.size / labelled.size).roundToInt())
+                val vecs = frags.map { it.vec }
+                val (centroids, assign) = kmeans(vecs, kLabel)
+                for (ci in centroids.indices) {
+                    val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
+                    if (members.isEmpty()) continue
+                    val dists = members.map { dist(it, centroids[ci]) }.sorted()
+                    val radius = dists[(dists.size * 0.9).toInt().coerceIn(0, dists.size - 1)]
+                    built.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
+                }
+            }
+            println("phonemes=${built.size} across ${byLabel.size} labels: " +
+                byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
+            File(outDir, "${tag}_phonemes.json").writeText(gson.toJson(mapOf(
+                "tag" to tag, "k" to K, "feature" to "WholeClipFeatures[13] (minus syllabic), z-normed",
+                "norm" to mapOf("mean" to m, "std" to s), "phonemes" to built)))
+            phonemes = built; mean = m; std = s
+        }
 
         // ---- 4. decode EVERY clip ----
         val decoded = LinkedHashMap<String, Any?>()
@@ -204,6 +215,21 @@ object PhonemeCodebookCli {
 
     private fun letterFor(label: String): String = letterMap[label]
         ?: label.split(" ", "-", "_").filter { it.isNotBlank() }.joinToString("") { it.first().uppercaseChar().toString() }.take(2)
+
+    @Suppress("UNCHECKED_CAST")
+    private fun loadCodebook(f: File): Triple<List<Phoneme>, DoubleArray, DoubleArray>? = try {
+        val root = com.google.gson.Gson().fromJson(f.readText(), Map::class.java) as Map<String, Any>
+        val norm = root["norm"] as Map<String, Any>
+        val mean = (norm["mean"] as List<*>).map { (it as Number).toDouble() }.toDoubleArray()
+        val std = (norm["std"] as List<*>).map { (it as Number).toDouble() }.toDoubleArray()
+        val phs = (root["phonemes"] as List<*>).map { p ->
+            val m = p as Map<String, Any>
+            Phoneme(m["code"] as String, m["letter"] as String, m["label"] as String,
+                (m["centroid"] as List<*>).map { (it as Number).toDouble() }.toDoubleArray(),
+                (m["radius"] as Number).toDouble(), (m["n"] as Number).toInt())
+        }
+        Triple(phs, mean, std)
+    } catch (e: Exception) { System.err.println("loadCodebook: ${e.message}"); null }
 
     private fun loadFragments(jsonl: File): Map<String, List<Pair<Int, Int>>> {
         if (!jsonl.isFile) return emptyMap()
