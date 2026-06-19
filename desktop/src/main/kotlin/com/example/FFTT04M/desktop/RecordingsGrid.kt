@@ -47,6 +47,14 @@ object ManualComments {
         save()
     }
 
+    /** Import comments only where none exists yet (e.g. mobile `.txt`-sidecar comments on load) so
+     *  they sit on equal footing with desktop-entered ones, without overwriting a desktop edit. */
+    @Synchronized fun importAll(pairs: List<Pair<String, String>>) {
+        var changed = false
+        for ((id, text) in pairs) if (text.isNotBlank() && map[id].isNullOrBlank()) { map[id] = text; changed = true }
+        if (changed) save()
+    }
+
     private fun save() = try {
         file.parentFile?.mkdirs(); file.writeText(gson.toJson(map))
     } catch (e: Exception) { System.err.println("manual_comments save failed: ${e.message}") }
@@ -254,10 +262,12 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     }
 
     private val sorter = javax.swing.table.TableRowSorter(model)
-    private val searchField = JTextField(16)
+    private val searchField = JTextField(14)
+    private val searchScope = JComboBox(arrayOf("in: All", "in: Filename", "in: Auto", "in: Manual"))
     private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates"))
     private val countLabel = JLabel(" ")
     @Volatile private var dupIds: Set<String> = emptySet()
+    @Volatile private var dupGroups: List<List<Row>> = emptyList()
     @Volatile private var dupComputed = false
 
     // Bidirectional synonyms for search (snore = snoring, …).
@@ -299,20 +309,22 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
         // Filter / search / selection toolbar.
         table.rowSorter = sorter
-        searchField.toolTipText = "Search id / comment / metadata — synonyms apply (snore = snoring)"
+        searchField.toolTipText = "Search (synonyms apply: snore = snoring). Scope it with the 'in:' selector."
         searchField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
             override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
             override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
             override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = applyFilter()
         })
+        searchScope.addActionListener { applyFilter() }
         showCombo.addActionListener {
             if (showCombo.selectedIndex == 3 && !dupComputed) computeDuplicatesThen { applyFilter() } else applyFilter()
         }
         val bar = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2))
-        bar.add(JLabel("Find:")); bar.add(searchField); bar.add(showCombo)
-        bar.add(JButton("✓ visible").apply { addActionListener { setVisibleChecked(true) } })
-        bar.add(JButton("✗ visible").apply { addActionListener { setVisibleChecked(false) } })
+        bar.add(JLabel("Find:")); bar.add(searchField); bar.add(searchScope); bar.add(showCombo)
+        bar.add(JButton("✓ screen").apply { toolTipText = "Check only the rows currently on screen"; addActionListener { setVisibleChecked(true) } })
+        bar.add(JButton("✗ screen").apply { toolTipText = "Uncheck only the rows currently on screen"; addActionListener { setVisibleChecked(false) } })
         bar.add(JButton("✗ all").apply { addActionListener { deselectAll() } })
+        bar.add(JButton("Delete dups…").apply { toolTipText = "Delete redundant copies (keep one per content-identical group)"; addActionListener { deleteDuplicates() } })
         bar.add(countLabel)
         add(bar, java.awt.BorderLayout.NORTH)
         add(JScrollPane(table), java.awt.BorderLayout.CENTER)
@@ -331,7 +343,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                     2 -> if (!hasComment(row.rec)) return false               // Has comment
                     3 -> if (row.rec.id !in dupIds) return false              // Duplicates
                 }
-                return q.isEmpty() || matches(searchable(row.rec), q)
+                return q.isEmpty() || matches(searchable(row.rec, searchScope.selectedIndex), q)
             }
         }
         updateCount()
@@ -342,17 +354,31 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             (listOf(w) + (synonyms[w]?.let { listOf(it) } ?: emptyList())).any { hay.contains(it) }
         }
 
-    private fun searchable(rec: AudioRecording): String = buildString {
-        append(rec.id.lowercase()); append(' ')
-        rec.metadata.values.forEach { append(it.toString().lowercase()); append(' ') }
-        ManualComments.get(rec.id)?.let { append(it.lowercase()) }
+    private fun searchable(rec: AudioRecording, scope: Int): String = when (scope) {
+        1 -> (rec.id + " " + rec.audioFile.name).lowercase()                                  // Filename
+        2 -> rec.metadata.entries.filter { it.key != "comment" }                              // Auto (metadata, sans the manual comment)
+                 .joinToString(" ") { "${it.key} ${it.value}" }.lowercase()
+        3 -> (ManualComments.get(rec.id) ?: "").lowercase()                                   // Manual
+        else -> buildString {                                                                 // All
+            append(rec.id.lowercase()); append(' ')
+            rec.metadata.values.forEach { append(it.toString().lowercase()); append(' ') }
+            ManualComments.get(rec.id)?.let { append(it.lowercase()) }
+        }
     }
 
     private fun hasComment(rec: AudioRecording): Boolean =
         ManualComments.get(rec.id) != null || rec.metadata["comment"]?.toString()?.isNotBlank() == true
 
+    /** Check/uncheck only the rows currently on screen (the scroll viewport), not all filtered rows. */
     private fun setVisibleChecked(checked: Boolean) {
-        for (vr in 0 until table.rowCount) rows[table.convertRowIndexToModel(vr)].checked = checked
+        val vp = table.parent as? javax.swing.JViewport
+        var first = 0; var last = table.rowCount - 1
+        if (vp != null) {
+            val r = vp.viewRect
+            first = table.rowAtPoint(java.awt.Point(0, r.y)).let { if (it < 0) 0 else it }
+            last = table.rowAtPoint(java.awt.Point(0, r.y + r.height - 1)).let { if (it < 0) table.rowCount - 1 else it }
+        }
+        for (vr in first..last) if (vr in 0 until table.rowCount) rows[table.convertRowIndexToModel(vr)].checked = checked
         model.fireTableDataChanged(); applyFilter()
     }
 
@@ -366,15 +392,35 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private fun computeDuplicatesThen(after: () -> Unit) {
         countLabel.text = "  finding duplicates…"
         renderPool.submit {
+            val groups = ArrayList<List<Row>>()
             val dups = HashSet<String>()
             rows.groupBy { it.rec.audioFile.length() }.forEach { (sz, group) ->
                 if (sz > 0L && group.size >= 2)
                     group.groupBy { hashFile(it.rec.audioFile) }
-                        .forEach { (h, g) -> if (h != null && g.size > 1) g.forEach { dups.add(it.rec.id) } }
+                        .forEach { (h, g) -> if (h != null && g.size > 1) { groups.add(g); g.forEach { dups.add(it.rec.id) } } }
             }
-            dupIds = dups; dupComputed = true
+            dupIds = dups; dupGroups = groups; dupComputed = true
             SwingUtilities.invokeLater(after)
         }
+    }
+
+    /** Delete redundant copies — keep one per content-identical group, delete the rest (files + list). */
+    private fun deleteDuplicates() {
+        if (!dupComputed) { computeDuplicatesThen { deleteDuplicates() }; return }
+        val groups = dupGroups
+        val toDelete = groups.flatMap { it.drop(1) }   // keep the first of each group
+        if (toDelete.isEmpty()) { showInfo("No content-duplicate clips found."); return }
+        if (JOptionPane.showConfirmDialog(this,
+                "Delete ${toDelete.size} duplicate copy/copies (keeping one per ${groups.size} group)?\nFiles are removed from disk.",
+                "Delete duplicates", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return
+        val ids = toDelete.map { it.rec.id }.toSet()
+        var del = 0
+        for (r in toDelete) if (r.rec.audioFile.delete() || !r.rec.audioFile.exists()) del++
+        rows.removeAll { it.rec.id in ids }
+        dupComputed = false; dupIds = emptySet(); dupGroups = emptyList()
+        model.fireTableDataChanged(); applyFilter()
+        onRecordingsChanged?.invoke(rows.map { it.rec })
+        showInfo("Deleted $del duplicate(s).")
     }
 
     private fun hashFile(f: File): String? = try {
@@ -450,9 +496,13 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     // ---- data ------------------------------------------------------------------------------------
 
     fun setRecordings(list: List<AudioRecording>) {
+        // Fold mobile .txt-sidecar comments (metadata["comment"]) into the JSON manual store so the
+        // two are on equal footing (only where no desktop comment already exists).
+        ManualComments.importAll(list.mapNotNull { r ->
+            r.metadata["comment"]?.toString()?.takeIf { it.isNotBlank() }?.let { r.id to it } })
         rows.clear()
         list.forEach { rows.add(Row(it)) }
-        dupComputed = false; dupIds = emptySet()
+        dupComputed = false; dupIds = emptySet(); dupGroups = emptyList()
         model.fireTableDataChanged(); applyFilter()
     }
 
@@ -464,7 +514,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         val manual = ManualComments.get(rec.id)
         // Surface the recording's metadata (coswara attrs, source, etc.). "category" duplicates
         // "sound_type", so skip it; everything else is shown key=value.
-        val skip = setOf("category")
+        val skip = setOf("category", "comment")   // "comment" is shown as the manual ✍ line, not auto
         val meta = rec.metadata.entries
             .filter { it.key !in skip && it.value.toString().isNotBlank() }
             .joinToString(" · ") { "${it.key}=${escape(it.value.toString().take(60))}" }
