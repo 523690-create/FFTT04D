@@ -282,11 +282,17 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
     private fun commentHtml(rec: AudioRecording): String {
         val manual = ManualComments.get(rec.id)
-        val auto = rec.label()?.let { "auto: $it" } ?: (rec.metadata["source"]?.let { "auto: $it" } ?: "")
+        // Surface the recording's metadata (coswara attrs, source, etc.). "category" duplicates
+        // "sound_type", so skip it; everything else is shown key=value.
+        val skip = setOf("category")
+        val meta = rec.metadata.entries
+            .filter { it.key !in skip && it.value.toString().isNotBlank() }
+            .joinToString(" · ") { "${it.key}=${escape(it.value.toString().take(60))}" }
         return buildString {
-            append("<html><b>").append(rec.id).append("</b>")
+            append("<html><b>").append(escape(rec.id)).append("</b>")
             if (manual != null) append("<br><span style='color:#7fd'>✍ ").append(escape(manual)).append("</span>")
-            if (auto.isNotBlank()) append("<br><span style='color:#999'>").append(escape(auto)).append("</span>")
+            if (meta.isNotBlank()) append("<br><span style='color:#999'>").append(meta).append("</span>")
+            else rec.label()?.let { append("<br><span style='color:#999'>").append(escape(it)).append("</span>") }
             append("</html>")
         }
     }
