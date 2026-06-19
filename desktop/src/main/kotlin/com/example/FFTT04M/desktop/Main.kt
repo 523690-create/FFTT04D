@@ -1168,13 +1168,28 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             val totalSegsC = java.util.concurrent.atomic.AtomicInteger(0)
             val doneC = java.util.concurrent.atomic.AtomicInteger(0)
             val failedC = java.util.concurrent.atomic.AtomicInteger(0)
-            val processedC = java.util.concurrent.atomic.AtomicInteger(0)
             val segLines = StringBuilder()
-            val allSegments = java.util.Collections.synchronizedList(
-                mutableListOf<Triple<String, String, List<Segment>>>())   // id, file, segs
             val snapshot = recordings.toList()
             val total = snapshot.size
             val showDetail = total <= 5
+
+            // Resume: skip clips already in the output file and APPEND new results incrementally, so a
+            // close/crash/cancel preserves progress — re-running continues instead of restarting at 0.
+            // To force a clean re-run, delete the method's *_segments.jsonl first.
+            val outDir = Workspace.dir("fractionation")
+            outDir.mkdirs()
+            val outFile = File(outDir, "${frac.name.replace(" ", "_")}_segments.jsonl")
+            val idRegex = Regex("\"id\":\"([^\"]*)\"")
+            val doneIds: HashSet<String> = if (outFile.isFile)
+                outFile.bufferedReader().useLines { ls ->
+                    ls.mapNotNullTo(HashSet()) { idRegex.find(it)?.groupValues?.get(1) }
+                } else HashSet()
+            val todo = snapshot.filter { it.id !in doneIds }
+            val alreadyDone = total - todo.size
+            val processedC = java.util.concurrent.atomic.AtomicInteger(alreadyDone)
+            if (alreadyDone > 0)
+                logLine("${frac.name}: resuming — $alreadyDone already done, ${todo.size} to go")
+            val writer = java.io.PrintWriter(java.io.BufferedWriter(java.io.FileWriter(outFile, true)))  // append
 
             // Process clips across a worker pool so per-clip CPU work (decode/resample/k-means)
             // overlaps and the GPU stays fed (ONNX run() is thread-safe). HuBERT-on-CUDA is capped
@@ -1187,7 +1202,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 else -> minOf(engine.workers, 8).coerceAtLeast(1)
             }
             val pool = java.util.concurrent.Executors.newFixedThreadPool(poolSize)
-            for (rec in snapshot) {
+            for (rec in todo) {
                 pool.submit {
                     if (token.get()) return@submit
                     try {
@@ -1196,7 +1211,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                         else {
                             val segs = frac.fractionate(pcm, rec.sampleRate)
                             totalSegsC.addAndGet(segs.size)
-                            allSegments.add(Triple(rec.id, rec.audioFile.name, segs))
+                            synchronized(writer) {                 // append this clip's lines + flush (durable resume)
+                                for (s in segs) {
+                                    val lbl = s.label?.let { "\"$it\"" } ?: "null"
+                                    val cid = s.clusterId?.toString() ?: "null"
+                                    writer.println("""{"id":"${rec.id}","file":"${rec.audioFile.name}","method":"${frac.name}","startMs":${s.startMs},"endMs":${s.endMs},"label":$lbl,"clusterId":$cid}""")
+                                }
+                                writer.flush()
+                            }
                             doneC.incrementAndGet()
                             if (showDetail) synchronized(segLines) {
                                 segLines.append("  ${rec.audioFile.name}: ${segs.size} segment(s)\n")
@@ -1222,31 +1244,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             while (!pool.awaitTermination(250, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 if (token.get()) { pool.shutdownNow(); break }
             }
+            try { writer.flush(); writer.close() } catch (e: Exception) { logLine("${frac.name}: JSONL close: ${e.message}") }
             val cancelled = token.get()
             val done = doneC.get(); val failed = failedC.get(); val totalSegs = totalSegsC.get()
-
-            // Export segments.jsonl with method field
-            val outDir = Workspace.dir("fractionation")
-            outDir.mkdirs()
-            val outFile = File(outDir, "${frac.name.replace(" ", "_")}_segments.jsonl")
-            try {
-                outFile.bufferedWriter().use { w ->
-                    for ((id, fileName, segs) in allSegments) {
-                        for (s in segs) {
-                            val lbl = s.label?.let { "\"$it\"" } ?: "null"
-                            val cid = s.clusterId?.toString() ?: "null"
-                            w.write("""{"id":"$id","file":"$fileName","method":"${frac.name}","startMs":${s.startMs},"endMs":${s.endMs},"label":$lbl,"clusterId":$cid}""")
-                            w.newLine()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                logLine("${frac.name}: could not write JSONL: ${e.message}")
-            }
 
             val summary = buildString {
                 append(if (cancelled) "=== ${frac.name} CANCELLED ===\n" else "=== ${frac.name} complete ===\n")
                 append("$done clip(s) processed · $failed failed · $totalSegs segments total\n")
+                if (alreadyDone > 0) append("(resumed: $alreadyDone already done were skipped)\n")
                 if (segLines.isNotEmpty()) append(segLines)
                 if (!cancelled) append("Segments exported → ${outFile.absolutePath}\n")
             }

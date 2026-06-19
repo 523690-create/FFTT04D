@@ -13,8 +13,10 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import javax.imageio.ImageIO
+import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.Clip
+import javax.sound.sampled.DataLine
 import javax.sound.sampled.LineEvent
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
@@ -54,21 +56,83 @@ object ManualComments {
 object AudioPlayer {
     private var clip: Clip? = null
     private val queue = ArrayDeque<File>()
+    private var dialog: JDialog? = null
+    private var label: JLabel? = null
 
-    @Synchronized fun playSequence(files: List<File>) { stop(); queue.clear(); queue.addAll(files); next() }
+    @Synchronized fun playSequence(files: List<File>) {
+        stop(); queue.addAll(files)
+        SwingUtilities.invokeLater { ensureDialog().isVisible = true }
+        next()
+    }
 
     @Synchronized private fun next() {
-        val f = queue.removeFirstOrNull() ?: return
+        val f = queue.removeFirstOrNull() ?: run { setBody("Done."); return }
         try {
-            val ais = AudioSystem.getAudioInputStream(f)
+            val src = AudioSystem.getAudioInputStream(f)
+            val base = src.format
+            // Convert anything that isn't plain 16-bit PCM to a standard playable format.
+            val stream = if (base.encoding == AudioFormat.Encoding.PCM_SIGNED && base.sampleSizeInBits == 16) src
+                else AudioSystem.getAudioInputStream(AudioFormat(base.sampleRate, 16, base.channels, true, false), src)
+            if (!AudioSystem.isLineSupported(DataLine.Info(Clip::class.java, stream.format))) {
+                fail(f, "No audio output line supports ${stream.format}."); return
+            }
             val c = AudioSystem.getClip()
-            c.open(ais)
-            c.addLineListener { e -> if (e.type == LineEvent.Type.STOP) { c.close(); ais.close(); synchronized(this) { next() } } }
-            clip = c; c.start()
-        } catch (e: Exception) { System.err.println("play failed ${f.name}: ${e.message}"); next() }
+            c.open(stream)
+            c.addLineListener { e ->
+                if (e.type == LineEvent.Type.STOP) { c.close(); try { src.close() } catch (_: Exception) {}; synchronized(this) { next() } }
+            }
+            clip = c
+            setBody("&#9654; Playing: <b>${escapeHtml(f.name)}</b>" +
+                "<br><span style='color:#888'>${base.sampleRate.toInt()} Hz · ${base.sampleSizeInBits}-bit · ${base.channels}ch · out: ${escapeHtml(defaultOut())}</span>")
+            c.start()
+        } catch (e: Exception) { fail(f, e.message ?: e.toString()) }
+    }
+
+    private fun fail(f: File, msg: String) {
+        System.err.println("play failed ${f.name}: $msg")
+        setBody("&#9888; <b>Playback failed</b>: ${escapeHtml(f.name)}" +
+            "<br><span style='color:#f88'>${escapeHtml(msg)}</span>" +
+            "<br><br><span style='color:#888'>Audio outputs Java can see:</span><br>${outputsHtml()}")
+        next()
     }
 
     @Synchronized fun stop() { try { clip?.stop(); clip?.close() } catch (_: Exception) {}; clip = null; queue.clear() }
+
+    // ---- mini player dialog ----------------------------------------------------------------------
+
+    private fun ensureDialog(): JDialog {
+        dialog?.let { return it }
+        val d = JDialog(null as java.awt.Frame?, "Player")
+        val lbl = JLabel(" ").apply { border = BorderFactory.createEmptyBorder(12, 14, 8, 14) }
+        d.contentPane.layout = java.awt.BorderLayout()
+        d.contentPane.add(lbl, java.awt.BorderLayout.CENTER)
+        d.contentPane.add(JPanel().apply { add(JButton("Stop").apply { addActionListener { stop() } }) },
+            java.awt.BorderLayout.SOUTH)
+        d.defaultCloseOperation = JDialog.HIDE_ON_CLOSE
+        d.addWindowListener(object : java.awt.event.WindowAdapter() {
+            override fun windowClosing(e: java.awt.event.WindowEvent?) { stop() }
+        })
+        d.isAlwaysOnTop = true
+        d.setSize(460, 150)
+        d.setLocationRelativeTo(null)
+        label = lbl; dialog = d
+        return d
+    }
+
+    private fun setBody(html: String) = SwingUtilities.invokeLater { ensureDialog(); label?.text = "<html>$html</html>" }
+
+    private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    /** The default output mixer's name (best effort). */
+    private fun defaultOut(): String = try { AudioSystem.getMixer(null).mixerInfo.name } catch (e: Exception) { "(default)" }
+
+    /** Names of mixers that can play audio (have output lines) — so a wrong/missing speaker is visible. */
+    private fun outputsHtml(): String = try {
+        AudioSystem.getMixerInfo()
+            .filter { AudioSystem.getMixer(it).sourceLineInfo.isNotEmpty() }
+            .joinToString("<br>") { "&bull; ${escapeHtml(it.name)}" }
+            .ifEmpty { "(none — Java sees no audio output device)" }
+    } catch (e: Exception) { "(could not enumerate)" }
 }
 
 /** Render a per-frame MFCC matrix as a blue→white→red diverging heatmap (time→X, coeff→Y, low at bottom). */
