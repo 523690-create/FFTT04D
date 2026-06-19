@@ -60,6 +60,49 @@ object ManualComments {
     } catch (e: Exception) { System.err.println("manual_comments save failed: ${e.message}") }
 }
 
+/** Phoneme-codebook decode results (the `_decoded.json` files under data/codebooks) — id → letter + word. */
+object DecodeStore {
+    data class Dec(val letter: String, val word: List<String>)
+    @Volatile private var cache: Map<String, Dec>? = null
+    private fun map(): Map<String, Dec> = cache ?: load().also { cache = it }
+    fun reload() { cache = null }
+    fun get(id: String): Dec? = map()[id]
+
+    @Suppress("UNCHECKED_CAST")
+    private fun load(): Map<String, Dec> {
+        val out = HashMap<String, Dec>()
+        val gson = Gson()
+        Workspace.dir("codebooks").listFiles { f -> f.name.endsWith("_decoded.json") }?.forEach { f ->
+            try {
+                val data: Map<String, Map<String, Any>> = gson.fromJson(f.readText(),
+                    object : TypeToken<Map<String, Map<String, Any>>>() {}.type) ?: emptyMap()
+                for ((id, v) in data) {
+                    val letter = v["inferredLetter"] as? String ?: continue
+                    val word = (v["word"] as? List<*>)?.map { it.toString() } ?: emptyList()
+                    out[id] = Dec(letter, word)
+                }
+            } catch (e: Exception) { System.err.println("decode load ${f.name}: ${e.message}") }
+        }
+        return out
+    }
+}
+
+/** Human verdict on an auto-decode: id → true (correct) / false (error). data/codebooks/decode_feedback.json */
+object DecodeFeedback {
+    private val file = File(Workspace.dir("codebooks"), "decode_feedback.json")
+    private val gson = Gson()
+    private val map: MutableMap<String, Boolean> = try {
+        if (file.isFile) gson.fromJson(file.readText(), object : TypeToken<MutableMap<String, Boolean>>() {}.type)
+            ?: mutableMapOf() else mutableMapOf()
+    } catch (e: Exception) { mutableMapOf() }
+
+    @Synchronized fun get(id: String): Boolean? = map[id]
+    @Synchronized fun setAll(ids: Collection<String>, correct: Boolean) {
+        for (id in ids) map[id] = correct
+        try { file.writeText(gson.toJson(map)) } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
+    }
+}
+
 /** Sequential WAV player — used for single clips and for playing a multi-selection in order. */
 object AudioPlayer {
     private var clip: Clip? = null
@@ -384,6 +427,10 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
     private fun deselectAll() { rows.forEach { it.checked = false }; model.fireTableDataChanged(); applyFilter() }
 
+    private fun markDecode(targets: List<AudioRecording>, correct: Boolean) {
+        DecodeFeedback.setAll(targets.map { it.id }, correct); model.fireTableDataChanged()
+    }
+
     private fun updateCount() {
         countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"
     }
@@ -443,6 +490,9 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             add(JMenuItem("Play (${targets.size})").apply { addActionListener { AudioPlayer.playSequence(targets.map { it.audioFile }) } })
             add(JMenuItem("Add manual comment…").apply { addActionListener { addComment(targets) } })
             add(JMenuItem("Move…").apply { addActionListener { moveFiles(targets) } })
+            addSeparator()
+            add(JMenuItem("Decode ✓ correct (${targets.size})").apply { addActionListener { markDecode(targets, true) } })
+            add(JMenuItem("Decode ✗ error (${targets.size})").apply { addActionListener { markDecode(targets, false) } })
             addSeparator()
             add(JMenuItem("Delete…").apply { addActionListener { deleteFiles(targets) } })
         }.show(table, e.x, e.y)
@@ -523,8 +573,19 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             if (manual != null) append("<br><span style='color:#7fd'>✍ ").append(escape(manual)).append("</span>")
             if (meta.isNotBlank()) append("<br><span style='color:#999'>").append(meta).append("</span>")
             else rec.label()?.let { append("<br><span style='color:#999'>").append(escape(it)).append("</span>") }
+            DecodeStore.get(rec.id)?.let { dec ->                       // phoneme-codebook decode, coloured by class
+                val fb = DecodeFeedback.get(rec.id)?.let { if (it) " ✓" else " ✗" } ?: ""
+                val w = dec.word.take(10).joinToString(" ") + if (dec.word.size > 10) " …" else ""
+                append("<br><span style='color:${letterColor(dec.letter)}'>≈ ")
+                    .append(escape(dec.letter)).append(": ").append(escape(w)).append(fb).append("</span>")
+            }
             append("</html>")
         }
+    }
+
+    private fun letterColor(l: String): String = when (l) {
+        "S" -> "#5cf"; "B" -> "#f77"; "N" -> "#999"; "D" -> "#fb5"; "SP" -> "#9d9"
+        "C" -> "#c9f"; "SN" -> "#fc9"; "EP" -> "#dd9"; "?" -> "#777"; else -> "#bbb"
     }
 
     private fun escape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
