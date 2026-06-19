@@ -647,7 +647,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             shown.forEach { rec -> model.addElement("${rec.id}: ${rec.label() ?: "unknown"}") }
             if (recordings.size > shown.size)
                 model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
-            recordingsGrid.setRecordings(shown)
+            recordingsGrid.setRecordings(recordings.toList())   // grid virtualizes; show all loaded
         }
     }
 
@@ -786,7 +786,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             sb.append("  (${r.error ?: "no analysis"})\n\n")
             return sb.toString()
         }
-        val a = r.analysis
+        val a = r.analysis!!
         sb.append(String.format("  %.2fs · %d event(s) · %d cough-like\n",
             r.durationSec, a.events.size, a.coughCount))
         for (e in a.events) sb.append(formatEvent(e))
@@ -1165,35 +1165,60 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
 
         thread {
             logLine("${frac.name}: started on ${recordings.size} clip(s)")
-            var totalSegs = 0; var done = 0; var failed = 0
+            val totalSegsC = java.util.concurrent.atomic.AtomicInteger(0)
+            val doneC = java.util.concurrent.atomic.AtomicInteger(0)
+            val failedC = java.util.concurrent.atomic.AtomicInteger(0)
+            val processedC = java.util.concurrent.atomic.AtomicInteger(0)
             val segLines = StringBuilder()
-            val allSegments = mutableListOf<Triple<String, String, List<Segment>>>()  // id, file, segs
-            for ((idx, rec) in recordings.withIndex()) {
-                if (token.get()) break
-                tp.update(idx, recordings.size, "${frac.name} $idx/${recordings.size}")
-                try {
-                    val pcm = AudioDecoder.decode(rec.audioFile)
-                    if (pcm == null) { failed++; continue }
-                    val segs = frac.fractionate(pcm, rec.sampleRate)
-                    totalSegs += segs.size
-                    allSegments.add(Triple(rec.id, rec.audioFile.name, segs))
-                    if (recordings.size <= 5) {
-                        segLines.append("  ${rec.audioFile.name}: ${segs.size} segment(s)\n")
-                        for (s in segs) {
-                            val lbl = buildString {
-                                if (s.label != null) append("[${s.label}] ")
-                                if (s.clusterId != null) append("#${s.clusterId} ")
+            val allSegments = java.util.Collections.synchronizedList(
+                mutableListOf<Triple<String, String, List<Segment>>>())   // id, file, segs
+            val snapshot = recordings.toList()
+            val total = snapshot.size
+            val showDetail = total <= 5
+
+            // Process clips across a worker pool: the per-clip CPU work (decode/resample/k-means)
+            // overlaps across cores and keeps the single GPU continuously fed (ONNX run() is
+            // thread-safe). Capped at 8 to bound GPU VRAM on the HuBERT path; otherwise the loop was
+            // a serial decode→infer→cluster chain that saturated nothing.
+            val poolSize = minOf(engine.workers, 8).coerceAtLeast(1)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(poolSize)
+            for (rec in snapshot) {
+                pool.submit {
+                    if (token.get()) return@submit
+                    try {
+                        val pcm = AudioDecoder.decode(rec.audioFile)
+                        if (pcm == null) failedC.incrementAndGet()
+                        else {
+                            val segs = frac.fractionate(pcm, rec.sampleRate)
+                            totalSegsC.addAndGet(segs.size)
+                            allSegments.add(Triple(rec.id, rec.audioFile.name, segs))
+                            doneC.incrementAndGet()
+                            if (showDetail) synchronized(segLines) {
+                                segLines.append("  ${rec.audioFile.name}: ${segs.size} segment(s)\n")
+                                for (s in segs) {
+                                    val lbl = buildString {
+                                        if (s.label != null) append("[${s.label}] ")
+                                        if (s.clusterId != null) append("#${s.clusterId} ")
+                                    }
+                                    segLines.append("    ${lbl}${s.startMs}ms – ${s.endMs}ms (${s.endMs - s.startMs}ms)\n")
+                                }
                             }
-                            segLines.append("    ${lbl}${s.startMs}ms – ${s.endMs}ms (${s.endMs - s.startMs}ms)\n")
                         }
+                    } catch (e: Exception) {
+                        failedC.incrementAndGet()
+                        logLine("${frac.name}: error on ${rec.audioFile.name}: ${e.message}")
+                    } finally {
+                        val p = processedC.incrementAndGet()
+                        if (p % 8 == 0 || p == total) tp.update(p, total, "${frac.name} $p/$total")
                     }
-                    done++
-                } catch (e: Exception) {
-                    failed++
-                    logLine("${frac.name}: error on ${rec.audioFile.name}: ${e.message}")
                 }
             }
+            pool.shutdown()
+            while (!pool.awaitTermination(250, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                if (token.get()) { pool.shutdownNow(); break }
+            }
             val cancelled = token.get()
+            val done = doneC.get(); val failed = failedC.get(); val totalSegs = totalSegsC.get()
 
             // Export segments.jsonl with method field
             val outDir = Workspace.dir("fractionation")
