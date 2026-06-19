@@ -74,6 +74,15 @@ tasks.register<JavaExec>("fractionateCli") {
     systemProperty("java.awt.headless", "true")
 }
 
+// Supervised fragment-level phoneme codebook + decode (PHONEME_CODEBOOK.md).
+tasks.register<JavaExec>("phonemeCodebookCli") {
+    group = "application"
+    description = "Build a per-label phoneme codebook from labelled clips, then decode all clips."
+    mainClass.set("com.example.FFTT04M.desktop.PhonemeCodebookCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {
