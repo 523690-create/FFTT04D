@@ -1,9 +1,13 @@
 # Workspace move + consolidation plan (D: → NVMe G:)
 
-Status: **Part 1 (data consolidation) DONE 2026-06-18** — `Workspace` refactor committed; C: data
-migrated to `D:\AndroidProjects\data\`. **Part 2 (physical move) pending** the user's Disk-Management
-step. D: decrypt is finished. Chosen variant: **volume mount point** (data at G: root, mount G: at
-`D:\AndroidProjects`, drop the G: letter) — no dependency on the G: drive letter.
+Status: **COMPLETE 2026-06-18.** Part 1 (data consolidation via `Workspace`) committed; Part 2
+(physical move) done: workspace copied to the NVMe (robocopy, 611k files, 0 failed, `.venv` excluded),
+NVMe volume `{5426d1a3-…}` mounted at `D:\AndroidProjects` via `mountvol`, `.venv` regenerated in
+place. Verified through the mount: build ✓, HuBERT GPU `execution provider: CUDA` ✓, data resolves to
+`D:\AndroidProjects\data` ✓. `D:\AndroidProjects` now = the 932 GB NVMe (D:\ root is still the 1.8 TB
+DATA drive). The `G:` letter remains as a 2nd access path (harmless; `mountvol G:\ /D` to drop it).
+Pending cleanup: delete `D:\AndroidProjects_old` (old copy, ~190 GB on the DATA drive) and the C:
+`FFTT04M_*` backups once confident.
 
 ## Why
 The current workspace lives on `D:\AndroidProjects`, a drive that was crashing to BitLocker
