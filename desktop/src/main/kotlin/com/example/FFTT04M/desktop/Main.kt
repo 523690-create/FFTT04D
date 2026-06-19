@@ -1148,6 +1148,14 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         }
     }
 
+    /** Tag for the loaded collection — its dominant parent-folder name — so each dataset's
+     *  fractionation output lands in its own subfolder (ALLDATA vs a device collection vs …). */
+    private fun datasetTagFor(recs: List<AudioRecording>): String {
+        val raw = recs.asSequence().mapNotNull { it.audioFile.parentFile?.name }
+            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "loaded"
+        return raw.replace(Regex("[^A-Za-z0-9._-]"), "_").take(40).ifEmpty { "loaded" }
+    }
+
     private fun onFractionate(frac: Fractionator, button: JButton) {
         // Already running → cancel
         fractionateTokens[button]?.let { it.set(true); showStatus("Cancelling ${frac.name}…"); return }
@@ -1187,7 +1195,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             // Resume: skip clips already in the output file and APPEND new results incrementally, so a
             // close/crash/cancel preserves progress — re-running continues instead of restarting at 0.
             // To force a clean re-run, delete the method's *_segments.jsonl first.
-            val outDir = Workspace.dir("fractionation")
+            // Output is dataset-aware: each loaded collection's results go to their own subfolder
+            // (data/fractionation/<dataset>/) so ALLDATA and device collections stay separate.
+            val outDir = File(Workspace.dir("fractionation"), datasetTagFor(snapshot))
             outDir.mkdirs()
             val outFile = File(outDir, "${frac.name.replace(" ", "_")}_segments.jsonl")
             val idRegex = Regex("\"id\":\"([^\"]*)\"")
