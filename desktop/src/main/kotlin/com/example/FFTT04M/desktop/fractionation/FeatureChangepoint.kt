@@ -39,9 +39,9 @@ class FeatureChangepoint(
             val end = (start + win).coerceAtMost(x.size)
             val slice = FloatArray(end - start) { x[start + it] }
 
-            // MFCCs from a 1-frame extraction
-            val mfcSlice = FloatArray(x.size) { if (it in start until end) x[it] else 0f }
-            val mf = mfcc.extract(mfcSlice, start, end, sr)
+            // MFCCs for this frame — read straight from x[start,end). (Previously this built a
+            // full-clip-sized zero-padded copy PER FRAME → O(frames × clipLen), the real bottleneck.)
+            val mf = mfcc.extract(x, start, end, sr)
 
             // log-energy
             var energy = 0.0; for (s in slice) energy += s.toDouble() * s
