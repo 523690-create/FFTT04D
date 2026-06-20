@@ -578,7 +578,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             else rec.label()?.let { append("<br><span style='color:#999'>").append(escape(it)).append("</span>") }
             DecodeStore.get(rec.id)?.let { dec ->                       // phoneme-codebook decode, coloured by class
                 val fb = DecodeFeedback.get(rec.id)?.let { if (it) " ✓" else " ✗" } ?: ""
-                val w = dec.word.take(10).joinToString(" ") + if (dec.word.size > 10) " …" else ""
+                val w = dec.word.joinToString(" ")                          // full word — no truncation
                 append("<br><span style='color:${letterColor(dec.letter)}'>≈ ")
                     .append(escape(dec.letter)).append(": ").append(escape(w)).append(fb).append("</span>")
             }

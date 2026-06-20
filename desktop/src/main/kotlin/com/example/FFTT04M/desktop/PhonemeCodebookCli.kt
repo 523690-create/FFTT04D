@@ -215,15 +215,26 @@ object PhonemeCodebookCli {
 
     private val assignedLetters = HashMap<String, String>()
     private val usedLetters = HashSet<String>()
-    /** A unique letter code per label — collisions (e.g. croup vs another C-word) get C2, C3, … */
+    /** A unique, DIGIT-FREE letter code per label so `[letters][number]` always parses unambiguously.
+     *  Collisions extend with more of the label's own letters (croup→C, next C-word→CR/CRO…), then a
+     *  trailing letter as a last resort. Never appends a digit. */
     @Synchronized private fun letterFor(label: String): String {
         assignedLetters[label]?.let { return it }
-        val base = (letterMap[label] ?: label.split(" ", "-", "_").filter { it.isNotBlank() }
-            .joinToString("") { it.first().uppercaseChar().toString() }.take(2)).ifBlank { "X" }
-        var cand = base; var i = 1
-        while (cand in usedLetters) { i++; cand = "$base$i" }
-        usedLetters += cand; assignedLetters[label] = cand
-        return cand
+        val cands = LinkedHashSet<String>()
+        letterMap[label]?.let { cands.add(it) }
+        val initials = label.split(" ", "-", "_", "/", ",")
+            .mapNotNull { w -> w.firstOrNull { it.isLetter() }?.uppercaseChar() }.joinToString("")
+        for (len in 1..initials.length) cands.add(initials.take(len))
+        val letters = label.filter { it.isLetter() }.uppercase()
+        for (len in 1..minOf(5, letters.length)) cands.add(letters.take(len))
+        var chosen = cands.firstOrNull { it.isNotBlank() && it !in usedLetters }
+        if (chosen == null) {
+            val base = cands.firstOrNull { it.isNotBlank() } ?: "X"
+            var s = 'A'; while (s < 'Z' && "$base$s" in usedLetters) s++
+            chosen = "$base$s"
+        }
+        usedLetters += chosen; assignedLetters[label] = chosen
+        return chosen
     }
 
     @Suppress("UNCHECKED_CAST")
