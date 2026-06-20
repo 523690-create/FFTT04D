@@ -55,13 +55,30 @@ object PhonemeCodebookCli {
             phonemes = cb.first; mean = cb.second; std = cb.third
             println("decode-only: loaded ${phonemes.size} phonemes from ${File(codebookArg).name}")
         } else {
+            // ---- aggregate labelled clips across ALL datasets (label any dataset → feeds the codebook) ----
+            // Merge every dataset's Spectral-Flux fragments, and index wavs from every known dataset dir,
+            // so an id labelled in ALLDATA contributes even when this run's target is p3 (and vice-versa).
+            val fracRoot = fragFile.absoluteFile.parentFile?.parentFile     // …/data/fractionation
+            val buildFragsById = HashMap<String, List<Pair<Int, Int>>>()
+            fracRoot?.listFiles { f -> f.isDirectory }?.sortedBy { it.name }?.forEach { sub ->
+                File(sub, "Spectral_Flux_Onset_segments.jsonl").takeIf { it.isFile }
+                    ?.let { buildFragsById.putAll(loadFragments(it)) }
+            }
+            val parent = wavDir.absoluteFile.parentFile
+            val datasetRoots = (listOf(wavDir) + listOf("p3", "ALLDATA", "true_cough").map { File(parent ?: wavDir, it) })
+                .filter { it.isDirectory }.distinctBy { it.absolutePath }
+            val buildWavById = datasetRoots.asSequence().flatMap { it.walkTopDown() }
+                .filter { it.isFile && it.extension.equals("wav", true) }.associateBy { it.nameWithoutExtension }
+            println("aggregate build: ${buildWavById.size} wavs across ${datasetRoots.size} dataset dir(s) " +
+                "(${datasetRoots.joinToString { it.name }}), ${buildFragsById.size} clips-with-frags")
+
             // ---- 1. featurize fragments of LABELLED clips ----
             data class FV(val label: String, val vec: DoubleArray)
             val labelled = ArrayList<FV>()
             var usedClips = 0
             for ((id, label) in labels) {
-                val wav = wavById[id] ?: continue
-                val frags = fragsById[id] ?: continue
+                val wav = buildWavById[id] ?: continue
+                val frags = buildFragsById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav) ?: continue
                 usedClips++
                 for ((sMs, eMs) in frags) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)) }
@@ -78,11 +95,15 @@ object PhonemeCodebookCli {
             labelled.forEach { znorm(it.vec, m, s) }
 
             // ---- 3. per-label k-means → phonemes ----
+            // Balanced (√-proportional) allocation: phonemes ∝ √(fragment count), not the raw count, so an
+            // over-represented label (e.g. bronchitis, snoring) gets more phonemes than a rare one but stops
+            // dominating the codebook's catchment. Capped by #fragments (k-means can't exceed its points).
             val byLabel = labelled.groupBy { it.label }
+            val sqrtTotal = byLabel.values.sumOf { sqrt(it.size.toDouble()) }.coerceAtLeast(1e-9)
             val built = ArrayList<Phoneme>()
             for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
                 val letter = letterFor(label)
-                val kLabel = max(1, (K.toDouble() * frags.size / labelled.size).roundToInt())
+                val kLabel = max(1, (K * sqrt(frags.size.toDouble()) / sqrtTotal).roundToInt()).coerceAtMost(frags.size)
                 val vecs = frags.map { it.vec }
                 val (centroids, assign) = kmeans(vecs, kLabel)
                 for (ci in centroids.indices) {

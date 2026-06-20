@@ -12,7 +12,12 @@ number is the cluster index within that label.
   already on disk in `data/fractionation/<dataset>/Spectral_Flux_Onset_segments.jsonl`).
 - Fragment feature: **13-dim** = `WholeClipFeatures` minus `syllabic` (a whole-clip 3–8 Hz rhythm
   feature, meaningless on a <333 ms fragment). z-normalized over the fragment population.
-- Total phonemes **K=128**, distributed across labels in proportion to each label's fragment count.
+- Total phonemes **K=128**, distributed across labels **√-proportionally** to each label's fragment
+  count (so an over-represented label like bronchitis gets more phonemes than a rare one but stops
+  dominating the codebook's catchment), capped by each label's fragment count.
+- The build **aggregates labelled clips across all datasets** (merges every
+  `data/fractionation/<dataset>/Spectral_Flux_Onset_segments.jsonl` and indexes wavs from each dataset
+  dir), so labelling any dataset — p3, ALLDATA, … — feeds one shared codebook. Decode stays per-target.
 
 ## Label → letter map (extensible)
 Built-in: `snoring→S, bronchitis→B, noise→N, dry→D, dry hacking→DH`. Overridable/extendable via
