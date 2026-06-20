@@ -87,6 +87,23 @@ object DecodeStore {
     }
 }
 
+/** Codebook summary for the on-demand cheat sheet: which letter ↔ which class, #phonemes, #train-fragments. */
+object PhonemeLegend {
+    data class Row(val letter: String, val label: String, val nPhonemes: Int, val nFrags: Int)
+    @Suppress("UNCHECKED_CAST")
+    fun rows(): List<Row> {
+        val f = Workspace.dir("codebooks").listFiles { x -> x.name.endsWith("_phonemes.json") }
+            ?.maxByOrNull { it.length() } ?: return emptyList()
+        return try {
+            val data: Map<String, Any> = Gson().fromJson(f.readText(), object : TypeToken<Map<String, Any>>() {}.type)
+            val phonemes = data["phonemes"] as? List<Map<String, Any>> ?: return emptyList()
+            phonemes.groupBy { it["letter"].toString() }.map { (letter, ps) ->
+                Row(letter, ps.first()["label"].toString(), ps.size, ps.sumOf { (it["n"] as? Number)?.toInt() ?: 0 })
+            }.sortedByDescending { it.nFrags }
+        } catch (e: Exception) { System.err.println("legend load ${f.name}: ${e.message}"); emptyList() }
+    }
+}
+
 /** Human verdict on an auto-decode: id → true (correct) / false (error). data/codebooks/decode_feedback.json */
 object DecodeFeedback {
     private val file = File(Workspace.dir("codebooks"), "decode_feedback.json")
@@ -369,6 +386,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         bar.add(JButton("Uncheck all").apply { toolTipText = "Clear the ✓ box on every loaded row"; addActionListener { deselectAll() } })
         bar.add(JButton("Delete duplicates…").apply { toolTipText = "Delete redundant copies (keep one per content-identical group)"; addActionListener { deleteDuplicates() } })
         bar.add(JButton("Reload decodes").apply { toolTipText = "Re-read phoneme decodes from data/codebooks (after rebuilding the codebook)"; addActionListener { reloadDecodes() } })
+        bar.add(JButton("Legend…").apply { toolTipText = "Cheat sheet: what each phoneme code means and where it was learned from"; addActionListener { showLegend() } })
         bar.add(countLabel)
         add(bar, java.awt.BorderLayout.NORTH)
         add(JScrollPane(table), java.awt.BorderLayout.CENTER)
@@ -589,8 +607,46 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     }
 
     private fun letterColor(l: String): String = when (l) {
-        "S" -> "#5cf"; "B" -> "#f77"; "N" -> "#999"; "D" -> "#fb5"; "SP" -> "#9d9"
-        "C" -> "#c9f"; "SN" -> "#fc9"; "EP" -> "#dd9"; "?" -> "#777"; else -> "#bbb"
+        "S" -> "#5cf"; "B" -> "#f77"; "N" -> "#999"; "D" -> "#fb5"; "DH" -> "#f95"; "SP" -> "#9d9"
+        "C" -> "#c9f"; "CR" -> "#b8e"; "CX" -> "#a7d"; "SN" -> "#fc9"; "E", "EP" -> "#dd9"
+        "M" -> "#6cc"; "Q" -> "#cc8"; "?" -> "#777"; else -> "#bbb"
+    }
+
+    /** Where a class's training examples came from — for the cheat sheet's Origin column. */
+    private fun originOf(label: String): String = when (label) {
+        "speech" -> "auto: train (old-time radio) + coswara vowel/counting · plus any manual"
+        "noise" -> "auto: UrbanSound8K · plus any manual"
+        else -> "manual comments"
+    }
+
+    /** On-demand cheat sheet: what every phoneme code means + where it was learned from. */
+    private fun showLegend() {
+        val rows = PhonemeLegend.rows()
+        val sb = StringBuilder("<html><body style='font-family:sans-serif;color:#ddd;width:580px'>")
+        sb.append("<h2 style='margin:2px 0'>Phoneme cheat sheet</h2>")
+        sb.append("<p>A clip decodes to a <b>word</b> of phonemes. A code is <b>[letters][number]</b>: the ")
+        sb.append("<b>letters</b> name the class it was learned from, the <b>number</b> is the cluster within ")
+        sb.append("that class. <b>?</b> = nothing close enough (not in the codebook).</p>")
+        sb.append("<p><b>Comment-cell lines:</b> <span style='color:#7fd'>&#9997; manual</span> (your comment) &nbsp;&middot;&nbsp; ")
+        sb.append("<span style='color:#f80'>&#9881; auto</span> (rule-derived label) &nbsp;&middot;&nbsp; ")
+        sb.append("&#8776; decode (the inferred word, coloured per class below).</p>")
+        if (rows.isEmpty()) sb.append("<p><i>No codebook found — run the codebook build first.</i></p>")
+        else {
+            sb.append("<table border='1' cellspacing='0' cellpadding='4'>")
+            sb.append("<tr bgcolor='#444'><th>Code</th><th>Class</th><th>Phonemes</th><th>Frags</th><th>Origin</th></tr>")
+            for (r in rows) sb.append("<tr>")
+                .append("<td align='center' style='color:${letterColor(r.letter)}'><b>${escape(r.letter)}</b></td>")
+                .append("<td>${escape(r.label)}</td><td align='center'>${r.nPhonemes}</td>")
+                .append("<td align='center'>${r.nFrags}</td><td>${escape(originOf(r.label))}</td></tr>")
+            sb.append("</table>")
+        }
+        sb.append("<p style='color:#9a9'><b>S</b> = snoring, <b>SP</b> = speech — distinct classes. ")
+        sb.append("snore / snoring / snored all normalise to one class (<b>snoring → S</b>).</p></body></html>")
+        val pane = JEditorPane("text/html", sb.toString()).apply {
+            isEditable = false; background = Color(0x2b, 0x2b, 0x2b); caretPosition = 0
+        }
+        val scroll = JScrollPane(pane).apply { preferredSize = java.awt.Dimension(640, 540) }
+        JOptionPane.showMessageDialog(this, scroll, "Phoneme cheat sheet", JOptionPane.PLAIN_MESSAGE)
     }
 
     private fun escape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
