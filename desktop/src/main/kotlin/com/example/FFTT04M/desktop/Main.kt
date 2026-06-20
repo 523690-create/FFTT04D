@@ -27,6 +27,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     private val recordingsGrid = RecordingsGridPanel()
     private lateinit var recordingsHostPanel: JPanel   // where the grid docks in the main window
     private var recordingsPopout: JFrame? = null
+    private val breakouts = mutableListOf<JFrame>()    // independent recordings windows (ALLDATA vs downloaded, side by side)
     // Active tasks each get their own bar stacked here, so concurrent passes don't fight one bar.
     private val progressStack = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
     private val analysisResultsArea = JTextArea(10, 60)
@@ -124,6 +125,29 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             if (list.isEmpty()) { showStatus("No .wav files found under ${dir.name}"); return@createButton }
             recordings.clear(); recordings.addAll(list); updateRecordingsList()
             showStatus("Loaded ${list.size} recording(s) from ${dir.name} — run any analysis to compare with ALLDATA")
+        })
+        // Open a collection in its OWN window (so ALLDATA and downloaded clips can sit side by side).
+        buttonPanel.add(createButton("ALLDATA ⇱ window") {
+            val dir = pickDirectory("Select the ALLDATA folder to open in its own window",
+                "allDataIn", "D:\\AndroidProjects\\ALLDATA") ?: return@createButton
+            thread {
+                showStatus("Loading ALLDATA into a new window…")
+                val list = DatasetLoader.loadAllData(dir)
+                if (list.isEmpty()) { showStatus("No metadata.csv/WAVs under ${dir.name}"); return@thread }
+                openBreakout("ALLDATA — ${list.size} clips", list)
+                showStatus("ALLDATA opened in its own window (${list.size} clips)")
+            }
+        })
+        buttonPanel.add(createButton("Folder ⇱ window…") {
+            val dir = pickDirectory("Select a folder (e.g. downloaded clips) to open in its own window",
+                "breakoutFolder", Workspace.dir("usb_import").absolutePath) ?: return@createButton
+            thread {
+                showStatus("Loading ${dir.name} into a new window…")
+                val list = DatasetLoader.loadFolder(dir, "win:${dir.name}")
+                if (list.isEmpty()) { showStatus("No .wav files found under ${dir.name}"); return@thread }
+                openBreakout("${dir.name} — ${list.size} clips", list)
+                showStatus("${dir.name} opened in its own window (${list.size} clips)")
+            }
         })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
@@ -659,6 +683,27 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             if (recordings.size > shown.size)
                 model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
             recordingsGrid.setRecordings(recordings.toList())   // grid virtualizes; show all loaded
+        }
+    }
+
+    /** Open a fully-independent recordings window — its own grid + toolbar (Find/Legend/decodes/etc.).
+     *  Lets you view two collections at once (e.g. ALLDATA vs downloaded clips) side by side. The windows
+     *  are "basically equal": they share only the global manual-comment / decode / codebook stores, so a
+     *  comment or decode shows the same in every window. */
+    private fun openBreakout(title: String, list: List<AudioRecording>) {
+        SwingUtilities.invokeLater {
+            val grid = RecordingsGridPanel()
+            grid.setRecordings(list)
+            val f = JFrame(title)
+            f.size = Dimension(1100, 800)
+            f.setLocationByPlatform(true)
+            f.contentPane.add(grid)
+            f.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+            f.addWindowListener(object : java.awt.event.WindowAdapter() {
+                override fun windowClosed(e: java.awt.event.WindowEvent?) { breakouts.remove(f) }
+            })
+            f.isVisible = true
+            breakouts.add(f)
         }
     }
 
