@@ -21,6 +21,7 @@ object PhonemeCodebookCli {
     private const val SR = 44100
     private const val K = 128
     private const val SHORT_MIN = 256          // skip fragments shorter than this many samples
+    private const val AUTO_FRAG_CAP = 2000     // cap fragments per AUTO label (≈ largest manual class; manual is never capped)
 
     private val letterMap = linkedMapOf(
         "snoring" to "S", "bronchitis" to "B", "noise" to "N", "dry" to "D", "dry hacking" to "DH",
@@ -72,18 +73,29 @@ object PhonemeCodebookCli {
             println("aggregate build: ${buildWavById.size} wavs across ${datasetRoots.size} dataset dir(s) " +
                 "(${datasetRoots.joinToString { it.name }}), ${buildFragsById.size} clips-with-frags")
 
-            // ---- 1. featurize fragments of LABELLED clips ----
+            // ---- 1. featurize fragments of LABELLED clips (manual ⊕ auto) ----
+            // Auto-labels (AutoLabel, from the clip id) are accepted as ground truth EQUAL to manual
+            // comments. Manual clips are ALWAYS kept; only the big auto classes (speech/noise) are capped,
+            // by fragment count, so they don't swamp the codebook (speech's long vowel/counting clips yield
+            // many fragments each). Hash-ordered so a capped auto class samples evenly across its sources
+            // (speech draws from both coswara vowels and old-time radio). Note: manual `noise`/`speech`
+            // share a label with auto `urban8k`/`train`+coswara — correct, they're the same class.
             data class FV(val label: String, val vec: DoubleArray)
             val labelled = ArrayList<FV>()
-            var usedClips = 0
-            for ((id, label) in labels) {
+            val autoFrags = HashMap<String, Int>()
+            var usedClips = 0; var autoClips = 0
+            for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
+                val manual = labels[id]
+                val label = manual ?: AutoLabel.forId(id) ?: continue
+                if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
-                val frags = buildFragsById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav) ?: continue
+                var added = 0
+                for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); added++ }
+                if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + added; autoClips++ }
                 usedClips++
-                for ((sMs, eMs) in frags) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)) }
             }
-            println("labelled clips used=$usedClips  fragments=${labelled.size}")
+            println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}")
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
 
             // ---- 2. z-normalize ----
@@ -140,8 +152,8 @@ object PhonemeCodebookCli {
             val hist = word.groupingBy { it }.eachCount()
             val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                 .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-            decoded[id] = mapOf("manualLabel" to labels[id], "inferredLetter" to inferred,
-                "word" to word, "histogram" to hist)
+            decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
+                "inferredLetter" to inferred, "word" to word, "histogram" to hist)
             nDec++
         }
         File(outDir, "${tag}_decoded.json").writeText(gson.toJson(decoded))
@@ -149,8 +161,9 @@ object PhonemeCodebookCli {
 
         // ---- 5. quick self-check: inferred letter vs manual label on the labelled clips ----
         var correct = 0; var labelledDec = 0
-        for ((id, label) in labels) {
-            val d = decoded[id] as? Map<*, *> ?: continue
+        for ((id, d0) in decoded) {
+            val label = labels[id] ?: AutoLabel.forId(id) ?: continue   // manual wins, else auto
+            val d = d0 as? Map<*, *> ?: continue
             labelledDec++
             if (d["inferredLetter"] == letterFor(label)) correct++
         }

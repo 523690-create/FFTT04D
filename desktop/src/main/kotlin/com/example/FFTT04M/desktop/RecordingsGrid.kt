@@ -400,13 +400,14 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
     private fun searchable(rec: AudioRecording, scope: Int): String = when (scope) {
         1 -> (rec.id + " " + rec.audioFile.name).lowercase()                                  // Filename
-        2 -> rec.metadata.entries.filter { it.key != "comment" }                              // Auto (metadata, sans the manual comment)
-                 .joinToString(" ") { "${it.key} ${it.value}" }.lowercase()
+        2 -> (rec.metadata.entries.filter { it.key != "comment" }                             // Auto (metadata + auto-label)
+                 .joinToString(" ") { "${it.key} ${it.value}" } + " " + (AutoLabel.forId(rec.id) ?: "")).lowercase()
         3 -> (ManualComments.get(rec.id) ?: "").lowercase()                                   // Manual
         else -> buildString {                                                                 // All
             append(rec.id.lowercase()); append(' ')
             rec.metadata.values.forEach { append(it.toString().lowercase()); append(' ') }
-            ManualComments.get(rec.id)?.let { append(it.lowercase()) }
+            ManualComments.get(rec.id)?.let { append(it.lowercase()); append(' ') }
+            AutoLabel.forId(rec.id)?.let { append(it) }
         }
     }
 
@@ -574,6 +575,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         return buildString {
             append("<html><b>").append(escape(rec.id)).append("</b>")
             if (manual != null) append("<br><span style='color:#7fd'>✍ ").append(escape(manual)).append("</span>")
+            else AutoLabel.forId(rec.id)?.let { append("<br><span style='color:#f80'>⚙ auto: ").append(escape(it)).append("</span>") }
             if (meta.isNotBlank()) append("<br><span style='color:#999'>").append(meta).append("</span>")
             else rec.label()?.let { append("<br><span style='color:#999'>").append(escape(it)).append("</span>") }
             DecodeStore.get(rec.id)?.let { dec ->                       // phoneme-codebook decode, coloured by class

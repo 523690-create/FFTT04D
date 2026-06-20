@@ -19,6 +19,14 @@ number is the cluster index within that label.
   `data/fractionation/<dataset>/Spectral_Flux_Onset_segments.jsonl` and indexes wavs from each dataset
   dir), so labelling any dataset — p3, ALLDATA, … — feeds one shared codebook. Decode stays per-target.
 
+## Automatic labels (treated equal to manual)
+Some labels are unambiguous from the merged-dataset filename (`source__id__rectype__…`), so they're
+derived by rule (`AutoLabel.forId`) and fed to the build as ground truth **equal to manual comments**
+(manual always wins on conflict). Shown in the grid as a distinct ⚙ line (orange), vs the ✍ manual
+line. Current rules: `train__…`→**speech** (old-time radio), `urban8k__…`→**noise** (UrbanSound8K),
+`coswara__…__vowel-*|counting-*__…`→**speech**. Auto classes are capped by fragment count
+(`AUTO_FRAG_CAP`) so their large populations don't swamp the manually-labelled cough classes.
+
 ## Label → letter map (extensible)
 Built-in: `snoring→S, bronchitis→B, noise→N, dry→D, dry hacking→DH`. Overridable/extendable via
 `data/codebooks/label_letters.json` (`{ "wet cough": "W", … }`). Labels are normalized first
