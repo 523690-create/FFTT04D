@@ -102,6 +102,12 @@ object PhonemeLegend {
             }.sortedByDescending { it.nFrags }
         } catch (e: Exception) { System.err.println("legend load ${f.name}: ${e.message}"); emptyList() }
     }
+
+    // Cached letter → class label (e.g. "S" → "snoring"), for the grid's whole-word decode line.
+    @Volatile private var labelCache: Map<String, String>? = null
+    fun labelFor(letter: String): String? =
+        (labelCache ?: rows().associate { it.letter to it.label }.also { labelCache = it })[letter]
+    fun reload() { labelCache = null }
 }
 
 /** Human verdict on an auto-decode: id → true (correct) / false (error). data/codebooks/decode_feedback.json */
@@ -452,7 +458,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         DecodeFeedback.setAll(targets.map { it.id }, correct); model.fireTableDataChanged()
     }
 
-    private fun reloadDecodes() { DecodeStore.reload(); model.fireTableDataChanged() }
+    private fun reloadDecodes() { DecodeStore.reload(); PhonemeLegend.reload(); model.fireTableDataChanged() }
 
     private fun updateCount() {
         countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"
@@ -600,8 +606,9 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             DecodeStore.get(rec.id)?.let { dec ->                       // phoneme-codebook decode, coloured by class
                 val fb = DecodeFeedback.get(rec.id)?.let { if (it) " ✓" else " ✗" } ?: ""
                 val w = dec.word.joinToString(" ")                          // full word — no truncation
+                val cls = PhonemeLegend.labelFor(dec.letter)?.let { "$it (${dec.letter})" } ?: dec.letter
                 append("<br><span style='color:${letterColor(dec.letter)}'>≈ ")
-                    .append(escape(dec.letter)).append(": ").append(escape(w)).append(fb).append("</span>")
+                    .append(escape(cls)).append(": ").append(escape(w)).append(fb).append("</span>")
             }
             append("</html>")
         }

@@ -236,7 +236,8 @@ object PhonemeCodebookCli {
         if (s.isBlank()) return null
         return when {
             s == "snore" || s.contains("snor") -> "snoring"
-            s.contains("bronchitis") || s.contains("brinchitis") -> "bronchitis"
+            // bronchitis + the user's variants/typos that mean it ("evin p", "quad cough")
+            s.contains("bronchitis") || s.contains("brinchitis") || s.contains("evin") || s.contains("quad") -> "bronchitis"
             s.startsWith("dry hack") -> "dry hacking"
             s.startsWith("dry") -> "dry"
             s == "noise" -> "noise"
