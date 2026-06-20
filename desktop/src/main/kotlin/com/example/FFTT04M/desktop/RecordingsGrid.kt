@@ -379,7 +379,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         showCombo.addActionListener {
             if (showCombo.selectedIndex == 3 && !dupComputed) computeDuplicatesThen { applyFilter() } else applyFilter()
         }
-        val bar = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2))
+        val bar = JPanel(WrapLayout(java.awt.FlowLayout.LEFT, 4, 2))   // wraps visibly; no clipped buttons
         bar.add(JLabel("Find:")); bar.add(searchField); bar.add(searchScope); bar.add(showCombo)
         bar.add(JButton("Check on-screen").apply { toolTipText = "Tick the ✓ box on just the rows currently visible on screen"; addActionListener { setVisibleChecked(true) } })
         bar.add(JButton("Uncheck on-screen").apply { toolTipText = "Clear the ✓ box on just the rows currently visible on screen"; addActionListener { setVisibleChecked(false) } })
@@ -387,6 +387,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         bar.add(JButton("Delete duplicates…").apply { toolTipText = "Delete redundant copies (keep one per content-identical group)"; addActionListener { deleteDuplicates() } })
         bar.add(JButton("Reload decodes").apply { toolTipText = "Re-read phoneme decodes from data/codebooks (after rebuilding the codebook)"; addActionListener { reloadDecodes() } })
         bar.add(JButton("Legend…").apply { toolTipText = "Cheat sheet: what each phoneme code means and where it was learned from"; addActionListener { showLegend() } })
+        bar.add(JButton("Phoneme cloud…").apply { toolTipText = "2-D PCA scatter of the codebook's phonemes, coloured by class (hover for code/class/count)"; addActionListener { PhonemeCloud.show(this@RecordingsGridPanel) } })
         bar.add(countLabel)
         add(bar, java.awt.BorderLayout.NORTH)
         add(JScrollPane(table), java.awt.BorderLayout.CENTER)
