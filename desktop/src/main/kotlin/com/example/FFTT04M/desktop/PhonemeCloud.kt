@@ -19,22 +19,24 @@ import javax.swing.JFrame
 import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Interactive 2-D scatter of the codebook's phonemes — a "phoneme cloud". Each dot is one phoneme
+ * Interactive 3-D scatter of the codebook's phonemes — a "phoneme cloud". Each dot is one phoneme
  * (cluster) from `<tag>_phonemes.json`, coloured by class (grid palette), sized by training-fragment
- * count. Interactive: **drag to pan, wheel to zoom**, and pick which two dimensions are on the axes
- * (the top-5 PCA components or any of the 13 raw fragment features) via the X/Y selectors — so you can
- * "rotate" through projections. Hover any dot for its code / class / count.
+ * count. Pick which three dimensions are on the X/Y/Z axes (top-5 PCA components or any of the 13 raw
+ * fragment features). **Left-drag rotates** the cloud about the X/Y axes (cylinder-style), **right-drag
+ * pans**, **wheel zooms**; nearer points are drawn larger/brighter for depth. Hover for code/class/count.
  */
 object PhonemeCloud {
 
     data class P(val code: String, val letter: String, val label: String, val centroid: DoubleArray, val n: Int)
 
     private const val D = 13
-    private const val K = 5   // number of principal components offered as axes
-    // The 13 fragment feature names = WholeClipFeatures' 14 minus syllabic (index 12).
+    private const val K = 5   // principal components offered as axes
     private val featNames = WholeClipFeatures.names.filterIndexed { i, _ -> i != 12 }
 
     fun load(): List<P> {
@@ -57,7 +59,6 @@ object PhonemeCloud {
             JOptionPane.showMessageDialog(parent, "No codebook found — run the codebook build first.")
             return
         }
-        // Axis coordinates per phoneme = [K PCA projections] ++ [13 raw centroid dims].
         val cents = ps.map { it.centroid }
         val mean = DoubleArray(D)
         for (c in cents) for (i in 0 until D) mean[i] += c[i]
@@ -74,18 +75,18 @@ object PhonemeCloud {
         val panel = CloudPanel(ps, coords, axisLabels)
         val xc = JComboBox(axisLabels.toTypedArray()).apply { selectedIndex = 0 }
         val yc = JComboBox(axisLabels.toTypedArray()).apply { selectedIndex = 1 }
-        val onAxis = { panel.setAxes(xc.selectedIndex, yc.selectedIndex) }
-        xc.addActionListener { onAxis() }
-        yc.addActionListener { onAxis() }
+        val zc = JComboBox(axisLabels.toTypedArray()).apply { selectedIndex = minOf(2, axisLabels.size - 1) }
+        val onAxis = { panel.setAxes(xc.selectedIndex, yc.selectedIndex, zc.selectedIndex) }
+        xc.addActionListener { onAxis() }; yc.addActionListener { onAxis() }; zc.addActionListener { onAxis() }
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-            add(JLabel("X:")); add(xc); add(JLabel("Y:")); add(yc)
+            add(JLabel("X:")); add(xc); add(JLabel("Y:")); add(yc); add(JLabel("Z:")); add(zc)
             add(JButton("Reset view").apply { addActionListener { panel.resetView() } })
-            add(JLabel("   drag = pan · wheel = zoom"))
+            add(JLabel("   left-drag = rotate · right-drag = pan · wheel = zoom"))
         }
-        JFrame("Phoneme cloud — ${ps.size} phonemes").apply {
+        JFrame("Phoneme cloud (3-D) — ${ps.size} phonemes").apply {
             contentPane.add(controls, BorderLayout.NORTH)
             contentPane.add(panel, BorderLayout.CENTER)
-            size = Dimension(1000, 780)
+            size = Dimension(1040, 820)
             setLocationByPlatform(true)
             defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
             isVisible = true
@@ -101,12 +102,10 @@ object PhonemeCloud {
         repeat(K) { val pc = powerIter(cov); out.add(pc); cov = deflate(cov, pc) }
         return out
     }
-
     private fun deflate(cov: Array<DoubleArray>, v: DoubleArray): Array<DoubleArray> {
         var lam = 0.0; for (i in 0 until D) { var t = 0.0; for (j in 0 until D) t += cov[i][j] * v[j]; lam += v[i] * t }
         return Array(D) { i -> DoubleArray(D) { j -> cov[i][j] - lam * v[i] * v[j] } }
     }
-
     private fun powerIter(cov: Array<DoubleArray>): DoubleArray {
         var v = DoubleArray(D) { if (it == 0) 1.0 else 0.0 }
         repeat(150) {
@@ -133,80 +132,97 @@ object PhonemeCloud {
     private class CloudPanel(
         val ps: List<P>, val coords: List<DoubleArray>, val axisLabels: List<String>,
     ) : JPanel() {
-        private var xAxis = 0; private var yAxis = 1
-        private var scale = 1.0; private var offX = 50.0; private var offY = 50.0
+        private var xAxis = 0; private var yAxis = 1; private var zAxis = 2
+        private var angX = 0.4; private var angY = 0.6        // rotation about X / Y (radians)
+        private var scale = 1.0; private var offX = 0.0; private var offY = 0.0
         private var fitted = false
-        private var minX = 0.0; private var maxX = 1.0; private var minY = 0.0; private var maxY = 1.0
+        private val mn = DoubleArray(3); private val rng = DoubleArray(3)   // per-axis min + range
         private val maxN = (ps.maxOfOrNull { it.n } ?: 1).coerceAtLeast(1)
         private var dragX = 0; private var dragY = 0
 
         init {
-            background = Color(0x1e, 0x1e, 0x22); toolTipText = ""; preferredSize = Dimension(1000, 720)
+            background = Color(0x1e, 0x1e, 0x22); toolTipText = ""; preferredSize = Dimension(1040, 740)
             val ma = object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) { dragX = e.x; dragY = e.y }
                 override fun mouseDragged(e: MouseEvent) {
-                    offX += e.x - dragX; offY += e.y - dragY; dragX = e.x; dragY = e.y; repaint()
+                    val dx = e.x - dragX; val dy = e.y - dragY; dragX = e.x; dragY = e.y
+                    if (SwingUtilities.isRightMouseButton(e)) { offX += dx; offY += dy }
+                    else { angY += dx * 0.01; angX += dy * 0.01 }   // left-drag rotates about Y (horiz) / X (vert)
+                    repaint()
                 }
                 override fun mouseWheelMoved(e: MouseWheelEvent) {
-                    val f = if (e.wheelRotation < 0) 1.12 else 1 / 1.12
-                    offX = e.x - (e.x - offX) * f; offY = e.y - (e.y - offY) * f; scale *= f; repaint()
+                    scale *= if (e.wheelRotation < 0) 1.12 else 1 / 1.12; repaint()
                 }
             }
             addMouseListener(ma); addMouseMotionListener(ma); addMouseWheelListener(ma)
         }
 
-        fun setAxes(x: Int, y: Int) { xAxis = x; yAxis = y; fitted = false; repaint() }
-        fun resetView() { fitted = false; repaint() }
+        fun setAxes(x: Int, y: Int, z: Int) { xAxis = x; yAxis = y; zAxis = z; fitted = false; repaint() }
+        fun resetView() { angX = 0.4; angY = 0.6; scale = 1.0; offX = 0.0; offY = 0.0; fitted = false; repaint() }
 
         private fun ensureFit() {
             if (fitted) return
-            minX = Double.MAX_VALUE; maxX = -Double.MAX_VALUE; minY = Double.MAX_VALUE; maxY = -Double.MAX_VALUE
-            for (c in coords) {
-                val x = c[xAxis]; val y = c[yAxis]
-                if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y
+            val axes = intArrayOf(xAxis, yAxis, zAxis)
+            for (a in 0 until 3) {
+                var lo = Double.MAX_VALUE; var hi = -Double.MAX_VALUE
+                for (c in coords) { val v = c[axes[a]]; if (v < lo) lo = v; if (v > hi) hi = v }
+                mn[a] = lo; rng[a] = (hi - lo).coerceAtLeast(1e-9)
             }
-            scale = 1.0; offX = 50.0; offY = 50.0; fitted = true
+            fitted = true
         }
-        private fun baseW() = (width - 250.0).coerceAtLeast(100.0)
-        private fun baseH() = (height - 100.0).coerceAtLeast(100.0)
-        private fun lx(c: DoubleArray) = (c[xAxis] - minX) / (maxX - minX + 1e-9) * baseW()
-        private fun ly(c: DoubleArray) = (1 - (c[yAxis] - minY) / (maxY - minY + 1e-9)) * baseH()
-        private fun sx(c: DoubleArray) = offX + lx(c) * scale
-        private fun sy(c: DoubleArray) = offY + ly(c) * scale
+        private fun nrm(i: Int, a: Int, axis: Int) = (coords[i][axis] - mn[a]) / rng[a] - 0.5  // → [-0.5,0.5]
+
+        /** screenX, screenY, depth (larger = nearer the viewer). */
+        private fun project(i: Int): DoubleArray {
+            val nx = nrm(i, 0, xAxis); val ny = nrm(i, 1, yAxis); val nz = nrm(i, 2, zAxis)
+            val cY = cos(angY); val sY = sin(angY)
+            val x1 = nx * cY - nz * sY; val z1 = nx * sY + nz * cY
+            val cX = cos(angX); val sX = sin(angX)
+            val y2 = ny * cX - z1 * sX; val z2 = ny * sX + z1 * cX
+            val plotW = (width - 190).coerceAtLeast(120); val size = minOf(plotW, height - 80).coerceAtLeast(120) * 0.42
+            val cx = (width - 190) / 2.0; val cy = height / 2.0
+            return doubleArrayOf(cx + x1 * size * scale + offX, cy + y2 * size * scale + offY, z2)
+        }
 
         override fun paintComponent(g0: Graphics) {
             super.paintComponent(g0)
             ensureFit()
             val g = g0 as Graphics2D
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            for (i in ps.indices) {
-                val x = sx(coords[i]).toInt(); val y = sy(coords[i]).toInt()
-                val rad = (3 + 10 * sqrt(ps[i].n.toDouble()) / sqrt(maxN.toDouble())).toInt().coerceAtLeast(2)
+            val proj = Array(ps.size) { project(it) }
+            val order = ps.indices.sortedBy { proj[it][2] }   // far first → near drawn on top
+            for (i in order) {
+                val x = proj[i][0].toInt(); val y = proj[i][1].toInt()
+                val depth = ((proj[i][2] + 0.9) / 1.8).coerceIn(0.0, 1.0)   // 0 far … 1 near
+                val baseR = 3 + 10 * sqrt(ps[i].n.toDouble()) / sqrt(maxN.toDouble())
+                val rad = (baseR * (0.55 + 0.45 * depth)).toInt().coerceAtLeast(2)
                 val c = classColor(ps[i].letter)
-                g.color = Color(c.red, c.green, c.blue, 160); g.fillOval(x - rad, y - rad, rad * 2, rad * 2)
-                g.color = Color(c.red, c.green, c.blue, 220); g.drawOval(x - rad, y - rad, rad * 2, rad * 2)
+                val a = (70 + 170 * depth).toInt().coerceIn(40, 255)
+                g.color = Color(c.red, c.green, c.blue, a); g.fillOval(x - rad, y - rad, rad * 2, rad * 2)
+                g.color = Color(c.red, c.green, c.blue, (a + 40).coerceAtMost(255)); g.drawOval(x - rad, y - rad, rad * 2, rad * 2)
             }
-            g.font = Font("SansSerif", Font.PLAIN, 9); g.color = Color(0xdd, 0xdd, 0xdd, 150)
-            for (i in ps.indices) g.drawString(ps[i].code, sx(coords[i]).toInt() + 4, sy(coords[i]).toInt() - 3)
-            // axes caption
+            g.font = Font("SansSerif", Font.PLAIN, 9)
+            for (i in order) {   // label only nearer half to reduce clutter
+                if ((proj[i][2] + 0.9) / 1.8 < 0.45) continue
+                g.color = Color(0xdd, 0xdd, 0xdd, 170); g.drawString(ps[i].code, proj[i][0].toInt() + 4, proj[i][1].toInt() - 3)
+            }
             g.font = Font("SansSerif", Font.PLAIN, 11); g.color = Color(0x99, 0x99, 0xa5)
-            g.drawString("X: ${axisLabels[xAxis]}    Y: ${axisLabels[yAxis]}", 54, height - 16)
-            // legend (class → colour → #phonemes), most fragments first
+            g.drawString("X: ${axisLabels[xAxis]}   Y: ${axisLabels[yAxis]}   Z: ${axisLabels[zAxis]}", 14, height - 14)
             var ly = 22
             g.font = Font("SansSerif", Font.BOLD, 12); g.color = Color(0xcc, 0xcc, 0xcc)
-            g.drawString("Phoneme cloud", width - 195, ly); ly += 20
+            g.drawString("Phoneme cloud (3-D)", width - 185, ly); ly += 20
             g.font = Font("SansSerif", Font.PLAIN, 11)
             for ((letter, group) in ps.groupBy { it.letter }.entries.sortedByDescending { e -> e.value.sumOf { it.n } }) {
-                g.color = classColor(letter); g.fillRect(width - 195, ly - 9, 11, 11)
+                g.color = classColor(letter); g.fillRect(width - 185, ly - 9, 11, 11)
                 g.color = Color(0xcc, 0xcc, 0xcc)
-                g.drawString("$letter  ${group.first().label} (${group.size}ph)", width - 178, ly); ly += 16
+                g.drawString("$letter  ${group.first().label} (${group.size}ph)", width - 168, ly); ly += 16
             }
         }
 
         override fun getToolTipText(e: MouseEvent): String? {
             var best = -1; var bd = Double.MAX_VALUE
             for (i in ps.indices) {
-                val dx = sx(coords[i]) - e.x; val dy = sy(coords[i]) - e.y
+                val p = project(i); val dx = p[0] - e.x; val dy = p[1] - e.y
                 val d = dx * dx + dy * dy; if (d < bd) { bd = d; best = i }
             }
             if (best < 0 || bd > 256) return null

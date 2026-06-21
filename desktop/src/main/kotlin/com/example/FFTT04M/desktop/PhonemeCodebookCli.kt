@@ -142,20 +142,17 @@ object PhonemeCodebookCli {
             val frags = fragsById[id] ?: continue
             val pcm = AudioDecoder.decode(wav) ?: continue
             val word = ArrayList<String>()
-            val letterWeight = HashMap<String, Double>()   // class vote weighted by fragment DURATION, not count
             for ((sMs, eMs) in frags) {
                 val v = fragVec(pcm, sMs, eMs)
-                val code = if (v == null) "?" else {
-                    znorm(v, mean, std)
-                    var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-                    for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
-                    if (best != null && bestD <= best.radius) best.code else "?"
-                }
-                word.add(code)
-                if (code != "?") { val l = code.takeWhile { it.isLetter() }; letterWeight[l] = (letterWeight[l] ?: 0.0) + (eMs - sMs) }
+                if (v == null) { word.add("?"); continue }
+                znorm(v, mean, std)
+                var best: Phoneme? = null; var bestD = Double.MAX_VALUE
+                for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+                word.add(if (best != null && bestD <= best.radius) best.code else "?")
             }
             val hist = word.groupingBy { it }.eachCount()
-            val inferred = letterWeight.maxByOrNull { it.value }?.key ?: "?"
+            val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+                .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
             decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
                 "inferredLetter" to inferred, "word" to word, "histogram" to hist)
             nDec++
