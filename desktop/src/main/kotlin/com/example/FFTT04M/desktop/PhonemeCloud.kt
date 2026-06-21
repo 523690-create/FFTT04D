@@ -81,7 +81,7 @@ object PhonemeCloud {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
             add(JLabel("X:")); add(xc); add(JLabel("Y:")); add(yc); add(JLabel("Z:")); add(zc)
             add(JButton("Reset view").apply { addActionListener { panel.resetView() } })
-            add(JLabel("   left-drag = rotate · right-drag = pan · wheel = zoom"))
+            add(JLabel("   left-button-drag = rotate · right-button-drag = pan · scroll-wheel = zoom"))
         }
         JFrame("Phoneme cloud (3-D) — ${ps.size} phonemes").apply {
             contentPane.add(controls, BorderLayout.NORTH)
@@ -134,7 +134,8 @@ object PhonemeCloud {
     ) : JPanel() {
         private var xAxis = 0; private var yAxis = 1; private var zAxis = 2
         private var angX = 0.4; private var angY = 0.6        // rotation about X / Y (radians)
-        private var scale = 1.0; private var offX = 0.0; private var offY = 0.0
+        private var scale = 1.0
+        private val pivot = DoubleArray(3)                    // data-space look-at; always projects to the window centre
         private var fitted = false
         private val mn = DoubleArray(3); private val rng = DoubleArray(3)   // per-axis min + range
         private val maxN = (ps.maxOfOrNull { it.n } ?: 1).coerceAtLeast(1)
@@ -146,8 +147,10 @@ object PhonemeCloud {
                 override fun mousePressed(e: MouseEvent) { dragX = e.x; dragY = e.y }
                 override fun mouseDragged(e: MouseEvent) {
                     val dx = e.x - dragX; val dy = e.y - dragY; dragX = e.x; dragY = e.y
-                    if (SwingUtilities.isRightMouseButton(e)) { offX += dx; offY += dy }
-                    else { angY += dx * 0.01; angX += dy * 0.01 }   // left-drag rotates about Y (horiz) / X (vert)
+                    if (SwingUtilities.isRightMouseButton(e)) {       // pan: move the look-at point (data space)
+                        val s = sizePx(); val d = rotInv(dx / s, dy / s, 0.0)
+                        pivot[0] -= d[0]; pivot[1] -= d[1]; pivot[2] -= d[2]
+                    } else { angY += dx * 0.01; angX += dy * 0.01 }   // left-drag rotates about Y (horiz) / X (vert)
                     repaint()
                 }
                 override fun mouseWheelMoved(e: MouseWheelEvent) {
@@ -158,7 +161,7 @@ object PhonemeCloud {
         }
 
         fun setAxes(x: Int, y: Int, z: Int) { xAxis = x; yAxis = y; zAxis = z; fitted = false; repaint() }
-        fun resetView() { angX = 0.4; angY = 0.6; scale = 1.0; offX = 0.0; offY = 0.0; fitted = false; repaint() }
+        fun resetView() { angX = 0.4; angY = 0.6; scale = 1.0; pivot.fill(0.0); fitted = false; repaint() }
 
         private fun ensureFit() {
             if (fitted) return
@@ -171,17 +174,29 @@ object PhonemeCloud {
             fitted = true
         }
         private fun nrm(i: Int, a: Int, axis: Int) = (coords[i][axis] - mn[a]) / rng[a] - 0.5  // → [-0.5,0.5]
+        private fun sizePx() = minOf((width - 190).coerceAtLeast(120), height - 80).coerceAtLeast(120) * 0.42 * scale
 
-        /** screenX, screenY, depth (larger = nearer the viewer). */
-        private fun project(i: Int): DoubleArray {
-            val nx = nrm(i, 0, xAxis); val ny = nrm(i, 1, yAxis); val nz = nrm(i, 2, zAxis)
+        /** Rotate about Y (angY) then X (angX). */
+        private fun rot(vx: Double, vy: Double, vz: Double): DoubleArray {
             val cY = cos(angY); val sY = sin(angY)
-            val x1 = nx * cY - nz * sY; val z1 = nx * sY + nz * cY
+            val x1 = vx * cY - vz * sY; val z1 = vx * sY + vz * cY
             val cX = cos(angX); val sX = sin(angX)
-            val y2 = ny * cX - z1 * sX; val z2 = ny * sX + z1 * cX
-            val plotW = (width - 190).coerceAtLeast(120); val size = minOf(plotW, height - 80).coerceAtLeast(120) * 0.42
-            val cx = (width - 190) / 2.0; val cy = height / 2.0
-            return doubleArrayOf(cx + x1 * size * scale + offX, cy + y2 * size * scale + offY, z2)
+            return doubleArrayOf(x1, vy * cX - z1 * sX, vy * sX + z1 * cX)
+        }
+        /** Inverse of [rot] — maps a screen-plane delta back into data space (for panning the look-at). */
+        private fun rotInv(vx: Double, vy: Double, vz: Double): DoubleArray {
+            val cX = cos(angX); val sX = sin(angX)
+            val y1 = vy * cX + vz * sX; val z1 = -vy * sX + vz * cX
+            val cY = cos(angY); val sY = sin(angY)
+            return doubleArrayOf(vx * cY + z1 * sY, y1, -vx * sY + z1 * cY)
+        }
+
+        /** screenX, screenY, depth (larger = nearer the viewer). Rotation orbits [pivot], which is
+         *  pinned to the window centre — so a cluster you've panned to the middle stays put when you rotate. */
+        private fun project(i: Int): DoubleArray {
+            val r = rot(nrm(i, 0, xAxis) - pivot[0], nrm(i, 1, yAxis) - pivot[1], nrm(i, 2, zAxis) - pivot[2])
+            val cx = (width - 190) / 2.0; val cy = height / 2.0; val s = sizePx()
+            return doubleArrayOf(cx + r[0] * s, cy + r[1] * s, r[2])
         }
 
         override fun paintComponent(g0: Graphics) {
