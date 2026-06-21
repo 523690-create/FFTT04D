@@ -27,7 +27,7 @@ object PhonemeCodebookCli {
 
     private val letterMap = linkedMapOf(
         "snoring" to "S", "bronchitis" to "B", "noise" to "N", "dry" to "D", "dry hacking" to "DH",
-        "dry cough" to "D", "croup" to "C", "speech" to "SP", "sneeze" to "SN", "music" to "M",
+        "dry cough" to "D", "croup" to "C", "speech" to "SP", "sneeze" to "SN", "music" to "M", "voice" to "V",
     )
 
     @JvmStatic
@@ -315,9 +315,8 @@ object PhonemeCodebookCli {
             s.startsWith("dry") -> "dry"
             s == "noise" -> "noise"
             s == "croup" -> "croup"
-            s == "speech" -> "speech"
-            // music = the tonal/harmonic class; crying & singing are tonal-vocal → fold them in
-            s.contains("music") || s.contains("singing") || s == "crying" || s == "cry" -> "music"
+            // fused vocal/tonal class: speech, music, crying, singing all → "voice"
+            s == "speech" || s.contains("music") || s.contains("singing") || s == "crying" || s == "cry" -> "voice"
             s == "sneeze" || s == "sneezing" -> "sneeze"
             else -> s
         }

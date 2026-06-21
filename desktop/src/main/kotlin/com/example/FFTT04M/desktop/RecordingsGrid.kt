@@ -624,14 +624,15 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
 
     private fun letterColor(l: String): String = when (l) {
         "S" -> "#5cf"; "B" -> "#f77"; "N" -> "#999"; "D" -> "#fb5"; "DH" -> "#f95"; "SP" -> "#9d9"
-        "C" -> "#c9f"; "CR" -> "#b8e"; "CX" -> "#a7d"; "SN" -> "#fc9"; "E", "EP" -> "#dd9"
+        "C" -> "#c9f"; "CR" -> "#b8e"; "CX" -> "#a7d"; "SN" -> "#fc9"; "E", "EP" -> "#dd9"; "V" -> "#8dc"
         "M" -> "#6cc"; "Q" -> "#cc8"; "?" -> "#777"; else -> "#bbb"
     }
 
     /** Where a class's training examples came from — for the cheat sheet's Origin column. */
     private fun originOf(label: String): String = when (label) {
-        "speech" -> "auto: train (old-time radio) + coswara vowel/counting · plus any manual"
-        "noise" -> "auto: UrbanSound8K · plus any manual"
+        "voice" -> "auto: train radio + coswara vowel/counting + urban8k/ESC tonal (fused speech+music) · plus manual"
+        "noise" -> "auto: UrbanSound8K + ESC-50 · plus any manual"
+        "sneeze" -> "auto: ESC-50 sneezing · plus any manual"
         else -> "manual comments"
     }
 

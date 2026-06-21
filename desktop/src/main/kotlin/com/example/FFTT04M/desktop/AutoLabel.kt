@@ -21,17 +21,16 @@ object AutoLabel {
         val src = f.getOrNull(0)?.lowercase() ?: return null
         val rec = f.getOrNull(2)?.lowercase() ?: ""
         return when {
-            // UrbanSound8K: the tonal/harmonic classes seed "music"; the rest stay broadband "noise".
-            src == "urban8k" -> if (rec == "street_music" || rec == "siren" || rec == "car_horn") "music" else "noise"
-            src == "train" -> "speech"                              // old-time radio = connected speech
-            src == "coswara" && "vowel" in rec -> "music"           // sustained vowels = tonal/harmonic
-            src == "coswara" && "counting" in rec -> "speech"       // spoken digits = connected speech
-            // ESC-50 (clean single-class clips): map the unambiguous, high-value categories.
+            // "voice" = the fused speech+music (vocal/tonal) class — the speech↔music boundary is too
+            // fuzzy for melodic voices to be worth keeping, and both are simply "not cough".
+            src == "urban8k" -> if (rec == "street_music" || rec == "siren" || rec == "car_horn") "voice" else "noise"
+            src == "train" -> "voice"                              // old-time radio
+            src == "coswara" && ("vowel" in rec || "counting" in rec) -> "voice"
             src == "esc50" -> when (rec) {
-                "sneezing" -> "sneeze"                              // boosts the tiny SN class
+                "sneezing" -> "sneeze"                             // boosts the tiny SN class
                 "snoring" -> "snoring"
-                "crying_baby", "siren", "car_horn" -> "music"       // tonal/harmonic
-                else -> null                                       // coughing/breathing/laughing/noise left out
+                "crying_baby", "siren", "car_horn" -> "voice"
+                else -> null                                      // coughing/breathing/laughing/noise left out
             }
             else -> null
         }
