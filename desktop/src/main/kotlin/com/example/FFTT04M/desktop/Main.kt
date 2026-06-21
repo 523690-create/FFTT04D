@@ -112,7 +112,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Load the consolidated ALLDATA corpus (metadata.csv-aware) — the input for the joint codebook.
         buttonPanel.add(createButton("Load ALLDATA") {
             val dir = pickDirectory("Select the ALLDATA folder (built via Build ALLDATA)",
-                "allDataIn", "D:\\AndroidProjects\\ALLDATA") ?: return@createButton
+                "allDataIn", Workspace.repoRoot?.resolve("ALLDATA")?.absolutePath ?: "ALLDATA") ?: return@createButton
             loadAllDataFolder(dir)
         })
         // Load any folder of WAVs (e.g. mobile/USB device recordings) so they run through the SAME
@@ -129,7 +129,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Open a collection in its OWN window (so ALLDATA and downloaded clips can sit side by side).
         buttonPanel.add(createButton("ALLDATA ⇱ window") {
             val dir = pickDirectory("Select the ALLDATA folder to open in its own window",
-                "allDataIn", "D:\\AndroidProjects\\ALLDATA") ?: return@createButton
+                "allDataIn", Workspace.repoRoot?.resolve("ALLDATA")?.absolutePath ?: "ALLDATA") ?: return@createButton
             thread {
                 showStatus("Loading ALLDATA into a new window…")
                 val list = DatasetLoader.loadAllData(dir)
@@ -1032,8 +1032,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             if (tensor.n == 0) { showStatus("No cough events to build a reference from"); return@thread }
             // Prefer the sibling M assets dir (…/FFTT04M/app/src/main/assets) so it lands where it ships.
             val mAssets = sequenceOf(
+                Workspace.repoRoot?.let { File(it, "FFTT04M/app/src/main/assets") },
                 File(System.getProperty("user.dir")).parentFile?.let { File(it, "FFTT04M/app/src/main/assets") },
-                File("D:/AndroidProjects/FFTT04M/app/src/main/assets"),
             ).filterNotNull().firstOrNull { it.isDirectory }
             val lastDir = mAssets ?: exportPrefs.get("dir", null)?.let { File(it) }?.takeIf { it.isDirectory }
                 ?: File(System.getProperty("user.home"), "Documents")

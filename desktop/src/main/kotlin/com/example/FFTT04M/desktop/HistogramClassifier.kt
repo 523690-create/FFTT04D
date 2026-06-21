@@ -31,41 +31,48 @@ object HistogramClassifier {
         }
     }
 
-    /** Letter-fraction feature vector for a decoded word ("?" is its own feature). Letter granularity
-     *  (not 129 sparse phoneme codes) suits the short clips here — phoneme-level overfits. */
+    private fun lettersOf(word: List<String>) = word.map { if (it == "?") "?" else it.takeWhile { c -> c.isLetter() } }
+
+    /** Feature vector = unigram + **bigram** letter fractions. Bigrams ("N>B") capture sequential
+     *  structure — e.g. a cough BRACKETED by noise (…N>B…B>N…) reads differently from pure noise,
+     *  which the order-blind unigram histogram can't see. Vocabulary is learned from the training set. */
     private fun featurize(word: List<String>, vocab: List<String>): DoubleArray {
+        val ls = lettersOf(word)
         val x = DoubleArray(vocab.size); var tot = 0
-        for (code in word) {
-            val key = if (code == "?") "?" else code.takeWhile { it.isLetter() }
-            val idx = vocab.indexOf(key); if (idx >= 0) x[idx]++
-            tot++
-        }
+        for (l in ls) { val i = vocab.indexOf(l); if (i >= 0) x[i]++; tot++ }
+        for (k in 0 until ls.size - 1) { val i = vocab.indexOf("${ls[k]}>${ls[k + 1]}"); if (i >= 0) x[i]++ }
         if (tot > 0) for (i in x.indices) x[i] /= tot
         return x
     }
 
-    fun train(samples: List<Pair<List<String>, String>>, letters: List<String>, classes: List<String>): Model {
-        val xs = samples.map { featurize(it.first, letters) }
-        val ys = samples.map { classes.indexOf(it.second) }
-        val (w, b) = SoftmaxLR.train(xs, ys, classes.size)
-        return Model(letters, classes, w, b)
+    /** Observed unigrams + bigrams across the samples → fixed feature vocabulary. */
+    private fun buildVocab(samples: List<Pair<List<String>, String>>): List<String> {
+        val uni = LinkedHashSet<String>(); val bi = LinkedHashSet<String>()
+        for ((word, _) in samples) {
+            val ls = lettersOf(word); uni.addAll(ls)
+            for (k in 0 until ls.size - 1) bi.add("${ls[k]}>${ls[k + 1]}")
+        }
+        return uni.toList() + bi.toList()
     }
 
-    /** Stratified-ish k-fold accuracy (deterministic split by hash). */
-    fun crossVal(samples: List<Pair<List<String>, String>>, letters: List<String>, classes: List<String>, folds: Int = 5): Double {
+    fun train(samples: List<Pair<List<String>, String>>, classes: List<String>): Model {
+        val vocab = buildVocab(samples)
+        val xs = samples.map { featurize(it.first, vocab) }
+        val ys = samples.map { classes.indexOf(it.second) }
+        val (w, b) = SoftmaxLR.train(xs, ys, classes.size)
+        return Model(vocab, classes, w, b)
+    }
+
+    /** k-fold accuracy (deterministic split). Vocabulary is built per train-fold (no leakage). */
+    fun crossVal(samples: List<Pair<List<String>, String>>, classes: List<String>, folds: Int = 5): Double {
         if (samples.size < folds) return 0.0
-        val byFold = samples.indices.groupBy { it % folds }
         var correct = 0; var total = 0
         for (k in 0 until folds) {
-            val testIdx = byFold[k] ?: continue
+            val test = samples.filterIndexed { i, _ -> i % folds == k }
             val trainSet = samples.filterIndexed { i, _ -> i % folds != k }
-            if (trainSet.isEmpty()) continue
-            val model = train(trainSet, letters, classes)
-            for (i in testIdx) {
-                val (pred, _) = model.predict(samples[i].first)
-                total++
-                if (pred == samples[i].second) correct++
-            }
+            if (trainSet.isEmpty() || test.isEmpty()) continue
+            val model = train(trainSet, classes)
+            for ((word, label) in test) { total++; if (model.predict(word).first == label) correct++ }
         }
         return if (total > 0) correct.toDouble() / total else 0.0
     }

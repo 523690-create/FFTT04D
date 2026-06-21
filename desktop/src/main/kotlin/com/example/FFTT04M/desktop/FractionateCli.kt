@@ -48,7 +48,7 @@ object FractionateCli {
             println("(HuBERT method ACTIVE — execution provider: ${HubertKMeansUnits.provider})\n")
         else
             println("(HuBERT method INACTIVE — ${HubertKMeansUnits.unavailableReason})\n")
-        val inDir = File(args.getOrNull(0) ?: "D:\\AndroidProjects\\true_cough")
+        val inDir = File(args.getOrNull(0) ?: (Workspace.repoRoot?.resolve("true_cough")?.path ?: "true_cough"))
         val outDir = File(args.getOrNull(1) ?: Workspace.dir("fractionation_validation").path)
         outDir.mkdirs()
         val pngDir = File(outDir, "overlays").apply { mkdirs() }

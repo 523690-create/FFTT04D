@@ -1,5 +1,6 @@
 package com.example.FFTT04M.desktop
 
+import com.example.FFTT04M.desktop.cough.RidgeExtractor
 import com.google.gson.GsonBuilder
 import java.io.File
 import kotlin.math.max
@@ -31,9 +32,9 @@ object PhonemeCodebookCli {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        val wavDir = File(args.getOrNull(0) ?: "D:\\AndroidProjects\\p3")
+        val wavDir = File(args.getOrNull(0) ?: (Workspace.repoRoot?.resolve("p3")?.path ?: "p3"))
         val fragFile = File(args.getOrNull(1)
-            ?: "D:\\AndroidProjects\\data\\fractionation\\FFTT04M\\Spectral_Flux_Onset_segments.jsonl")
+            ?: Workspace.dir("fractionation").resolve("FFTT04M/Spectral_Flux_Onset_segments.jsonl").path)
         val tag = args.getOrNull(2) ?: "p3"
         val outDir = File(Workspace.dir("codebooks").path).apply { mkdirs() }
 
@@ -146,7 +147,6 @@ object PhonemeCodebookCli {
 
             // ---- 3b. histogram classifier: predict the clip's class from its phoneme-letter distribution
             //          (robust to single-fragment flips, unlike the dominant-letter rule) ----
-            val clsLetters = built.map { it.letter }.distinct() + "?"   // letter vocabulary (phoneme-level overfits)
             val clsClasses = byLabel.keys.toList()
             val clsSamples = perClip.map { (label, vecs) ->
                 vecs.map { v ->
@@ -160,8 +160,8 @@ object PhonemeCodebookCli {
                 letToLabel[word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                     .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key] == label
             }
-            val cv = HistogramClassifier.crossVal(clsSamples, clsLetters, clsClasses)
-            clsModel = HistogramClassifier.train(clsSamples, clsLetters, clsClasses)
+            val cv = HistogramClassifier.crossVal(clsSamples, clsClasses)
+            clsModel = HistogramClassifier.train(clsSamples, clsClasses)
             HistogramClassifier.save(clsModel, File(outDir, "${tag}_classifier.json"))
             println("classifier: 5-fold CV ${(cv * 100).roundToInt()}%  vs dominant-letter ${(100.0 * base / clsSamples.size).roundToInt()}%" +
                 "  (${clsSamples.size} clips, ${clsClasses.size} classes)")
@@ -233,13 +233,19 @@ object PhonemeCodebookCli {
         if (rms > 1e-5) { val g = (target / rms).toFloat(); for (i in pcm.indices) pcm[i] *= g }
     }
 
-    /** 14-dim whole-clip feature over the ACTIVE span (first fragment start → last fragment end), so
-     *  lead-in/trailing silence doesn't dilute the cough. Falls back to the whole clip if no fragments. */
+    private val ridge = RidgeExtractor()   // stateless + CPU → safe to share across the parallel decode
+
+    /** 14-dim WholeClipFeatures over the ACTIVE span (first→last fragment, so silence doesn't dilute the
+     *  cough) PLUS 4 CWT-ridge "chirp" features (curvature, slope, centre-freq, R²) — the frequency-sweep
+     *  pattern you can see in the CWT image (snoring's flowing ridge). 18-dim total. */
     private fun wholeClipFeat(pcm: FloatArray, frags: List<Pair<Int, Int>>): DoubleArray {
-        if (frags.isEmpty()) return WholeClipFeatures.extract(pcm, SR)
-        val s = (frags.minOf { it.first } / 1000.0 * SR).toInt().coerceIn(0, pcm.size)
-        val e = (frags.maxOf { it.second } / 1000.0 * SR).toInt().coerceIn(s, pcm.size)
-        return WholeClipFeatures.extract(if (e - s > SHORT_MIN) pcm.copyOfRange(s, e) else pcm, SR)
+        val s = if (frags.isEmpty()) 0 else (frags.minOf { it.first } / 1000.0 * SR).toInt().coerceIn(0, pcm.size)
+        val e = if (frags.isEmpty()) pcm.size else (frags.maxOf { it.second } / 1000.0 * SR).toInt().coerceIn(s, pcm.size)
+        val base = WholeClipFeatures.extract(if (e - s > SHORT_MIN) pcm.copyOfRange(s, e) else pcm, SR)   // 14
+        val rf = try { ridge.extract(pcm, s, e, SR).features } catch (_: Exception) { null }
+        val rv = if (rf?.valid == true) doubleArrayOf(rf.curvature, rf.slope, rf.centerFreqHz, rf.rSquared)
+                 else doubleArrayOf(0.0, 0.0, 0.0, 0.0)
+        return base + rv
     }
 
     private fun fragVec(pcm: FloatArray, sMs: Int, eMs: Int): DoubleArray? {

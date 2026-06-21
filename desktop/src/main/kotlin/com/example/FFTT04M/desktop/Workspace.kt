@@ -16,6 +16,10 @@ import java.io.File
 object Workspace {
     val root: File by lazy { resolve().also { it.mkdirs(); migrateLegacy(it) } }
 
+    /** The dir that contains the FFTT04* repos (…/AndroidProjects), discovered by walking up from the
+     *  jar/cwd — null if not found. Use for portable defaults (works from any drive letter). */
+    val repoRoot: File? by lazy { discoverWorkspace() }
+
     fun dir(name: String): File = File(root, name).apply { mkdirs() }
     fun file(name: String): File = File(root, name)
 
