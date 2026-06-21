@@ -149,24 +149,48 @@ object AudioPlayer {
     @Synchronized private fun next() {
         val f = queue.removeFirstOrNull() ?: run { onSequenceEnd(); return }
         try {
-            val src = AudioSystem.getAudioInputStream(f)
-            val base = src.format
-            // Convert anything that isn't plain 16-bit PCM to a standard playable format.
-            val stream = if (base.encoding == AudioFormat.Encoding.PCM_SIGNED && base.sampleSizeInBits == 16) src
-                else AudioSystem.getAudioInputStream(AudioFormat(base.sampleRate, 16, base.channels, true, false), src)
+            // Peak-normalise each clip on playback so quiet ones are audible (loud ones are unchanged —
+            // no clipping). Falls back to streaming the file directly if it can't be decoded here.
+            val boosted = boostedStream(f)
+            val stream: javax.sound.sampled.AudioInputStream
+            val info: String
+            if (boosted != null) {
+                stream = boosted; info = "44100 Hz · 16-bit · 1ch · level-boosted"
+            } else {
+                val src = AudioSystem.getAudioInputStream(f); val base = src.format
+                stream = if (base.encoding == AudioFormat.Encoding.PCM_SIGNED && base.sampleSizeInBits == 16) src
+                    else AudioSystem.getAudioInputStream(AudioFormat(base.sampleRate, 16, base.channels, true, false), src)
+                info = "${base.sampleRate.toInt()} Hz · ${base.sampleSizeInBits}-bit · ${base.channels}ch"
+            }
             if (!AudioSystem.isLineSupported(DataLine.Info(Clip::class.java, stream.format))) {
                 fail(f, "No audio output line supports ${stream.format}."); return
             }
             val c = AudioSystem.getClip()
             c.open(stream)
             c.addLineListener { e ->
-                if (e.type == LineEvent.Type.STOP) { c.close(); try { src.close() } catch (_: Exception) {}; synchronized(this) { next() } }
+                if (e.type == LineEvent.Type.STOP) { c.close(); try { stream.close() } catch (_: Exception) {}; synchronized(this) { next() } }
             }
             clip = c
             setBody("&#9654; Playing: <b>${escapeHtml(f.name)}</b>" +
-                "<br><span style='color:#888'>${base.sampleRate.toInt()} Hz · ${base.sampleSizeInBits}-bit · ${base.channels}ch · out: ${escapeHtml(defaultOut())}</span>")
+                "<br><span style='color:#888'>$info · out: ${escapeHtml(defaultOut())}</span>")
             c.start()
         } catch (e: Exception) { fail(f, e.message ?: e.toString()) }
+    }
+
+    /** Decode + peak-normalise to ~0.95 full-scale (gain capped so digital silence isn't blown up), as a
+     *  mono 16-bit 44.1 kHz stream ready for a Clip. Null if the file can't be decoded here. */
+    private fun boostedStream(f: File): javax.sound.sampled.AudioInputStream? {
+        val pcm = try { AudioDecoder.decode(f) } catch (_: Exception) { null } ?: return null
+        if (pcm.isEmpty()) return null
+        var peak = 0f; for (x in pcm) { val a = kotlin.math.abs(x); if (a > peak) peak = a }
+        val gain = if (peak > 1e-4f) (0.95f / peak).coerceAtMost(40f) else 1f
+        val bytes = ByteArray(pcm.size * 2)
+        for (i in pcm.indices) {
+            val s = (pcm[i] * gain * 32767f).coerceIn(-32768f, 32767f).toInt()
+            bytes[2 * i] = (s and 0xFF).toByte(); bytes[2 * i + 1] = ((s shr 8) and 0xFF).toByte()
+        }
+        val fmt = AudioFormat(44100f, 16, 1, true, false)   // AudioDecoder outputs mono 44.1 kHz
+        return javax.sound.sampled.AudioInputStream(java.io.ByteArrayInputStream(bytes), fmt, pcm.size.toLong())
     }
 
     private fun fail(f: File, msg: String) {
