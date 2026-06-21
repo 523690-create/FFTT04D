@@ -49,13 +49,17 @@ object PhonemeCodebookCli {
         val codebookArg = args.getOrNull(3)        // when set: decode-only, reuse this codebook
         val gson = GsonBuilder().setPrettyPrinting().create()
         val phonemes: List<Phoneme>; val mean: DoubleArray; val std: DoubleArray
+        var clsModel: HistogramClassifier.Model? = null
 
         if (codebookArg != null) {
             // ---- decode-only: apply an existing codebook (e.g. p3's) to this dataset ----
             val cb = loadCodebook(File(codebookArg))
             if (cb == null) { println("Could not load codebook: $codebookArg"); return }
             phonemes = cb.first; mean = cb.second; std = cb.third
-            println("decode-only: loaded ${phonemes.size} phonemes from ${File(codebookArg).name}")
+            clsModel = HistogramClassifier.load(File(File(codebookArg).parentFile,
+                File(codebookArg).name.replace("_phonemes", "_classifier")))
+            println("decode-only: loaded ${phonemes.size} phonemes from ${File(codebookArg).name}" +
+                (if (clsModel != null) " + classifier" else ""))
         } else {
             // ---- aggregate labelled clips across ALL datasets (label any dataset → feeds the codebook) ----
             // Merge every dataset's Spectral-Flux fragments, and index wavs from every known dataset dir,
@@ -83,6 +87,7 @@ object PhonemeCodebookCli {
             // share a label with auto `urban8k`/`train`+coswara — correct, they're the same class.
             data class FV(val label: String, val vec: DoubleArray)
             val labelled = ArrayList<FV>()
+            val perClip = ArrayList<Pair<String, List<DoubleArray>>>()   // (label, fragment vecs) per clip → classifier training
             val autoFrags = HashMap<String, Int>()
             var usedClips = 0; var autoClips = 0
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
@@ -91,9 +96,10 @@ object PhonemeCodebookCli {
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav) ?: continue
-                var added = 0
-                for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); added++ }
-                if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + added; autoClips++ }
+                val clipVecs = ArrayList<DoubleArray>()
+                for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
+                if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
+                if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
                 usedClips++
             }
             println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}")
@@ -133,6 +139,28 @@ object PhonemeCodebookCli {
                 "tag" to tag, "k" to K, "feature" to "WholeClipFeatures[13] (minus syllabic), z-normed",
                 "norm" to mapOf("mean" to m, "std" to s), "phonemes" to built)))
             phonemes = built; mean = m; std = s
+
+            // ---- 3b. histogram classifier: predict the clip's class from its phoneme-letter distribution
+            //          (robust to single-fragment flips, unlike the dominant-letter rule) ----
+            val clsLetters = built.map { it.letter }.distinct() + "?"   // letter vocabulary (phoneme-level overfits)
+            val clsClasses = byLabel.keys.toList()
+            val clsSamples = perClip.map { (label, vecs) ->
+                vecs.map { v ->
+                    var best: Phoneme? = null; var bd = Double.MAX_VALUE
+                    for (p in built) { val d = dist(v, p.centroid); if (d < bd) { bd = d; best = p } }
+                    if (best != null && bd <= best.radius) best.code else "?"
+                } to label
+            }
+            val letToLabel = built.associate { it.letter to it.label }
+            val base = clsSamples.count { (word, label) ->
+                letToLabel[word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key] == label
+            }
+            val cv = HistogramClassifier.crossVal(clsSamples, clsLetters, clsClasses)
+            clsModel = HistogramClassifier.train(clsSamples, clsLetters, clsClasses)
+            HistogramClassifier.save(clsModel, File(outDir, "${tag}_classifier.json"))
+            println("classifier: 5-fold CV ${(cv * 100).roundToInt()}%  vs dominant-letter ${(100.0 * base / clsSamples.size).roundToInt()}%" +
+                "  (${clsSamples.size} clips, ${clsClasses.size} classes)")
         }
 
         // ---- 4. decode EVERY clip ----
@@ -153,8 +181,10 @@ object PhonemeCodebookCli {
             val hist = word.groupingBy { it }.eachCount()
             val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                 .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
+            val cls = clsModel?.predict(word)
             decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
-                "inferredLetter" to inferred, "word" to word, "histogram" to hist)
+                "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
+                "word" to word, "histogram" to hist)
             nDec++
         }
         File(outDir, "${tag}_decoded.json").writeText(gson.toJson(decoded))
