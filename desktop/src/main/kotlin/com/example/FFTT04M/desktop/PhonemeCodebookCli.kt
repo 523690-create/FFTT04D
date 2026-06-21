@@ -22,10 +22,11 @@ object PhonemeCodebookCli {
     private const val K = 128
     private const val SHORT_MIN = 256          // skip fragments shorter than this many samples
     private const val AUTO_FRAG_CAP = 2000     // cap fragments per AUTO label (≈ largest manual class; manual is never capped)
+    private const val RADIUS_PCTL = 0.75       // intra-cluster distance percentile for a phoneme's radius (the "?" gate); lower = stricter
 
     private val letterMap = linkedMapOf(
         "snoring" to "S", "bronchitis" to "B", "noise" to "N", "dry" to "D", "dry hacking" to "DH",
-        "dry cough" to "D", "croup" to "C", "speech" to "SP", "sneeze" to "SN",
+        "dry cough" to "D", "croup" to "C", "speech" to "SP", "sneeze" to "SN", "music" to "M",
     )
 
     @JvmStatic
@@ -122,7 +123,7 @@ object PhonemeCodebookCli {
                     val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
                     if (members.isEmpty()) continue
                     val dists = members.map { dist(it, centroids[ci]) }.sorted()
-                    val radius = dists[(dists.size * 0.9).toInt().coerceIn(0, dists.size - 1)]
+                    val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
                     built.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
                 }
             }
@@ -141,17 +142,20 @@ object PhonemeCodebookCli {
             val frags = fragsById[id] ?: continue
             val pcm = AudioDecoder.decode(wav) ?: continue
             val word = ArrayList<String>()
+            val letterWeight = HashMap<String, Double>()   // class vote weighted by fragment DURATION, not count
             for ((sMs, eMs) in frags) {
                 val v = fragVec(pcm, sMs, eMs)
-                if (v == null) { word.add("?"); continue }
-                znorm(v, mean, std)
-                var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-                for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
-                word.add(if (best != null && bestD <= best.radius) best.code else "?")
+                val code = if (v == null) "?" else {
+                    znorm(v, mean, std)
+                    var best: Phoneme? = null; var bestD = Double.MAX_VALUE
+                    for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+                    if (best != null && bestD <= best.radius) best.code else "?"
+                }
+                word.add(code)
+                if (code != "?") { val l = code.takeWhile { it.isLetter() }; letterWeight[l] = (letterWeight[l] ?: 0.0) + (eMs - sMs) }
             }
             val hist = word.groupingBy { it }.eachCount()
-            val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
-                .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
+            val inferred = letterWeight.maxByOrNull { it.value }?.key ?: "?"
             decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
                 "inferredLetter" to inferred, "word" to word, "histogram" to hist)
             nDec++
@@ -243,6 +247,8 @@ object PhonemeCodebookCli {
             s == "noise" -> "noise"
             s == "croup" -> "croup"
             s == "speech" -> "speech"
+            // music = the tonal/harmonic class; crying & singing are tonal-vocal → fold them in
+            s.contains("music") || s.contains("singing") || s == "crying" || s == "cry" -> "music"
             s == "sneeze" || s == "sneezing" -> "sneeze"
             else -> s
         }

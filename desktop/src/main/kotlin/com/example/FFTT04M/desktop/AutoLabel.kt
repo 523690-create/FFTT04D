@@ -21,9 +21,11 @@ object AutoLabel {
         val src = f.getOrNull(0)?.lowercase() ?: return null
         val rec = f.getOrNull(2)?.lowercase() ?: ""
         return when {
-            src == "urban8k" -> "noise"
-            src == "train" -> "speech"
-            src == "coswara" && ("vowel" in rec || "counting" in rec) -> "speech"
+            // UrbanSound8K: the tonal/harmonic classes seed "music"; the rest stay broadband "noise".
+            src == "urban8k" -> if (rec == "street_music" || rec == "siren" || rec == "car_horn") "music" else "noise"
+            src == "train" -> "speech"                              // old-time radio = connected speech
+            src == "coswara" && "vowel" in rec -> "music"           // sustained vowels = tonal/harmonic
+            src == "coswara" && "counting" in rec -> "speech"       // spoken digits = connected speech
             else -> null
         }
     }
