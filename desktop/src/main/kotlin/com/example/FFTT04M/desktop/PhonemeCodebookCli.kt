@@ -95,7 +95,7 @@ object PhonemeCodebookCli {
                 val label = manual ?: AutoLabel.forId(id) ?: continue
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
-                val pcm = AudioDecoder.decode(wav) ?: continue
+                val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
                 val clipVecs = ArrayList<DoubleArray>()
                 for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
@@ -168,7 +168,7 @@ object PhonemeCodebookCli {
         var nDec = 0
         for ((id, wav) in wavById) {
             val frags = fragsById[id] ?: continue
-            val pcm = AudioDecoder.decode(wav) ?: continue
+            val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
             val word = ArrayList<String>()
             for ((sMs, eMs) in frags) {
                 val v = fragVec(pcm, sMs, eMs)
@@ -205,6 +205,15 @@ object PhonemeCodebookCli {
 
     data class Phoneme(val code: String, val letter: String, val label: String,
                        val centroid: DoubleArray, val radius: Double, val n: Int)
+
+    /** Scale the whole clip to a target RMS so device mic-gain differences (e.g. Pixel 10 ≈ 8× the
+     *  Pixel 3a) don't shift level-sensitive features. Applied uniformly, so relative levels between
+     *  fragments — which ARE informative — are preserved. Silent clips are left alone. */
+    private fun rmsNormalize(pcm: FloatArray, target: Float = 0.1f) {
+        var s = 0.0; for (x in pcm) s += x.toDouble() * x
+        val rms = sqrt(s / pcm.size.coerceAtLeast(1))
+        if (rms > 1e-5) { val g = (target / rms).toFloat(); for (i in pcm.indices) pcm[i] *= g }
+    }
 
     private fun fragVec(pcm: FloatArray, sMs: Int, eMs: Int): DoubleArray? {
         val s = (sMs / 1000.0 * SR).toInt().coerceIn(0, pcm.size)

@@ -81,7 +81,7 @@ object PhonemeCloud {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
             add(JLabel("X:")); add(xc); add(JLabel("Y:")); add(yc); add(JLabel("Z:")); add(zc)
             add(JButton("Reset view").apply { addActionListener { panel.resetView() } })
-            add(JLabel("   left-button-drag = rotate · right-button-drag = pan · scroll-wheel = zoom"))
+            add(JLabel("   click a dot = centre on it · left-button-drag = rotate · right-button-drag = pan · scroll-wheel = zoom"))
         }
         JFrame("Phoneme cloud (3-D) — ${ps.size} phonemes").apply {
             contentPane.add(controls, BorderLayout.NORTH)
@@ -145,6 +145,17 @@ object PhonemeCloud {
             background = Color(0x1e, 0x1e, 0x22); toolTipText = ""; preferredSize = Dimension(1040, 740)
             val ma = object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) { dragX = e.x; dragY = e.y }
+                override fun mouseClicked(e: MouseEvent) {     // click a phoneme → it becomes the rotation centre
+                    var best = -1; var bd = Double.MAX_VALUE
+                    for (i in ps.indices) {
+                        val p = project(i); val dx = p[0] - e.x; val dy = p[1] - e.y
+                        val d = dx * dx + dy * dy; if (d < bd) { bd = d; best = i }
+                    }
+                    if (best >= 0 && bd <= 400) {              // (it jumps to mid-window; rotation now orbits it)
+                        pivot[0] = nrm(best, 0, xAxis); pivot[1] = nrm(best, 1, yAxis); pivot[2] = nrm(best, 2, zAxis)
+                        repaint()
+                    }
+                }
                 override fun mouseDragged(e: MouseEvent) {
                     val dx = e.x - dragX; val dy = e.y - dragY; dragX = e.x; dragY = e.y
                     if (SwingUtilities.isRightMouseButton(e)) {       // pan: move the look-at point (data space)
@@ -160,7 +171,7 @@ object PhonemeCloud {
             addMouseListener(ma); addMouseMotionListener(ma); addMouseWheelListener(ma)
         }
 
-        fun setAxes(x: Int, y: Int, z: Int) { xAxis = x; yAxis = y; zAxis = z; fitted = false; repaint() }
+        fun setAxes(x: Int, y: Int, z: Int) { xAxis = x; yAxis = y; zAxis = z; pivot.fill(0.0); fitted = false; repaint() }
         fun resetView() { angX = 0.4; angY = 0.6; scale = 1.0; pivot.fill(0.0); fitted = false; repaint() }
 
         private fun ensureFit() {
