@@ -3,7 +3,6 @@ package com.example.FFTT04M.desktop
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import java.io.File
-import kotlin.math.exp
 
 /**
  * Clip classifier over the phoneme **histogram** (a clip = bag of phoneme letters, à la bag-of-words).
@@ -26,11 +25,7 @@ object HistogramClassifier {
 
         /** label, probability. */
         fun predict(word: List<String>): Pair<String, Double> {
-            val x = feature(word)
-            val logits = DoubleArray(classes.size) { c -> var s = b[c]; for (f in x.indices) s += w[c][f] * x[f]; s }
-            val mx = logits.max(); var z = 0.0
-            val p = DoubleArray(classes.size) { c -> val e = exp(logits[c] - mx); z += e; e }
-            for (c in p.indices) p[c] /= z
+            val p = SoftmaxLR.probs(w, b, feature(word))
             val best = p.indices.maxByOrNull { p[it] } ?: return "?" to 0.0
             return classes[best] to p[best]
         }
@@ -49,33 +44,10 @@ object HistogramClassifier {
         return x
     }
 
-    fun train(
-        samples: List<Pair<List<String>, String>>, letters: List<String>, classes: List<String>,
-        l2: Double = 0.02, lr: Double = 0.5, iters: Int = 500,
-    ): Model {
-        val f = letters.size; val c = classes.size
+    fun train(samples: List<Pair<List<String>, String>>, letters: List<String>, classes: List<String>): Model {
         val xs = samples.map { featurize(it.first, letters) }
         val ys = samples.map { classes.indexOf(it.second) }
-        val freq = IntArray(c); for (y in ys) if (y >= 0) freq[y]++
-        val cw = DoubleArray(c) { if (freq[it] > 0) samples.size.toDouble() / (c * freq[it]) else 0.0 } // class-balanced
-        val w = Array(c) { DoubleArray(f) }; val b = DoubleArray(c)
-        val m = xs.size.toDouble()
-        repeat(iters) {
-            val gw = Array(c) { DoubleArray(f) }; val gb = DoubleArray(c)
-            for (n in xs.indices) {
-                val yi = ys[n]; if (yi < 0) continue
-                val x = xs[n]
-                val logits = DoubleArray(c) { k -> var s = b[k]; for (j in 0 until f) s += w[k][j] * x[j]; s }
-                val mx = logits.max(); var z = 0.0
-                val p = DoubleArray(c) { k -> val e = exp(logits[k] - mx); z += e; e }; for (k in 0 until c) p[k] /= z
-                val weight = cw[yi]
-                for (k in 0 until c) {
-                    val err = (p[k] - if (k == yi) 1.0 else 0.0) * weight
-                    gb[k] += err; for (j in 0 until f) gw[k][j] += err * x[j]
-                }
-            }
-            for (k in 0 until c) { b[k] -= lr * gb[k] / m; for (j in 0 until f) w[k][j] -= lr * (gw[k][j] / m + l2 * w[k][j]) }
-        }
+        val (w, b) = SoftmaxLR.train(xs, ys, classes.size)
         return Model(letters, classes, w, b)
     }
 

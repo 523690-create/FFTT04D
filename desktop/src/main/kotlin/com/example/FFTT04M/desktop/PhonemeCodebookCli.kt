@@ -50,16 +50,18 @@ object PhonemeCodebookCli {
         val gson = GsonBuilder().setPrettyPrinting().create()
         val phonemes: List<Phoneme>; val mean: DoubleArray; val std: DoubleArray
         var clsModel: HistogramClassifier.Model? = null
+        var wcModel: WholeClipClassifier.Model? = null
 
         if (codebookArg != null) {
             // ---- decode-only: apply an existing codebook (e.g. p3's) to this dataset ----
             val cb = loadCodebook(File(codebookArg))
             if (cb == null) { println("Could not load codebook: $codebookArg"); return }
             phonemes = cb.first; mean = cb.second; std = cb.third
-            clsModel = HistogramClassifier.load(File(File(codebookArg).parentFile,
-                File(codebookArg).name.replace("_phonemes", "_classifier")))
-            println("decode-only: loaded ${phonemes.size} phonemes from ${File(codebookArg).name}" +
-                (if (clsModel != null) " + classifier" else ""))
+            val cbDir = File(codebookArg).parentFile; val cbName = File(codebookArg).name
+            clsModel = HistogramClassifier.load(File(cbDir, cbName.replace("_phonemes", "_classifier")))
+            wcModel = WholeClipClassifier.load(File(cbDir, cbName.replace("_phonemes", "_wholeclip")))
+            println("decode-only: loaded ${phonemes.size} phonemes from $cbName" +
+                (if (clsModel != null) " + classifier" else "") + (if (wcModel != null) " + whole-clip" else ""))
         } else {
             // ---- aggregate labelled clips across ALL datasets (label any dataset → feeds the codebook) ----
             // Merge every dataset's Spectral-Flux fragments, and index wavs from every known dataset dir,
@@ -88,6 +90,7 @@ object PhonemeCodebookCli {
             data class FV(val label: String, val vec: DoubleArray)
             val labelled = ArrayList<FV>()
             val perClip = ArrayList<Pair<String, List<DoubleArray>>>()   // (label, fragment vecs) per clip → classifier training
+            val perClipWhole = ArrayList<Pair<DoubleArray, String>>()    // (14-dim whole-clip feature, label) → whole-clip classifier
             val autoFrags = HashMap<String, Int>()
             var usedClips = 0; var autoClips = 0
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
@@ -99,6 +102,7 @@ object PhonemeCodebookCli {
                 val clipVecs = ArrayList<DoubleArray>()
                 for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
+                perClipWhole.add(wholeClipFeat(pcm, buildFragsById[id]!!) to label)   // one 14-dim vector per clip
                 if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
                 usedClips++
             }
@@ -161,6 +165,12 @@ object PhonemeCodebookCli {
             HistogramClassifier.save(clsModel, File(outDir, "${tag}_classifier.json"))
             println("classifier: 5-fold CV ${(cv * 100).roundToInt()}%  vs dominant-letter ${(100.0 * base / clsSamples.size).roundToInt()}%" +
                 "  (${clsSamples.size} clips, ${clsClasses.size} classes)")
+
+            // ---- 3c. whole-clip second-opinion classifier (one 14-dim vector/clip → stable on short coughs) ----
+            val wcCv = WholeClipClassifier.crossVal(perClipWhole, clsClasses)
+            wcModel = WholeClipClassifier.train(perClipWhole, clsClasses)
+            WholeClipClassifier.save(wcModel, File(outDir, "${tag}_wholeclip.json"))
+            println("whole-clip classifier: 5-fold CV ${(wcCv * 100).roundToInt()}%  (${perClipWhole.size} clips)")
         }
 
         // ---- 4. decode EVERY clip ----
@@ -182,8 +192,10 @@ object PhonemeCodebookCli {
             val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                 .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
             val cls = clsModel?.predict(word)
+            val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
             decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
                 "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
+                "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
                 "word" to word, "histogram" to hist)
             nDec++
         }
@@ -213,6 +225,15 @@ object PhonemeCodebookCli {
         var s = 0.0; for (x in pcm) s += x.toDouble() * x
         val rms = sqrt(s / pcm.size.coerceAtLeast(1))
         if (rms > 1e-5) { val g = (target / rms).toFloat(); for (i in pcm.indices) pcm[i] *= g }
+    }
+
+    /** 14-dim whole-clip feature over the ACTIVE span (first fragment start → last fragment end), so
+     *  lead-in/trailing silence doesn't dilute the cough. Falls back to the whole clip if no fragments. */
+    private fun wholeClipFeat(pcm: FloatArray, frags: List<Pair<Int, Int>>): DoubleArray {
+        if (frags.isEmpty()) return WholeClipFeatures.extract(pcm, SR)
+        val s = (frags.minOf { it.first } / 1000.0 * SR).toInt().coerceIn(0, pcm.size)
+        val e = (frags.maxOf { it.second } / 1000.0 * SR).toInt().coerceIn(s, pcm.size)
+        return WholeClipFeatures.extract(if (e - s > SHORT_MIN) pcm.copyOfRange(s, e) else pcm, SR)
     }
 
     private fun fragVec(pcm: FloatArray, sMs: Int, eMs: Int): DoubleArray? {
