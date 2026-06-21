@@ -28,6 +28,7 @@ object PhonemeCodebookCli {
     private val letterMap = linkedMapOf(
         "snoring" to "S", "bronchitis" to "B", "noise" to "N", "dry" to "D", "dry hacking" to "DH",
         "dry cough" to "D", "croup" to "C", "speech" to "SP", "sneeze" to "SN", "music" to "M", "voice" to "V",
+        "typical bronchitis" to "BT",
     )
 
     @JvmStatic
@@ -96,7 +97,7 @@ object PhonemeCodebookCli {
             var usedClips = 0; var autoClips = 0
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
                 val manual = labels[id]
-                val label = manual ?: AutoLabel.forId(id) ?: continue
+                val label = bronchitisByDate(id, manual ?: AutoLabel.forId(id)) ?: continue
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
@@ -211,7 +212,7 @@ object PhonemeCodebookCli {
         // ---- 5. quick self-check: inferred letter vs manual label on the labelled clips ----
         var correct = 0; var labelledDec = 0
         for ((id, d0) in decoded) {
-            val label = labels[id] ?: AutoLabel.forId(id) ?: continue   // manual wins, else auto
+            val label = bronchitisByDate(id, labels[id] ?: AutoLabel.forId(id)) ?: continue   // manual wins, else auto; date-split bronchitis
             val d = d0 as? Map<*, *> ?: continue
             labelledDec++
             if (d["inferredLetter"] == letterFor(label)) correct++
@@ -319,6 +320,22 @@ object PhonemeCodebookCli {
             s == "speech" || s.contains("music") || s.contains("singing") || s == "crying" || s == "cry" -> "voice"
             s == "sneeze" || s == "sneezing" -> "sneeze"
             else -> s
+        }
+    }
+
+    /** The user's bronchitis cough dried out over the illness: typical/early → BT, later → dry hacking,
+     *  with a fuzzy transition in the middle treated as unknown (excluded). Applies only to clips
+     *  manually labelled "bronchitis" in the 2026-06 illness window (by the date in the filename);
+     *  everything else (incl. non-2026 datasets) passes through unchanged. */
+    private val dateRe = Regex("(20\\d{6})")
+    private fun bronchitisByDate(id: String, label: String?): String? {
+        if (label != "bronchitis") return label
+        val date = dateRe.find(id)?.groupValues?.get(1)?.toIntOrNull() ?: return label
+        return when {
+            date in 20260601..20260612 -> "typical bronchitis"   // BT
+            date in 20260613..20260615 -> null                   // fuzzy transition → unknown, exclude from training
+            date >= 20260616 -> "dry hacking"
+            else -> label                                        // outside the window → unchanged
         }
     }
 

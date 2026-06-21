@@ -623,7 +623,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     }
 
     private fun letterColor(l: String): String = when (l) {
-        "S" -> "#5cf"; "B" -> "#f77"; "N" -> "#999"; "D" -> "#fb5"; "DH" -> "#f95"; "SP" -> "#9d9"
+        "S" -> "#5cf"; "B" -> "#f77"; "BT" -> "#fa7"; "N" -> "#999"; "D" -> "#fb5"; "DH" -> "#f95"; "SP" -> "#9d9"
         "C" -> "#c9f"; "CR" -> "#b8e"; "CX" -> "#a7d"; "SN" -> "#fc9"; "E", "EP" -> "#dd9"; "V" -> "#8dc"
         "M" -> "#6cc"; "Q" -> "#cc8"; "?" -> "#777"; else -> "#bbb"
     }
