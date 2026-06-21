@@ -62,7 +62,7 @@ object ManualComments {
 
 /** Phoneme-codebook decode results (the `_decoded.json` files under data/codebooks) — id → letter + word. */
 object DecodeStore {
-    data class Dec(val letter: String, val word: List<String>)
+    data class Dec(val letter: String, val word: List<String>, val classLabel: String?, val classProb: Double?)
     @Volatile private var cache: Map<String, Dec>? = null
     private fun map(): Map<String, Dec> = cache ?: load().also { cache = it }
     fun reload() { cache = null }
@@ -79,7 +79,7 @@ object DecodeStore {
                 for ((id, v) in data) {
                     val letter = v["inferredLetter"] as? String ?: continue
                     val word = (v["word"] as? List<*>)?.map { it.toString() } ?: emptyList()
-                    out[id] = Dec(letter, word)
+                    out[id] = Dec(letter, word, v["classLabel"] as? String, (v["classProb"] as? Number)?.toDouble())
                 }
             } catch (e: Exception) { System.err.println("decode load ${f.name}: ${e.message}") }
         }
@@ -330,7 +330,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private val sorter = javax.swing.table.TableRowSorter(model)
     private val searchField = JTextField(14)
     private val searchScope = JComboBox(arrayOf("in: All", "in: Filename", "in: Auto", "in: Manual"))
-    private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates"))
+    private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates", "Show: Low-confidence"))
     private val countLabel = JLabel(" ")
     @Volatile private var dupIds: Set<String> = emptySet()
     @Volatile private var dupGroups: List<List<Row>> = emptyList()
@@ -411,6 +411,10 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                     1 -> if (!row.checked) return false                       // Checked
                     2 -> if (!hasComment(row.rec)) return false               // Has comment
                     3 -> if (row.rec.id !in dupIds) return false              // Duplicates
+                    4 -> {                                                    // Low-confidence (unlabeled, classifier unsure)
+                        val cp = DecodeStore.get(row.rec.id)?.classProb
+                        if (cp == null || cp >= 0.5 || ManualComments.get(row.rec.id) != null) return false
+                    }
                 }
                 return q.isEmpty() || matches(searchable(row.rec, searchScope.selectedIndex), q)
             }
@@ -609,6 +613,10 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                 val cls = PhonemeLegend.labelFor(dec.letter)?.let { "$it (${dec.letter})" } ?: dec.letter
                 append("<br><span style='color:${letterColor(dec.letter)}'>≈ ")
                     .append(escape(cls)).append(": ").append(escape(w)).append(fb).append("</span>")
+                dec.classProb?.let { cp ->                              // classifier confidence — low = good to label
+                    val col = if (cp < 0.5) "#f70" else "#7a7"
+                    append("<span style='color:$col'> · conf ").append((cp * 100).toInt()).append("%</span>")
+                }
             }
             append("</html>")
         }

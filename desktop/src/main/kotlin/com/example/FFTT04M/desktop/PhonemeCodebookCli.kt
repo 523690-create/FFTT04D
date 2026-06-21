@@ -173,32 +173,38 @@ object PhonemeCodebookCli {
             println("whole-clip classifier: 5-fold CV ${(wcCv * 100).roundToInt()}%  (${perClipWhole.size} clips)")
         }
 
-        // ---- 4. decode EVERY clip ----
-        val decoded = LinkedHashMap<String, Any?>()
-        var nDec = 0
-        for ((id, wav) in wavById) {
-            val frags = fragsById[id] ?: continue
-            val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
-            val word = ArrayList<String>()
-            for ((sMs, eMs) in frags) {
-                val v = fragVec(pcm, sMs, eMs)
-                if (v == null) { word.add("?"); continue }
-                znorm(v, mean, std)
-                var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-                for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
-                word.add(if (best != null && bestD <= best.radius) best.code else "?")
-            }
-            val hist = word.groupingBy { it }.eachCount()
-            val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
-                .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-            val cls = clsModel?.predict(word)
-            val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
-            decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
-                "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
-                "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
-                "word" to word, "histogram" to hist)
-            nDec++
-        }
+        // ---- 4. decode EVERY clip (parallel across all cores — the heavy step, esp. on ALLDATA) ----
+        val decoded = java.util.concurrent.ConcurrentHashMap<String, Any?>()
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(cores)
+        println("decoding ${wavById.size} clips on $cores threads…")
+        try {
+            wavById.entries.map { (id, wav) ->
+                pool.submit {
+                    val frags = fragsById[id] ?: return@submit
+                    val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: return@submit
+                    val word = ArrayList<String>()
+                    for ((sMs, eMs) in frags) {
+                        val v = fragVec(pcm, sMs, eMs)
+                        if (v == null) { word.add("?"); continue }
+                        znorm(v, mean, std)
+                        var best: Phoneme? = null; var bestD = Double.MAX_VALUE
+                        for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+                        word.add(if (best != null && bestD <= best.radius) best.code else "?")
+                    }
+                    val hist = word.groupingBy { it }.eachCount()
+                    val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+                        .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
+                    val cls = clsModel?.predict(word)
+                    val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
+                    decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
+                        "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
+                        "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
+                        "word" to word, "histogram" to hist)
+                }
+            }.forEach { it.get() }
+        } finally { pool.shutdown() }
+        val nDec = decoded.size
         File(outDir, "${tag}_decoded.json").writeText(gson.toJson(decoded))
         println("decoded $nDec clips → ${outDir}\\${tag}_decoded.json")
 
