@@ -26,6 +26,13 @@ object AutoLabel {
             src == "train" -> "speech"                              // old-time radio = connected speech
             src == "coswara" && "vowel" in rec -> "music"           // sustained vowels = tonal/harmonic
             src == "coswara" && "counting" in rec -> "speech"       // spoken digits = connected speech
+            // ESC-50 (clean single-class clips): map the unambiguous, high-value categories.
+            src == "esc50" -> when (rec) {
+                "sneezing" -> "sneeze"                              // boosts the tiny SN class
+                "snoring" -> "snoring"
+                "crying_baby", "siren", "car_horn" -> "music"       // tonal/harmonic
+                else -> null                                       // coughing/breathing/laughing/noise left out
+            }
             else -> null
         }
     }
