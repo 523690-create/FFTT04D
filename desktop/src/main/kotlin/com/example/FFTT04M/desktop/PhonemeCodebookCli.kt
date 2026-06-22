@@ -25,6 +25,9 @@ object PhonemeCodebookCli {
     private const val SHORT_MIN = 256          // skip fragments shorter than this many samples
     private const val WIN_MS = 180             // fixed-grid window — deterministic fragmentation (no onset-count variance)
     private const val HOP_MS = 90              // 50% overlap → robust to frame-shifts
+    private const val K_ALPHA = 256            // single-alphabet unit count (hex [00]..[FF])
+    // -Dsingle.alphabet=true → ONE global k-means (class-agnostic units), not per-label phonemes.
+    private val SINGLE_ALPHABET = System.getProperty("single.alphabet")?.toBoolean() == true
 
     /** Fixed-grid overlapping windows. Replaces variable onset-based fractionation for the codebook:
      *  the window count depends only on clip duration, so similar clips get the same phoneme count
@@ -143,28 +146,46 @@ object PhonemeCodebookCli {
             for (i in 0 until dim) s[i] = sqrt(s[i] / labelled.size).coerceAtLeast(1e-9)
             labelled.forEach { znorm(it.vec, m, s) }
 
-            // ---- 3. per-label k-means → phonemes ----
-            // Balanced (√-proportional) allocation: phonemes ∝ √(fragment count), not the raw count, so an
-            // over-represented label (e.g. bronchitis, snoring) gets more phonemes than a rare one but stops
-            // dominating the codebook's catchment. Capped by #fragments (k-means can't exceed its points).
+            // ---- 3. k-means → codebook ----
             val byLabel = labelled.groupBy { it.label }
-            val sqrtTotal = byLabel.values.sumOf { sqrt(it.size.toDouble()) }.coerceAtLeast(1e-9)
             val built = ArrayList<Phoneme>()
-            for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
-                val letter = letterFor(label)
-                val kLabel = max(1, (K * sqrt(frags.size.toDouble()) / sqrtTotal).roundToInt()).coerceAtMost(frags.size)
-                val vecs = frags.map { it.vec }
-                val (centroids, assign) = kmeans(vecs, kLabel)
+            if (SINGLE_ALPHABET) {
+                // ONE global, class-agnostic alphabet — hex units [00]..[FF]. The codebook is a pure
+                // acoustic vocabulary; classification is a separate downstream step on the unit "words"
+                // (so relabelling never forces a codebook rebuild — textless-NLP style).
+                HistogramClassifier.unitLevel = true
+                val vecs = labelled.map { it.vec }
+                val kA = K_ALPHA.coerceAtMost(vecs.size)
+                val (centroids, assign) = kmeans(vecs, kA)
                 for (ci in centroids.indices) {
                     val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
                     if (members.isEmpty()) continue
                     val dists = members.map { dist(it, centroids[ci]) }.sorted()
                     val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
-                    built.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
+                    val code = "[%02X]".format(ci)
+                    built.add(Phoneme(code, code, "", centroids[ci], radius, members.size))   // class-agnostic
                 }
+                println("single alphabet: ${built.size} units (K=$kA) over ${labelled.size} fragments, ${byLabel.size} classes")
+            } else {
+                // Balanced (√-proportional) per-label allocation: phonemes ∝ √(fragment count) so an
+                // over-represented label doesn't dominate the catchment. Capped by #fragments.
+                val sqrtTotal = byLabel.values.sumOf { sqrt(it.size.toDouble()) }.coerceAtLeast(1e-9)
+                for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
+                    val letter = letterFor(label)
+                    val kLabel = max(1, (K * sqrt(frags.size.toDouble()) / sqrtTotal).roundToInt()).coerceAtMost(frags.size)
+                    val vecs = frags.map { it.vec }
+                    val (centroids, assign) = kmeans(vecs, kLabel)
+                    for (ci in centroids.indices) {
+                        val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
+                        if (members.isEmpty()) continue
+                        val dists = members.map { dist(it, centroids[ci]) }.sorted()
+                        val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
+                        built.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
+                    }
+                }
+                println("phonemes=${built.size} across ${byLabel.size} labels: " +
+                    byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
             }
-            println("phonemes=${built.size} across ${byLabel.size} labels: " +
-                byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
             File(outDir, "${tag}_phonemes.json").writeText(gson.toJson(mapOf(
                 "tag" to tag, "k" to K, "feature" to "WholeClipFeatures[13] (minus syllabic), z-normed",
                 "norm" to mapOf("mean" to m, "std" to s), "phonemes" to built)))

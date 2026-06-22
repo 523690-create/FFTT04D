@@ -31,26 +31,30 @@ object HistogramClassifier {
         }
     }
 
-    private fun lettersOf(word: List<String>) = word.map { if (it == "?") "?" else it.takeWhile { c -> c.isLetter() } }
+    /** true = single-alphabet: tokens are the FULL unit codes (e.g. "[3F]"), no letter extraction and
+     *  no bigrams (256 units would make the bigram space too sparse). false = per-class letter level. */
+    var unitLevel = false
 
-    /** Feature vector = unigram + **bigram** letter fractions. Bigrams ("N>B") capture sequential
-     *  structure — e.g. a cough BRACKETED by noise (…N>B…B>N…) reads differently from pure noise,
-     *  which the order-blind unigram histogram can't see. Vocabulary is learned from the training set. */
+    private fun tokensOf(word: List<String>) =
+        if (unitLevel) word else word.map { if (it == "?") "?" else it.takeWhile { c -> c.isLetter() } }
+
+    /** Feature vector = unigram (+ bigram, letter-level only) token fractions. Bigrams ("N>B") capture
+     *  sequential structure (a cough bracketed by noise reads differently from pure noise). */
     private fun featurize(word: List<String>, vocab: List<String>): DoubleArray {
-        val ls = lettersOf(word)
+        val ts = tokensOf(word)
         val x = DoubleArray(vocab.size); var tot = 0
-        for (l in ls) { val i = vocab.indexOf(l); if (i >= 0) x[i]++; tot++ }
-        for (k in 0 until ls.size - 1) { val i = vocab.indexOf("${ls[k]}>${ls[k + 1]}"); if (i >= 0) x[i]++ }
+        for (t in ts) { val i = vocab.indexOf(t); if (i >= 0) x[i]++; tot++ }
+        if (!unitLevel) for (k in 0 until ts.size - 1) { val i = vocab.indexOf("${ts[k]}>${ts[k + 1]}"); if (i >= 0) x[i]++ }
         if (tot > 0) for (i in x.indices) x[i] /= tot
         return x
     }
 
-    /** Observed unigrams + bigrams across the samples → fixed feature vocabulary. */
+    /** Observed unigrams (+ bigrams, letter-level only) across the samples → fixed feature vocabulary. */
     private fun buildVocab(samples: List<Pair<List<String>, String>>): List<String> {
         val uni = LinkedHashSet<String>(); val bi = LinkedHashSet<String>()
         for ((word, _) in samples) {
-            val ls = lettersOf(word); uni.addAll(ls)
-            for (k in 0 until ls.size - 1) bi.add("${ls[k]}>${ls[k + 1]}")
+            val ts = tokensOf(word); uni.addAll(ts)
+            if (!unitLevel) for (k in 0 until ts.size - 1) bi.add("${ts[k]}>${ts[k + 1]}")
         }
         return uni.toList() + bi.toList()
     }
