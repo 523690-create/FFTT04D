@@ -22,6 +22,25 @@ object PhonemeCodebookCli {
     private const val SR = 44100
     private const val K = 128
     private const val SHORT_MIN = 256          // skip fragments shorter than this many samples
+    private const val WIN_MS = 180             // fixed-grid window — deterministic fragmentation (no onset-count variance)
+    private const val HOP_MS = 90              // 50% overlap → robust to frame-shifts
+
+    /** Fixed-grid overlapping windows. Replaces variable onset-based fractionation for the codebook:
+     *  the window count depends only on clip duration, so similar clips get the same phoneme count
+     *  (no over/under-segmentation), and the 50% overlap absorbs frame-shifts. */
+    private fun framesFor(pcm: FloatArray, sr: Int): List<Pair<Int, Int>> {
+        val durMs = (pcm.size.toLong() * 1000 / sr).toInt()
+        if (durMs <= WIN_MS) return if (durMs > 0) listOf(0 to durMs) else emptyList()
+        val out = ArrayList<Pair<Int, Int>>()
+        var s = 0
+        while (s < durMs) {
+            val e = (s + WIN_MS).coerceAtMost(durMs)
+            if (e - s >= WIN_MS / 2) out.add(s to e)   // drop a tiny trailing window
+            if (e >= durMs) break
+            s += HOP_MS
+        }
+        return out
+    }
     private const val AUTO_FRAG_CAP = 2000     // cap fragments per AUTO label (≈ largest manual class; manual is never capped)
     private const val RADIUS_PCTL = 0.75       // intra-cluster distance percentile for a phoneme's radius (the "?" gate); lower = stricter
 
@@ -102,7 +121,7 @@ object PhonemeCodebookCli {
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
                 val clipVecs = ArrayList<DoubleArray>()
-                for ((sMs, eMs) in buildFragsById[id]!!) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
+                for ((sMs, eMs) in framesFor(pcm, SR)) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
                 perClipWhole.add(wholeClipFeat(pcm, buildFragsById[id]!!) to label)   // one 14-dim vector per clip
                 if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
@@ -182,8 +201,8 @@ object PhonemeCodebookCli {
         try {
             wavById.entries.map { (id, wav) ->
                 pool.submit {
-                    val frags = fragsById[id] ?: return@submit
                     val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: return@submit
+                    val frags = framesFor(pcm, SR)
                     val word = ArrayList<String>()
                     for ((sMs, eMs) in frags) {
                         val v = fragVec(pcm, sMs, eMs)
