@@ -83,6 +83,7 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     systemProperty("java.awt.headless", "true")
     systemProperty("hubert.feat", System.getProperty("hubert.feat") ?: "")   // -Dhubert.feat=true → HuBERT window features
     systemProperty("single.alphabet", System.getProperty("single.alphabet") ?: "")   // -Dsingle.alphabet=true → one global hex alphabet
+    systemProperty("codebook.k", System.getProperty("codebook.k") ?: "")   // -Dcodebook.k=256 → 256 phonemes
 }
 
 // Create fat JAR for direct execution (visible window)

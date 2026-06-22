@@ -21,7 +21,7 @@ import kotlin.math.sqrt
  */
 object PhonemeCodebookCli {
     private const val SR = 44100
-    private const val K = 128
+    private val K = System.getProperty("codebook.k")?.toIntOrNull() ?: 128   // -Dcodebook.k=256 → 256 phonemes
     private const val SHORT_MIN = 256          // skip fragments shorter than this many samples
     private const val WIN_MS = 180             // fixed-grid window — deterministic fragmentation (no onset-count variance)
     private const val HOP_MS = 90              // 50% overlap → robust to frame-shifts
