@@ -86,6 +86,15 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     systemProperty("codebook.k", System.getProperty("codebook.k") ?: "")   // -Dcodebook.k=256 → 256 phonemes
 }
 
+// One-off: visualise the bronchitis typical→recovering progression as a HuBERT PCA cloud.
+tasks.register<JavaExec>("bronchitisCloud") {
+    group = "application"
+    description = "Render BT (typical) vs DH (recovering) bronchitis clips as a HuBERT PCA-2D cloud PNG."
+    mainClass.set("com.example.FFTT04M.desktop.BronchitisCloud")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {
