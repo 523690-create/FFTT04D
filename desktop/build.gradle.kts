@@ -81,6 +81,7 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     mainClass.set("com.example.FFTT04M.desktop.PhonemeCodebookCli")
     classpath = sourceSets["main"].runtimeClasspath
     systemProperty("java.awt.headless", "true")
+    systemProperty("hubert.feat", System.getProperty("hubert.feat") ?: "")   // -Dhubert.feat=true → HuBERT window features
 }
 
 // Create fat JAR for direct execution (visible window)

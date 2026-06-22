@@ -1,6 +1,7 @@
 package com.example.FFTT04M.desktop
 
 import com.example.FFTT04M.desktop.cough.RidgeExtractor
+import com.example.FFTT04M.desktop.fractionation.HubertKMeansUnits
 import com.google.gson.GsonBuilder
 import java.io.File
 import kotlin.math.max
@@ -66,6 +67,8 @@ object PhonemeCodebookCli {
             .associateBy { it.nameWithoutExtension }
         val fragsById = loadFragments(fragFile)                     // id -> [(startMs,endMs)]
         println("labels=${labels.size}  wavs=${wavById.size}  clips-with-frags=${fragsById.size}")
+        if (USE_HUBERT) println("HuBERT features ON — available=${HubertKMeansUnits.available} provider=${HubertKMeansUnits.provider}" +
+            (if (!HubertKMeansUnits.available) " (${HubertKMeansUnits.unavailableReason})" else ""))
 
         val codebookArg = args.getOrNull(3)        // when set: decode-only, reuse this codebook
         val gson = GsonBuilder().setPrettyPrinting().create()
@@ -120,10 +123,11 @@ object PhonemeCodebookCli {
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
-                val clipVecs = ArrayList<DoubleArray>()
-                for ((sMs, eMs) in framesFor(pcm, SR)) fragVec(pcm, sMs, eMs)?.let { labelled.add(FV(label, it)); clipVecs.add(it) }
+                val frags = framesFor(pcm, SR)
+                val clipVecs = clipFeatures(pcm, SR, frags)   // DSP(13) or HuBERT(768) per window
+                for (v in clipVecs) labelled.add(FV(label, v))
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
-                perClipWhole.add(wholeClipFeat(pcm, buildFragsById[id]!!) to label)   // one 14-dim vector per clip
+                perClipWhole.add(wholeClipFeat(pcm, frags) to label)   // 14-dim whole-clip feature (always DSP)
                 if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
                 usedClips++
             }
@@ -131,11 +135,12 @@ object PhonemeCodebookCli {
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
 
             // ---- 2. z-normalize ----
-            val m = DoubleArray(13); val s = DoubleArray(13)
-            for (f in labelled) for (i in 0 until 13) m[i] += f.vec[i]
-            for (i in 0 until 13) m[i] /= labelled.size
-            for (f in labelled) for (i in 0 until 13) { val d = f.vec[i] - m[i]; s[i] += d * d }
-            for (i in 0 until 13) s[i] = sqrt(s[i] / labelled.size).coerceAtLeast(1e-9)
+            val dim = labelled.first().vec.size   // 13 (DSP) or 768 (HuBERT)
+            val m = DoubleArray(dim); val s = DoubleArray(dim)
+            for (f in labelled) for (i in 0 until dim) m[i] += f.vec[i]
+            for (i in 0 until dim) m[i] /= labelled.size
+            for (f in labelled) for (i in 0 until dim) { val d = f.vec[i] - m[i]; s[i] += d * d }
+            for (i in 0 until dim) s[i] = sqrt(s[i] / labelled.size).coerceAtLeast(1e-9)
             labelled.forEach { znorm(it.vec, m, s) }
 
             // ---- 3. per-label k-means → phonemes ----
@@ -195,7 +200,7 @@ object PhonemeCodebookCli {
 
         // ---- 4. decode EVERY clip (parallel across all cores — the heavy step, esp. on ALLDATA) ----
         val decoded = java.util.concurrent.ConcurrentHashMap<String, Any?>()
-        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val cores = if (USE_HUBERT) 3 else Runtime.getRuntime().availableProcessors().coerceAtLeast(1)   // cap GPU concurrency for HuBERT
         val pool = java.util.concurrent.Executors.newFixedThreadPool(cores)
         println("decoding ${wavById.size} clips on $cores threads…")
         try {
@@ -204,9 +209,7 @@ object PhonemeCodebookCli {
                     val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: return@submit
                     val frags = framesFor(pcm, SR)
                     val word = ArrayList<String>()
-                    for ((sMs, eMs) in frags) {
-                        val v = fragVec(pcm, sMs, eMs)
-                        if (v == null) { word.add("?"); continue }
+                    for (v in clipFeatures(pcm, SR, frags)) {
                         znorm(v, mean, std)
                         var best: Phoneme? = null; var bestD = Double.MAX_VALUE
                         for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
@@ -266,6 +269,32 @@ object PhonemeCodebookCli {
         val rv = if (rf?.valid == true) doubleArrayOf(rf.curvature, rf.slope, rf.centerFreqHz, rf.rSquared)
                  else doubleArrayOf(0.0, 0.0, 0.0, 0.0)
         return base + rv
+    }
+
+    // Experimental: -Dhubert.feat=true swaps the per-window feature from WholeClipFeatures(13) to a
+    // pooled HuBERT embedding(768). Same fixed grid; only the feature changes.
+    private val USE_HUBERT = System.getProperty("hubert.feat")?.toBoolean() == true
+
+    /** Per-window feature vectors for a clip. DSP mode: fragVec per window (13-dim, short windows
+     *  dropped). HuBERT mode: one HuBERT pass → mean-pool the frames in each window (768-dim). */
+    private fun clipFeatures(pcm: FloatArray, sr: Int, frags: List<Pair<Int, Int>>): List<DoubleArray> {
+        if (USE_HUBERT) {
+            val emb = HubertKMeansUnits.frameEmbeddings(pcm, sr)
+            if (emb != null && emb.isNotEmpty()) {
+                val t = emb.size; val h = emb[0].size
+                val durMs = (pcm.size.toLong() * 1000 / sr).toInt().coerceAtLeast(1)
+                val msPerFrame = durMs.toDouble() / t
+                return frags.map { (sMs, eMs) ->
+                    val f0 = (sMs / msPerFrame).toInt().coerceIn(0, t - 1)
+                    val f1 = (eMs / msPerFrame).toInt().coerceIn(f0 + 1, t)
+                    val v = DoubleArray(h); var n = 0
+                    for (f in f0 until f1) { val ef = emb[f]; for (j in 0 until h) v[j] += ef[j]; n++ }
+                    if (n > 0) for (j in 0 until h) v[j] /= n
+                    v
+                }
+            }
+        }
+        return frags.mapNotNull { (s, e) -> fragVec(pcm, s, e) }
     }
 
     private fun fragVec(pcm: FloatArray, sMs: Int, eMs: Int): DoubleArray? {

@@ -125,6 +125,15 @@ object HubertKMeansUnits : Fractionator {
         }
     }
 
+    /** Public: per-frame HuBERT embeddings `[T, H]` for a clip (resampled to 16 kHz), or null if
+     *  HuBERT isn't available. Frame stride ≈ clipDurationMs / T. Used to feature-ise fixed-grid
+     *  windows (pool the frames in each window) as a richer alternative to WholeClipFeatures. */
+    fun frameEmbeddings(x: FloatArray, sr: Int): Array<FloatArray>? {
+        if (!available) return null
+        return try { embed(if (sr == TARGET_SR) x else resample(x, sr, TARGET_SR)) }
+        catch (e: Exception) { System.err.println("hubert embed failed: ${e.message}"); null }
+    }
+
     // ---- k-means (self-contained; the gated method stays independent of the other Fractionators) --
 
     private fun kmeans(data: Array<FloatArray>, k: Int): IntArray {
