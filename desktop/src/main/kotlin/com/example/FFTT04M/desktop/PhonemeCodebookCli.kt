@@ -70,6 +70,8 @@ object PhonemeCodebookCli {
             .associateBy { it.nameWithoutExtension }
         val fragsById = loadFragments(fragFile)                     // id -> [(startMs,endMs)]
         println("labels=${labels.size}  wavs=${wavById.size}  clips-with-frags=${fragsById.size}")
+        if (decodeFeedback.isNotEmpty())
+            println("decode feedback: ${decodeFeedback.count { it.value }} confirmed → training labels, ${decodeFeedback.count { !it.value }} marked wrong → excluded")
         if (USE_HUBERT) println("HuBERT features ON — available=${HubertKMeansUnits.available} provider=${HubertKMeansUnits.provider}" +
             (if (!HubertKMeansUnits.available) " (${HubertKMeansUnits.unavailableReason})" else ""))
 
@@ -122,7 +124,7 @@ object PhonemeCodebookCli {
             var usedClips = 0; var autoClips = 0
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
                 val manual = labels[id]
-                val label = bronchitisByDate(id, manual ?: AutoLabel.forId(id)) ?: continue
+                val label = trainLabel(id, manual) ?: continue
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
@@ -255,7 +257,7 @@ object PhonemeCodebookCli {
         // ---- 5. quick self-check: inferred letter vs manual label on the labelled clips ----
         var correct = 0; var labelledDec = 0
         for ((id, d0) in decoded) {
-            val label = bronchitisByDate(id, labels[id] ?: AutoLabel.forId(id)) ?: continue   // manual wins, else auto; date-split bronchitis
+            val label = trainLabel(id, labels[id]) ?: continue   // manual → confirmed-decode → auto; date-split bronchitis
             val d = d0 as? Map<*, *> ?: continue
             labelledDec++
             if (d["inferredLetter"] == letterFor(label)) correct++
@@ -390,6 +392,44 @@ object PhonemeCodebookCli {
             s == "sneeze" || s == "sneezing" -> "sneeze"
             else -> s
         }
+    }
+
+    // ---- re-learning loop: fold the grid's correct/error feedback into training ----
+    /** decode_feedback.json: id → true (user confirmed the auto-decode) / false (marked it wrong). */
+    private val decodeFeedback: Map<String, Boolean> by lazy {
+        val f = File(Workspace.dir("codebooks"), "decode_feedback.json")
+        if (!f.isFile) emptyMap() else try {
+            @Suppress("UNCHECKED_CAST")
+            (com.google.gson.Gson().fromJson(f.readText(), Map::class.java) as Map<String, Any?>)
+                .mapNotNull { (k, v) -> (v as? Boolean)?.let { k to it } }.toMap()
+        } catch (e: Exception) { System.err.println("decode_feedback load: ${e.message}"); emptyMap() }
+    }
+    /** For clips the user marked CORRECT: the class the codebook decoded them as (from <tag>_decoded.json). */
+    private val confirmedLabels: Map<String, String> by lazy {
+        val ids = decodeFeedback.filterValues { it }.keys
+        if (ids.isEmpty()) return@lazy emptyMap()
+        val out = HashMap<String, String>()
+        Workspace.dir("codebooks").listFiles { x -> x.name.endsWith("_decoded.json") }?.forEach { df ->
+            try {
+                @Suppress("UNCHECKED_CAST")
+                val data = com.google.gson.Gson().fromJson(df.readText(), Map::class.java) as Map<String, Map<String, Any?>>
+                for ((id, v) in data) if (id in ids) (v["classLabel"] as? String)?.let { out[id] = it }
+            } catch (_: Exception) {}
+        }
+        out
+    }
+
+    /** The training label for a clip, in priority order: manual comment → confirmed auto-decode (marked
+     *  correct) → filename auto-label. Clips marked WRONG (and not manually re-labelled) are excluded
+     *  (returns null). bronchitis is then date-split. */
+    private fun trainLabel(id: String, manual: String?): String? {
+        val base = when {
+            manual != null -> manual
+            decodeFeedback[id] == true -> confirmedLabels[id]
+            decodeFeedback[id] == false -> return null   // user said this auto-decode is wrong → don't train on it
+            else -> AutoLabel.forId(id)
+        }
+        return bronchitisByDate(id, base)
     }
 
     /** The user's bronchitis cough dried out over the illness: typical/early → BT, later → dry hacking,
