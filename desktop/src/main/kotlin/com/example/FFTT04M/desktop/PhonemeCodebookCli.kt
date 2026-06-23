@@ -116,7 +116,7 @@ object PhonemeCodebookCli {
             // many fragments each). Hash-ordered so a capped auto class samples evenly across its sources
             // (speech draws from both coswara vowels and old-time radio). Note: manual `noise`/`speech`
             // share a label with auto `urban8k`/`train`+coswara — correct, they're the same class.
-            data class FV(val label: String, val vec: DoubleArray)
+            data class FV(var label: String, val vec: DoubleArray)
             val labelled = ArrayList<FV>()
             val perClip = ArrayList<Pair<String, List<DoubleArray>>>()   // (label, fragment vecs) per clip → classifier training
             val perClipWhole = ArrayList<Pair<DoubleArray, String>>()    // (14-dim whole-clip feature, label) → whole-clip classifier
@@ -149,8 +149,29 @@ object PhonemeCodebookCli {
             labelled.forEach { znorm(it.vec, m, s) }
 
             // ---- 3. k-means → codebook ----
-            val byLabel = labelled.groupBy { it.label }
-            val built = ArrayList<Phoneme>()
+            // Per-label √-proportional allocation: phonemes ∝ √(fragment count) so an over-represented
+            // label doesn't dominate the catchment. Factored out so the purify pass can re-run it.
+            fun buildPerLabel(fvs: List<FV>): List<Phoneme> {
+                val byLbl = fvs.groupBy { it.label }
+                val out = ArrayList<Phoneme>()
+                val sqrtTotal = byLbl.values.sumOf { sqrt(it.size.toDouble()) }.coerceAtLeast(1e-9)
+                for ((label, group) in byLbl.entries.sortedByDescending { it.value.size }) {
+                    val letter = letterFor(label)
+                    val kLabel = max(1, (K * sqrt(group.size.toDouble()) / sqrtTotal).roundToInt()).coerceAtMost(group.size)
+                    val vecs = group.map { it.vec }
+                    val (centroids, assign) = kmeans(vecs, kLabel)
+                    for (ci in centroids.indices) {
+                        val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
+                        if (members.isEmpty()) continue
+                        val dists = members.map { dist(it, centroids[ci]) }.sorted()
+                        val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
+                        out.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
+                    }
+                }
+                return out
+            }
+
+            var built: List<Phoneme>
             if (SINGLE_ALPHABET) {
                 // ONE global, class-agnostic alphabet — hex units [00]..[FF]. The codebook is a pure
                 // acoustic vocabulary; classification is a separate downstream step on the unit "words"
@@ -159,34 +180,48 @@ object PhonemeCodebookCli {
                 val vecs = labelled.map { it.vec }
                 val kA = K_ALPHA.coerceAtMost(vecs.size)
                 val (centroids, assign) = kmeans(vecs, kA)
+                val out = ArrayList<Phoneme>()
                 for (ci in centroids.indices) {
                     val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
                     if (members.isEmpty()) continue
                     val dists = members.map { dist(it, centroids[ci]) }.sorted()
                     val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
                     val code = "[%02X]".format(ci)
-                    built.add(Phoneme(code, code, "", centroids[ci], radius, members.size))   // class-agnostic
+                    out.add(Phoneme(code, code, "", centroids[ci], radius, members.size))   // class-agnostic
                 }
-                println("single alphabet: ${built.size} units (K=$kA) over ${labelled.size} fragments, ${byLabel.size} classes")
+                built = out
+                println("single alphabet: ${built.size} units (K=$kA) over ${labelled.size} fragments, ${labelled.map { it.label }.distinct().size} classes")
             } else {
-                // Balanced (√-proportional) per-label allocation: phonemes ∝ √(fragment count) so an
-                // over-represented label doesn't dominate the catchment. Capped by #fragments.
-                val sqrtTotal = byLabel.values.sumOf { sqrt(it.size.toDouble()) }.coerceAtLeast(1e-9)
-                for ((label, frags) in byLabel.entries.sortedByDescending { it.value.size }) {
-                    val letter = letterFor(label)
-                    val kLabel = max(1, (K * sqrt(frags.size.toDouble()) / sqrtTotal).roundToInt()).coerceAtMost(frags.size)
-                    val vecs = frags.map { it.vec }
-                    val (centroids, assign) = kmeans(vecs, kLabel)
-                    for (ci in centroids.indices) {
-                        val members = vecs.filterIndexed { idx, _ -> assign[idx] == ci }
-                        if (members.isEmpty()) continue
-                        val dists = members.map { dist(it, centroids[ci]) }.sorted()
-                        val radius = dists[(dists.size * RADIUS_PCTL).toInt().coerceIn(0, dists.size - 1)]
-                        built.add(Phoneme("$letter${ci + 1}", letter, label, centroids[ci], radius, members.size))
+                built = buildPerLabel(labelled)
+                // ---- 3a. purify mixed clips (gated; touches the gold-standard codebook → measure CV on/off).
+                //          A whole-clip cough tag also labels the clip's noise/voice BACKGROUND windows as
+                //          cough, minting counterfeit cough phonemes in background acoustic space. Route any
+                //          labelled window that matches a background phoneme (noise/voice) within its radius
+                //          AND better than its own tag class back to that background class, then rebuild.
+                //          Conservative (needs a confident in-radius background match that beats the tag), so
+                //          genuine cough windows — which sit far from noise/voice — are untouched. ----
+                if (PURIFY_MIXED) {
+                    val sinks = built.filter { it.label in BACKGROUND_LABELS }
+                    var moved = 0
+                    if (sinks.isNotEmpty()) {
+                        val byLabelPhon = built.groupBy { it.label }
+                        for (f in labelled) {
+                            if (f.label in BACKGROUND_LABELS) continue
+                            var sink: Phoneme? = null; var sinkD = Double.MAX_VALUE
+                            for (p in sinks) { val d = dist(f.vec, p.centroid); if (d < sinkD) { sinkD = d; sink = p } }
+                            val s2 = sink ?: continue
+                            if (sinkD > s2.radius) continue                  // not a confident background window
+                            var sameD = Double.MAX_VALUE
+                            for (p in byLabelPhon[f.label].orEmpty()) { val d = dist(f.vec, p.centroid); if (d < sameD) sameD = d }
+                            if (sinkD < sameD) { f.label = s2.label; moved++ }   // more background than its own tag
+                        }
                     }
+                    if (moved > 0) { println("purify: routed $moved background window(s) out of non-background clips → rebuild"); built = buildPerLabel(labelled) }
+                    else println("purify: no background windows to route")
                 }
-                println("phonemes=${built.size} across ${byLabel.size} labels: " +
-                    byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
+                println("phonemes=${built.size} across ${labelled.map { it.label }.distinct().size} labels: " +
+                    labelled.groupingBy { it.label }.eachCount().entries.sortedByDescending { it.value }
+                        .joinToString(" ") { "${letterFor(it.key)}=${it.value}f" })
             }
             File(outDir, "${tag}_phonemes.json").writeText(gson.toJson(mapOf(
                 "tag" to tag, "k" to K,
@@ -198,7 +233,7 @@ object PhonemeCodebookCli {
 
             // ---- 3b. histogram classifier: predict the clip's class from its phoneme-letter distribution
             //          (robust to single-fragment flips, unlike the dominant-letter rule) ----
-            val clsClasses = byLabel.keys.toList()
+            val clsClasses = perClip.map { it.first }.distinct()   // clip-level tag set (unchanged by purify)
             val clsSamples = perClip.map { (label, vecs) ->
                 vecs.map { v ->
                     var best: Phoneme? = null; var bd = Double.MAX_VALUE
@@ -300,6 +335,13 @@ object PhonemeCodebookCli {
     // Experimental: -Dhubert.feat=true swaps the per-window feature from WholeClipFeatures(13) to a
     // pooled HuBERT embedding(768). Same fixed grid; only the feature changes.
     private val USE_HUBERT = System.getProperty("hubert.feat")?.toBoolean() == true
+
+    // -Dpurify.mixed=true: route a labelled clip's background (noise/voice) windows OUT of its tag class
+    // when they confidently match a background phoneme better than the tag — so a whole-clip cough tag
+    // over a noise+voice+cough clip stops minting counterfeit cough phonemes. Gated (default off) so the
+    // gold-standard 89% can be A/B-measured before adopting it.
+    private val PURIFY_MIXED = System.getProperty("purify.mixed")?.toBoolean() == true
+    private val BACKGROUND_LABELS = setOf("noise", "voice")
 
     /** Per-window feature vectors for a clip. DSP mode: fragVec per window (13-dim, short windows
      *  dropped). HuBERT mode: one HuBERT pass → mean-pool the frames in each window (768-dim). */

@@ -84,6 +84,7 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     systemProperty("hubert.feat", System.getProperty("hubert.feat") ?: "")   // -Dhubert.feat=true → HuBERT window features
     systemProperty("single.alphabet", System.getProperty("single.alphabet") ?: "")   // -Dsingle.alphabet=true → one global hex alphabet
     systemProperty("codebook.k", System.getProperty("codebook.k") ?: "")   // -Dcodebook.k=256 → 256 phonemes
+    systemProperty("purify.mixed", System.getProperty("purify.mixed") ?: "")   // -Dpurify.mixed=true → route bg windows out of cough-tag clips
 }
 
 // One-off: visualise the bronchitis typical→recovering progression as a HuBERT PCA cloud.
