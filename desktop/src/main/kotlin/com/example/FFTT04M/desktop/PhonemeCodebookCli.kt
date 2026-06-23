@@ -189,7 +189,10 @@ object PhonemeCodebookCli {
                     byLabel.entries.sortedByDescending { it.value.size }.joinToString(" ") { "${letterFor(it.key)}=${it.value.size}f" })
             }
             File(outDir, "${tag}_phonemes.json").writeText(gson.toJson(mapOf(
-                "tag" to tag, "k" to K, "feature" to "WholeClipFeatures[13] (minus syllabic), z-normed",
+                "tag" to tag, "k" to K,
+                "featureType" to if (USE_HUBERT) "hubert768" else "dsp13",
+                "feature" to if (USE_HUBERT) "HuBERT base hidden state [768], mean-pooled per fixed-grid window, z-normed"
+                             else "WholeClipFeatures[13] (minus syllabic), z-normed",
                 "norm" to mapOf("mean" to m, "std" to s), "phonemes" to built)))
             phonemes = built; mean = m; std = s
 
