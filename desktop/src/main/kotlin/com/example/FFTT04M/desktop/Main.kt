@@ -109,6 +109,11 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         buttonPanel.add(createButton("Request from USB Device") {
             loadFromUsb()
         })
+        // Ingest USB-imported manual-comment clips into the training corpus, then auto-retrain the
+        // gold-standard codebook (HuBERT K=256, codebook-only so it's fast).
+        buttonPanel.add(createButton("Ingest → Retrain") {
+            ingestAndRetrain()
+        })
         // Load the consolidated ALLDATA corpus (metadata.csv-aware) — the input for the joint codebook.
         buttonPanel.add(createButton("Load ALLDATA") {
             val dir = pickDirectory("Select the ALLDATA folder (built via Build ALLDATA)",
@@ -406,6 +411,63 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             showStatus("USB: imported ${recordings.size} from ${device.model}" +
                 if (acked) " · acknowledged to phone" else "")
         }
+    }
+
+    /** Ingest manual-comment clips from a USB-import folder into the training corpus, then auto-retrain
+     *  the gold-standard codebook (HuBERT K=256, codebook-only) as a fresh gradle subprocess. */
+    private fun ingestAndRetrain() {
+        if (isAnalyzing) { showStatus("Busy analyzing…"); return }
+        val src = pickDirectory("Select the USB-import folder to ingest (clips with manual comments)",
+            "usbImport", Workspace.dir("usb_import").absolutePath) ?: run { showStatus("Ingest cancelled"); return }
+        thread {
+            showStatus("Ingesting manual-comment clips…")
+            val r = Ingester.ingest(src)
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append("=== INGEST → RETRAIN ===\n")
+                analysisResultsArea.append("scanned ${r.scanned} wav(s); ingested ${r.ingested} with manual comments → ${r.ingestDir.absolutePath}\n")
+                analysisResultsArea.append("manual_comments.json now holds ${r.totalComments} label(s)\n")
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+            }
+            if (r.ingested == 0) { showStatus("No manual-comment clips found to ingest"); return@thread }
+
+            showStatus("Retraining codebook (HuBERT K=256, codebook-only)…")
+            val repo = Workspace.repoRoot
+            val gradlew = repo?.let { File(it, "FFTT04D/gradlew.bat") }
+            val retrainArgs = listOf(":desktop:phonemeCodebookCli", "-Dhubert.feat=true",
+                "-Dcodebook.k=256", "-Dpurify.mixed=true", "-Dcodebook.only=true", "-PuseOnnxGpu", "-q")
+            if (repo == null || gradlew?.isFile != true) {
+                SwingUtilities.invokeLater {
+                    analysisResultsArea.append("Could not locate gradlew — run the retrain manually from FFTT04D:\n  gradlew " +
+                        retrainArgs.joinToString(" ") + "\n\n")
+                    analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                }
+                showStatus("Ingested ${r.ingested}; retrain skipped (gradlew not found)"); return@thread
+            }
+            val code = runStreaming(File(repo, "FFTT04D"), listOf(gradlew.absolutePath) + retrainArgs)
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(if (code == 0) "\n✓ Retrain complete — codebook updated (data/codebooks).\n\n"
+                                           else "\n⚠ Retrain exited with code $code.\n\n")
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+            }
+            showStatus(if (code == 0) "Ingested ${r.ingested} clip(s) + retrained ✓" else "Ingested ${r.ingested}; retrain failed ($code)")
+        }
+    }
+
+    /** Run a subprocess in [dir], streaming its merged stdout/stderr into the results pane. */
+    private fun runStreaming(dir: File, cmd: List<String>): Int = try {
+        val p = ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).start()
+        p.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                SwingUtilities.invokeLater {
+                    analysisResultsArea.append(line + "\n")
+                    analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                }
+            }
+        }
+        p.waitFor()
+    } catch (e: Exception) {
+        SwingUtilities.invokeLater { analysisResultsArea.append("retrain error: ${e.message}\n") }
+        -1
     }
 
     /**

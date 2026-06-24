@@ -102,7 +102,7 @@ object PhonemeCodebookCli {
                     ?.let { buildFragsById.putAll(loadFragments(it)) }
             }
             val parent = wavDir.absoluteFile.parentFile
-            val datasetRoots = (listOf(wavDir) + listOf("p3", "ALLDATA", "true_cough").map { File(parent ?: wavDir, it) })
+            val datasetRoots = (listOf(wavDir) + listOf("p3", "ALLDATA", "true_cough", "device_ingest").map { File(parent ?: wavDir, it) })
                 .filter { it.isDirectory }.distinctBy { it.absolutePath }
             val buildWavById = datasetRoots.asSequence().flatMap { it.walkTopDown() }
                 .filter { it.isFile && it.extension.equals("wav", true) }.associateBy { it.nameWithoutExtension }
@@ -259,6 +259,8 @@ object PhonemeCodebookCli {
             println("whole-clip classifier: 5-fold CV ${(wcCv * 100).roundToInt()}%  (${perClipWhole.size} clips)")
         }
 
+        if (CODEBOOK_ONLY) { println("codebook-only: skipped decode-all + self-check"); return }
+
         // ---- 4. decode EVERY clip (parallel across all cores — the heavy step, esp. on ALLDATA) ----
         val decoded = java.util.concurrent.ConcurrentHashMap<String, Any?>()
         val cores = if (USE_HUBERT) 3 else Runtime.getRuntime().availableProcessors().coerceAtLeast(1)   // cap GPU concurrency for HuBERT
@@ -335,6 +337,10 @@ object PhonemeCodebookCli {
     // Experimental: -Dhubert.feat=true swaps the per-window feature from WholeClipFeatures(13) to a
     // pooled HuBERT embedding(768). Same fixed grid; only the feature changes.
     private val USE_HUBERT = System.getProperty("hubert.feat")?.toBoolean() == true
+
+    // -Dcodebook.only=true: build the codebook + classifiers, then STOP — skip the heavy decode-all of
+    // every clip + the self-check. Used by the desktop "Ingest → retrain" so a retrain is fast.
+    private val CODEBOOK_ONLY = System.getProperty("codebook.only")?.toBoolean() == true
 
     // -Dpurify.mixed=true: route a labelled clip's background (noise/voice) windows OUT of its tag class
     // when they confidently match a background phoneme better than the tag — so a whole-clip cough tag
