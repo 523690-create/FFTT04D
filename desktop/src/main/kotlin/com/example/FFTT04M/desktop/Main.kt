@@ -386,10 +386,19 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             updateRecordingsList()
             // Acknowledge back to the phone so its Offer dialog confirms the transfer (and, on the
             // phone, unlocks the option to delete the now-safely-copied recordings — the phone decides).
-            val acked = UsbImporter.sendAck(device, res.wavCount)
+            // Ack the count of THIS OFFER'S clips that landed — NOT res.wavCount (the import folder
+            // accumulates across sessions, so its total over-reports what the phone just sent and made
+            // the phone's "received N" wildly high).
+            val pulledBases = res.files.map { it.nameWithoutExtension }.toSet()
+            val receivedCount = when {
+                offer != null && offer.recordings.isNotEmpty() -> offer.recordings.count { it in pulledBases }
+                offer != null && offer.count > 0 -> minOf(offer.count, res.wavCount)
+                else -> res.wavCount
+            }
+            val acked = UsbImporter.sendAck(device, receivedCount)
             SwingUtilities.invokeLater {
                 analysisResultsArea.append(
-                    if (acked) "acknowledged ${res.wavCount} to phone (it may now offer to delete them)\n"
+                    if (acked) "acknowledged $receivedCount offered clip(s) to phone (import folder now holds ${res.wavCount} total; it may offer to delete its copies)\n"
                     else "WARNING: could not write ack back to phone; it won't offer to delete its copies\n")
                 analysisResultsArea.append("\n▶ Next: 'Analyze All' → choose 'USB import folder' to run the DSP engine.\n\n")
                 analysisResultsArea.caretPosition = analysisResultsArea.document.length

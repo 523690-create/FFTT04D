@@ -37,7 +37,8 @@ object UsbImporter {
         return String.format("%.1f %s", v, units[i])
     }
     /** An active offer the phone published via SHARE → "Offer recordings to desktop". */
-    data class Offer(val deviceModel: String, val app: String, val count: Int, val createdMs: Long)
+    data class Offer(val deviceModel: String, val app: String, val count: Int, val createdMs: Long,
+                     val recordings: List<String> = emptyList())
 
     // ---- adb resolution (PATH, then the standard Android SDK location) --------------------------
     @Volatile private var adbCached: String? = null
@@ -127,11 +128,13 @@ object UsbImporter {
                 val o = JsonParser.parseString(tmp.readText()).asJsonObject
                 if (o.get("status")?.asString != "offering") continue
                 lastOfferDir = remote
+                val recs = o.getAsJsonArray("recordings")?.mapNotNull { it.asString } ?: emptyList()
                 return Offer(
                     deviceModel = o.get("device_model")?.asString ?: device.model,
                     app = o.get("app")?.asString ?: "FFTT04",
                     count = o.get("count")?.asInt ?: 0,
                     createdMs = o.get("created_ms")?.asLong ?: 0L,
+                    recordings = recs,
                 )
             }
             return null
