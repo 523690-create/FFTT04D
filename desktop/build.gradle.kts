@@ -97,6 +97,17 @@ tasks.register<JavaExec>("bronchitisCloud") {
     systemProperty("java.awt.headless", "true")
 }
 
+// Unsupervised cluster discovery over whole-clip HuBERT embeddings (labels used only for scoring).
+tasks.register<JavaExec>("unsupervisedCluster") {
+    group = "application"
+    description = "Cluster HuBERT whole-clip embeddings unsupervised; score vs labels (purity/NMI/ARI) + PCA PNG."
+    mainClass.set("com.example.FFTT04M.desktop.UnsupervisedCluster")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("cluster.corpus", System.getProperty("cluster.corpus") ?: "")   // -Dcluster.corpus=p3|ALLDATA
+    systemProperty("cluster.ks", System.getProperty("cluster.ks") ?: "")            // -Dcluster.ks=5,8,10,12
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {
