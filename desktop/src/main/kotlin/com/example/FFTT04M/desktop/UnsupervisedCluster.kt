@@ -42,23 +42,42 @@ object UnsupervisedCluster {
         if (!corpusDir.isDirectory) { println("no corpus dir: $corpusDir"); return }
         println("=== Unsupervised clustering: $corpus (whole-clip HuBERT) ===  provider=${HubertKMeansUnits.provider}")
 
-        val labels = loadLabels()
         val wavs = corpusDir.walkTopDown().filter { it.isFile && it.extension.equals("wav", true) }
             .associateBy { it.nameWithoutExtension }
         println("clips: ${wavs.size}")
+        // Label each clip for SCORING ONLY: manual comment (cleaned + bronchitis date-split) wins, else
+        // the filename auto-label (coswara/urban8k/train/esc50 → voice/noise/…). Clips with neither are
+        // clustered but excluded from the label-agreement scores.
+        val manual = loadLabels()
+        val labels = HashMap<String, String>()
+        for (id in wavs.keys) (manual[id] ?: AutoLabel.forId(id)?.let { clean(it) })?.let { labels[id] = it }
 
         // ---- embeddings (cached on disk; resumable append) ----
-        val emb = computeEmbeddings(corpus, wavs)
-        if (emb.size < KS.max()) { println("too few embeddings (${emb.size})"); return }
-        val ids = emb.keys.toList()
-        val d = emb.values.first().size
+        val embAll = computeEmbeddings(corpus, wavs)
+        if (embAll.size < KS.max()) { println("too few embeddings (${embAll.size})"); return }
+        val d = embAll.values.first().size
 
-        // z-normalise across the whole corpus
-        val mean = DoubleArray(d); for (v in emb.values) for (i in 0 until d) mean[i] += v[i]
-        for (i in 0 until d) mean[i] /= emb.size
-        val std = DoubleArray(d); for (v in emb.values) for (i in 0 until d) { val e = v[i] - mean[i]; std[i] += e * e }
-        for (i in 0 until d) std[i] = sqrt(std[i] / emb.size).coerceAtLeast(1e-9)
-        val Z = ids.map { id -> val v = emb[id]!!; DoubleArray(d) { (v[it] - mean[it]) / std[it] } }
+        // Subsample for clustering to BOUND MEMORY — the full 76k×768 matrix in an uncapped heap once
+        // exhausted RAM and took the machine down. Keep ALL labelled clips + a deterministic random fill
+        // up to MAX_N (a 30k sample is ample for discovering cluster structure).
+        val maxN = System.getProperty("cluster.max")?.toIntOrNull() ?: 30000
+        val allIds = embAll.keys.toList()
+        val ids: List<String> = if (allIds.size <= maxN) allIds else {
+            val lab = allIds.filter { labels.containsKey(it) }
+            val rest = allIds.filterNot { labels.containsKey(it) }.sortedBy { it.hashCode() }
+            lab + rest.take((maxN - lab.size).coerceAtLeast(0))
+        }
+        if (ids.size < allIds.size)
+            println("subsampled ${ids.size} of ${allIds.size} clips for clustering (all ${ids.count { labels.containsKey(it) }} labelled kept)")
+
+        // z-normalise over the sample, build Z, then drop the full embedding map so the unsampled
+        // vectors are GC'd before the (heap-capped) k-means runs.
+        val mean = DoubleArray(d); for (id in ids) { val v = embAll[id]!!; for (i in 0 until d) mean[i] += v[i] }
+        for (i in 0 until d) mean[i] /= ids.size
+        val std = DoubleArray(d); for (id in ids) { val v = embAll[id]!!; for (i in 0 until d) { val e = v[i] - mean[i]; std[i] += e * e } }
+        for (i in 0 until d) std[i] = sqrt(std[i] / ids.size).coerceAtLeast(1e-9)
+        val Z = ids.map { id -> val v = embAll[id]!!; DoubleArray(d) { (v[it] - mean[it]) / std[it] } }
+        embAll.clear()   // free the unsampled vectors; Z now holds only the sample
 
         // labelled subset (for scoring only)
         val labIdx = ids.indices.filter { labels.containsKey(ids[it]) }
@@ -74,7 +93,7 @@ object UnsupervisedCluster {
 
         var bestK = KS.first(); var bestNmi = -1.0; var bestAssign = IntArray(0)
         for (k in KS) {
-            val assign = kmeans(Z, k, restarts = 5)
+            val assign = kmeans(Z, k, restarts = 3)
             val cl = labIdx.map { assign[it] }
             val pur = purity(cl, yLab); val nmiV = nmi(cl, yLab); val ariV = ari(cl, yLab)
             val line = String.format("%-6d %-9s %-8s %-8s", k, pct(pur), fmt(nmiV), fmt(ariV))
@@ -114,6 +133,7 @@ object UnsupervisedCluster {
             var done = 0
             for ((id, wav) in todo) {
                 val pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: continue
+                if (pcm.size < SR / 16) continue   // ~62ms floor — too short crashes HuBERT's conv stack (Conv on {0})
                 val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR) ?: continue
                 if (fe.isEmpty()) continue
                 val h = fe[0].size; val v = DoubleArray(h)

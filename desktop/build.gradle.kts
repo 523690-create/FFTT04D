@@ -106,6 +106,9 @@ tasks.register<JavaExec>("unsupervisedCluster") {
     systemProperty("java.awt.headless", "true")
     systemProperty("cluster.corpus", System.getProperty("cluster.corpus") ?: "")   // -Dcluster.corpus=p3|ALLDATA
     systemProperty("cluster.ks", System.getProperty("cluster.ks") ?: "")            // -Dcluster.ks=5,8,10,12
+    systemProperty("cluster.max", System.getProperty("cluster.max") ?: "")          // -Dcluster.max=30000 sample cap
+    // HARD heap cap: a runaway allocation OOMs this forked JVM instead of thrashing the whole machine.
+    maxHeapSize = "3g"
 }
 
 // Create fat JAR for direct execution (visible window)
