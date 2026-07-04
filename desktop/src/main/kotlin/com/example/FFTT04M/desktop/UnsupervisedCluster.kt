@@ -156,7 +156,7 @@ object UnsupervisedCluster {
         val perClass = (System.getProperty("seg.max")?.toIntOrNull() ?: 2000) / 2
         val win = System.getProperty("seg.win")?.toIntOrNull() ?: 1000
         val hop = System.getProperty("seg.hop")?.toIntOrNull() ?: 500
-        val maxW = System.getProperty("seg.maxwin")?.toIntOrNull() ?: 6
+        val maxW = System.getProperty("seg.maxwin")?.toIntOrNull() ?: 3   // loudest-N windows per recording
         val labeled = wavs.keys.mapNotNull { id -> grp(id)?.let { id to it } }
         val cough = labeled.filter { it.second == 1 }.sortedBy { it.first.hashCode() }.take(perClass)
         val notc = labeled.filter { it.second == 0 }.sortedBy { it.first.hashCode() }.take(perClass)
@@ -174,31 +174,37 @@ object UnsupervisedCluster {
         for ((id, y) in sample) {
             doneRec++
             if (doneRec % 100 == 0) println("  processed $doneRec / ${sample.size} recordings, ${segX.size} segments")
-            // gather this clip's window keys; use cache if all present
             val wav = wavs[id] ?: continue
-            var pcm: FloatArray? = null
-            for (w in 0 until maxW) {
-                val key = "$id#$w"
+            val pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: continue
+            if (pcm.size < SR / 16 || pcm.size > SR * 300) continue   // hard length guards (never feed HuBERT a monster)
+            val durMs = (pcm.size.toLong() * 1000 / SR).toInt()
+            // candidate windows above the silence floor, with their energy
+            val cands = ArrayList<Triple<Int, Int, Int>>()   // (windowIdx, startSample, endSample)
+            val energies = ArrayList<Double>()
+            var w = 0; var sMs = 0
+            while (sMs < durMs && w < 60) {
+                val s = (sMs / 1000.0 * SR).toInt(); val e = ((sMs + win) / 1000.0 * SR).toInt().coerceAtMost(pcm.size)
+                if (e - s >= SR / 16) {
+                    var en = 0.0; for (i in s until e) en += pcm[i].toDouble() * pcm[i]
+                    val r = sqrt(en / (e - s))
+                    if (r >= 0.03) { cands.add(Triple(w, s, e)); energies.add(r) }   // silence-gate
+                }
+                w++; sMs += hop
+            }
+            // Keep only the LOUDEST maxW windows: for a cough recording these are the cough bursts, not the
+            // quiet breath between them — which was the main label-noise source dragging accuracy down.
+            val order = energies.indices.sortedByDescending { energies[it] }.take(maxW)
+            for (ci in order) {
+                val (wIdx, s, e) = cands[ci]
+                val key = "$id#$wIdx"
                 val cached = cache[key]
                 if (cached != null) { segX.add(cached); segY.add(y); continue }
-                // need to compute window w — decode once
-                if (pcm == null) {
-                    pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: break
-                    if (pcm.size < SR / 16) break
-                }
-                val sMs = w * hop; val startS = (sMs / 1000.0 * SR).toInt()
-                if (startS >= pcm.size) break
-                val endS = ((sMs + win) / 1000.0 * SR).toInt().coerceAtMost(pcm.size)
-                if (endS - startS < SR / 16) break
-                val chunk = pcm.copyOfRange(startS, endS)
-                var e = 0.0; for (x in chunk) e += x.toDouble() * x
-                if (sqrt(e / chunk.size) < 0.03) continue   // silence gate (clip is RMS-normalised to 0.1)
                 if (hubertReady == null) {
                     hubertReady = HubertKMeansUnits.available
                     println(if (hubertReady == true) "HuBERT ${HubertKMeansUnits.provider}" else "HuBERT unavailable — need a GPU run")
                 }
                 if (hubertReady != true) return
-                val fe = HubertKMeansUnits.frameEmbeddings(chunk, SR) ?: continue
+                val fe = HubertKMeansUnits.frameEmbeddings(pcm.copyOfRange(s, e), SR) ?: continue
                 if (fe.isEmpty()) continue
                 val h = fe[0].size; val v = DoubleArray(h)
                 for (f in fe) for (j in 0 until h) v[j] += f[j]
@@ -235,6 +241,17 @@ object UnsupervisedCluster {
         val prec = tp.toDouble() / (tp + fp).coerceAtLeast(1); val rec = tp.toDouble() / (tp + fn).coerceAtLeast(1)
         println("5-fold CV (segment-level): accuracy ${pct(acc)}  |  cough precision ${pct(prec)}  recall ${pct(rec)}  F1 ${fmt(2 * prec * rec / (prec + rec).coerceAtLeast(1e-9))}")
         println("confusion: TP=$tp FN=$fn FP=$fp TN=$tn")
+        // Train the FINAL head on all segments and save it — a deployable 768→2 logistic classifier that
+        // could be bundled in the app to run on the HuBERT whole-clip embedding it already computes.
+        val (hw, hb) = SoftmaxLR.train(X, segY, 2)
+        val head = linkedMapOf(
+            "type" to "cough_binary_head", "feature" to "hubert768_meanpool_znorm",
+            "classes" to listOf("not_cough", "cough"), "win_ms" to win, "hop_ms" to hop,
+            "segments" to n, "cvAccuracy" to acc,
+            "mean" to mean, "std" to std, "w" to hw, "b" to hb)
+        File(Workspace.dir("codebooks"), "cough_head_${corpus}.json")
+            .writeText(com.google.gson.GsonBuilder().create().toJson(head))
+        println("saved cough_head_${corpus}.json — 768→2 logistic head (bundle-ready)")
     }
 
     private fun evalBinary(emb: Map<String, DoubleArray>, labels: Map<String, String>) {
