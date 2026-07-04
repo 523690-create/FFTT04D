@@ -34,13 +34,14 @@ object UnsupervisedCluster {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        if (!HubertKMeansUnits.available) { println("HuBERT unavailable: ${HubertKMeansUnits.unavailableReason}"); return }
+        // NOTE: HuBERT is loaded LAZILY (only if there are un-cached clips to embed) — a cache-hit run
+        // never touches the 377 MB model / CUDA context, so it stays light and can't OOM the machine.
         val corpus = args.getOrNull(0)?.takeIf { it.isNotBlank() }
             ?: System.getProperty("cluster.corpus")?.takeIf { it.isNotBlank() } ?: "p3"
         val repo = Workspace.repoRoot ?: File(".")
         val corpusDir = File(repo, corpus)
         if (!corpusDir.isDirectory) { println("no corpus dir: $corpusDir"); return }
-        println("=== Unsupervised clustering: $corpus (whole-clip HuBERT) ===  provider=${HubertKMeansUnits.provider}")
+        println("=== Unsupervised clustering: $corpus (whole-clip HuBERT) ===")
 
         val wavs = corpusDir.walkTopDown().filter { it.isFile && it.extension.equals("wav", true) }
             .associateBy { it.nameWithoutExtension }
@@ -61,7 +62,13 @@ object UnsupervisedCluster {
         // exhausted RAM and took the machine down. Keep ALL labelled clips + a deterministic random fill
         // up to MAX_N (a 30k sample is ample for discovering cluster structure).
         val maxN = System.getProperty("cluster.max")?.toIntOrNull() ?: 30000
-        val allIds = embAll.keys.toList()
+        // -Dcluster.exclude=voice,noise → cluster only clips whose (kept) label survives the filter, so
+        // the rare cough subtypes aren't drowned by the voice/noise mega-classes.
+        val exclude = (System.getProperty("cluster.exclude") ?: "").split(",")
+            .map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val allIds = if (exclude.isEmpty()) embAll.keys.toList()
+                     else embAll.keys.filter { labels[it]?.let { l -> l !in exclude } == true }
+        if (exclude.isNotEmpty()) println("filter: excluding [${exclude.joinToString(",")}] → ${allIds.size} labelled clips remain")
         val ids: List<String> = if (allIds.size <= maxN) allIds else {
             val lab = allIds.filter { labels.containsKey(it) }
             val rest = allIds.filterNot { labels.containsKey(it) }.sortedBy { it.hashCode() }
@@ -107,44 +114,55 @@ object UnsupervisedCluster {
 
         // PCA-2D scatter coloured by cluster
         val (p1, p2) = topTwoPCs(Z, d)
-        renderScatter(corpus, Z, bestAssign, bestK, labIdx, yLab, labelSet, p1, p2,
-            File(Workspace.dir("codebooks"), "cluster_${corpus}.png"))
+        val outTag = corpus + if (exclude.isEmpty()) "" else "_coughonly"
+        renderScatter(outTag, Z, bestAssign, bestK, labIdx, yLab, labelSet, p1, p2,
+            File(Workspace.dir("codebooks"), "cluster_${outTag}.png"))
 
-        val txt = File(Workspace.dir("codebooks"), "cluster_${corpus}.txt").apply { writeText(rep.toString()) }
-        println("\nwrote $txt and cluster_${corpus}.png")
+        val txt = File(Workspace.dir("codebooks"), "cluster_${outTag}.txt").apply { writeText(rep.toString()) }
+        println("\nwrote $txt and cluster_${outTag}.png")
     }
 
     // ---- embeddings + append-cache -----------------------------------------------------------------
 
     private fun computeEmbeddings(corpus: String, wavs: Map<String, File>): LinkedHashMap<String, DoubleArray> {
-        val cacheFile = File(Workspace.dir("codebooks"), "clipemb_${corpus}.bin")
+        val dir = Workspace.dir("codebooks")
+        val cacheFile = File(dir, "clipemb_${corpus}.bin")
+        val skipFile = File(dir, "clipemb_${corpus}.skip")   // ids that decode-fail / are too short — never retried
         val cache = loadCache(cacheFile)
-        println("embedding cache: ${cache.size} present, ${wavs.size - cache.count { it.key in wavs }} new to compute")
+        val skip = if (skipFile.isFile) skipFile.readLines().mapNotNull { it.trim().ifEmpty { null } }.toHashSet() else HashSet()
         val out = LinkedHashMap<String, DoubleArray>()
-        // keep cached embeddings that still belong to this corpus
-        for ((id, wav) in wavs) cache[id]?.let { out[id] = it }
-        val todo = wavs.filterKeys { it !in out }
+        for ((id, _) in wavs) cache[id]?.let { out[id] = it }
+        val todo = wavs.filterKeys { it !in out && it !in skip }
+        println("embedding cache: ${out.size} present, ${skip.size} known-bad, ${todo.size} to compute")
+
         if (todo.isNotEmpty()) {
-            // Write existing (kept) + newly computed to a .tmp, then atomically replace the cache — so a
-            // crash mid-run never corrupts the real cache file.
-            val tmp = File(Workspace.dir("codebooks"), "clipemb_${corpus}.bin.tmp")
-            val dos = DataOutputStream(tmp.outputStream().buffered())
-            for ((id, v) in out) writeEntry(dos, id, v)
-            var done = 0
+            var embedded = 0; val newSkip = ArrayList<String>()
+            var hubertReady: Boolean? = null   // the 377 MB model loads ONLY when a real embeddable clip appears
             for ((id, wav) in todo) {
-                val pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: continue
-                if (pcm.size < SR / 16) continue   // ~62ms floor — too short crashes HuBERT's conv stack (Conv on {0})
-                val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR) ?: continue
-                if (fe.isEmpty()) continue
+                val pcm = AudioDecoder.decode(wav)?.also { rms(it) }
+                // Skip decode-fails, <62 ms clips, AND >30 s clips: HuBERT self-attention is O(T²), so a
+                // long/corrupt clip demands a hundreds-of-GB attention buffer and OOMs the whole machine.
+                if (pcm == null || pcm.size < SR / 16 || pcm.size > SR * 30) { newSkip.add(id); continue }
+                if (hubertReady == null) {
+                    hubertReady = HubertKMeansUnits.available
+                    println(if (hubertReady == true) "HuBERT ${HubertKMeansUnits.provider} — embedding new clips…"
+                            else "HuBERT unavailable (${HubertKMeansUnits.unavailableReason}) — new clips left for a GPU run")
+                }
+                if (hubertReady != true) break
+                val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR)
+                if (fe == null || fe.isEmpty()) { newSkip.add(id); continue }
                 val h = fe[0].size; val v = DoubleArray(h)
                 for (f in fe) for (j in 0 until h) v[j] += f[j]
                 for (j in 0 until h) v[j] /= fe.size
-                out[id] = v; writeEntry(dos, id, v)
-                done++
-                if (done % 200 == 0) { dos.flush(); println("  embedded $done / ${todo.size}") }
+                out[id] = v; embedded++
+                if (embedded % 200 == 0) println("  embedded $embedded")
             }
-            dos.flush(); dos.close()
-            tmp.copyTo(cacheFile, overwrite = true); tmp.delete()
+            if (embedded > 0) {   // rewrite the cache only if something new was actually embedded
+                val tmp = File(dir, "clipemb_${corpus}.bin.tmp")
+                DataOutputStream(tmp.outputStream().buffered()).use { dos -> for ((id, v) in out) writeEntry(dos, id, v) }
+                tmp.copyTo(cacheFile, overwrite = true); tmp.delete()
+            }
+            if (newSkip.isNotEmpty()) skipFile.appendText(newSkip.joinToString("\n", postfix = "\n"))
         }
         println("embeddings ready: ${out.size}")
         return out
