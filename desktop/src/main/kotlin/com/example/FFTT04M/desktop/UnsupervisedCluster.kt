@@ -53,8 +53,14 @@ object UnsupervisedCluster {
         val labels = HashMap<String, String>()
         for (id in wavs.keys) (manual[id] ?: AutoLabel.forId(id)?.let { clean(it) })?.let { labels[id] = it }
 
+        // -Dcluster.segbinary=true → chop clips into short windows and measure a segment-level
+        // cough/not-cough discriminator (handles long recordings; does its own bounded embedding).
+        if (System.getProperty("cluster.segbinary")?.toBoolean() == true) { evalSegmentBinary(corpus, wavs, labels); return }
+
         // ---- embeddings (cached on disk; resumable append) ----
         val embAll = computeEmbeddings(corpus, wavs)
+        // -Dcluster.binary=true → measure a purpose-built cough/not-cough discriminator instead of clustering.
+        if (System.getProperty("cluster.binary")?.toBoolean() == true) { evalBinary(embAll, labels); return }
         if (embAll.size < KS.max()) { println("too few embeddings (${embAll.size})"); return }
         val d = embAll.values.first().size
 
@@ -120,6 +126,148 @@ object UnsupervisedCluster {
 
         val txt = File(Workspace.dir("codebooks"), "cluster_${outTag}.txt").apply { writeText(rep.toString()) }
         println("\nwrote $txt and cluster_${outTag}.png")
+    }
+
+    // ---- binary cough / not-cough discriminator (whole-clip HuBERT → class-balanced logistic reg) ----
+
+    private val COUGH = setOf("dry", "dry hacking", "typical bronchitis", "bronchitis", "croup",
+        "wet cough", "cough x2 type unknown", "cough")
+    private val NOT_COUGH = setOf("voice", "noise", "snoring", "sneeze")
+
+    /** Segment-level cough/not-cough: chop each recording into short windows (so a long coswara clip
+     *  isn't diluted, and HuBERT never sees a huge O(T²) input), energy-gate out silence, embed each
+     *  window, label by filename/metadata (AutoLabel), then class-balanced logistic-regression 5-fold CV.
+     *  Strictly bounded (seg.max recordings, seg.maxwin windows each) so it can't run away. */
+    private fun evalSegmentBinary(corpus: String, wavs: Map<String, File>, labels: Map<String, String>) {
+        // Label from the filename recording-type (source__id__RECTYPE__…) — AutoLabel deliberately omits
+        // coughs, but coswara cough-heavy/-shallow and esc50 coughing carry it in rec. Manual wins.
+        fun grp(id: String): Int? {
+            val rec = id.split("__").getOrNull(2)?.lowercase() ?: ""
+            val lbl = labels[id]
+            return when {
+                lbl != null && lbl in COUGH -> 1
+                lbl != null && lbl in NOT_COUGH -> 0
+                "cough" in rec -> 1                                          // coswara cough-*, esc50 coughing
+                "breath" in rec || "vowel" in rec || "counting" in rec -> 0  // respiratory/speech negatives
+                else -> AutoLabel.forId(id)?.let { clean(it) }?.let { if (it in COUGH) 1 else if (it in NOT_COUGH) 0 else null }
+            }
+        }
+
+        val perClass = (System.getProperty("seg.max")?.toIntOrNull() ?: 2000) / 2
+        val win = System.getProperty("seg.win")?.toIntOrNull() ?: 1000
+        val hop = System.getProperty("seg.hop")?.toIntOrNull() ?: 500
+        val maxW = System.getProperty("seg.maxwin")?.toIntOrNull() ?: 6
+        val labeled = wavs.keys.mapNotNull { id -> grp(id)?.let { id to it } }
+        val cough = labeled.filter { it.second == 1 }.sortedBy { it.first.hashCode() }.take(perClass)
+        val notc = labeled.filter { it.second == 0 }.sortedBy { it.first.hashCode() }.take(perClass)
+        val sample = cough + notc
+        println("=== SEGMENT-level cough/not-cough (${win}ms windows, ${hop}ms hop, ≤$maxW/clip) ===")
+        println("sampled ${sample.size} recordings (${cough.size} cough, ${notc.size} not-cough)")
+
+        val dir = Workspace.dir("codebooks")
+        val cacheFile = File(dir, "segemb_${corpus}.bin")
+        val cache = loadCache(cacheFile)
+        val segX = ArrayList<DoubleArray>(); val segY = ArrayList<Int>()
+        val newEntries = ArrayList<Pair<String, DoubleArray>>()
+        var hubertReady: Boolean? = null
+        var doneRec = 0
+        for ((id, y) in sample) {
+            doneRec++
+            if (doneRec % 100 == 0) println("  processed $doneRec / ${sample.size} recordings, ${segX.size} segments")
+            // gather this clip's window keys; use cache if all present
+            val wav = wavs[id] ?: continue
+            var pcm: FloatArray? = null
+            for (w in 0 until maxW) {
+                val key = "$id#$w"
+                val cached = cache[key]
+                if (cached != null) { segX.add(cached); segY.add(y); continue }
+                // need to compute window w — decode once
+                if (pcm == null) {
+                    pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: break
+                    if (pcm.size < SR / 16) break
+                }
+                val sMs = w * hop; val startS = (sMs / 1000.0 * SR).toInt()
+                if (startS >= pcm.size) break
+                val endS = ((sMs + win) / 1000.0 * SR).toInt().coerceAtMost(pcm.size)
+                if (endS - startS < SR / 16) break
+                val chunk = pcm.copyOfRange(startS, endS)
+                var e = 0.0; for (x in chunk) e += x.toDouble() * x
+                if (sqrt(e / chunk.size) < 0.03) continue   // silence gate (clip is RMS-normalised to 0.1)
+                if (hubertReady == null) {
+                    hubertReady = HubertKMeansUnits.available
+                    println(if (hubertReady == true) "HuBERT ${HubertKMeansUnits.provider}" else "HuBERT unavailable — need a GPU run")
+                }
+                if (hubertReady != true) return
+                val fe = HubertKMeansUnits.frameEmbeddings(chunk, SR) ?: continue
+                if (fe.isEmpty()) continue
+                val h = fe[0].size; val v = DoubleArray(h)
+                for (f in fe) for (j in 0 until h) v[j] += f[j]
+                for (j in 0 until h) v[j] /= fe.size
+                segX.add(v); segY.add(y); newEntries.add(key to v)
+            }
+        }
+        if (newEntries.isNotEmpty()) {   // append new segments to cache
+            DataOutputStream(java.io.FileOutputStream(cacheFile, true).buffered()).use { dos ->
+                for ((k, v) in newEntries) writeEntry(dos, k, v)
+            }
+        }
+        val n = segX.size; val nC = segY.count { it == 1 }
+        if (n < 20) { println("segment-binary: too few segments ($n)"); return }
+        val d = segX[0].size
+        // z-normalise
+        val mean = DoubleArray(d); for (v in segX) for (i in 0 until d) mean[i] += v[i]
+        for (i in 0 until d) mean[i] /= n
+        val std = DoubleArray(d); for (v in segX) for (i in 0 until d) { val e = v[i] - mean[i]; std[i] += e * e }
+        for (i in 0 until d) std[i] = sqrt(std[i] / n).coerceAtLeast(1e-9)
+        val X = segX.map { v -> DoubleArray(d) { (v[it] - mean[it]) / std[it] } }
+        println("$n segments ($nC cough, ${n - nC} not-cough)")
+        var tp = 0; var fp = 0; var tn = 0; var fn = 0
+        for (fold in 0 until 5) {
+            val test = X.indices.filter { it % 5 == fold }; val train = X.indices.filter { it % 5 != fold }
+            if (train.isEmpty() || test.isEmpty()) continue
+            val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { segY[it] }, 2)
+            for (i in test) {
+                val pred = if (SoftmaxLR.probs(w, b, X[i])[1] >= 0.5) 1 else 0
+                when { pred == 1 && segY[i] == 1 -> tp++; pred == 1 && segY[i] == 0 -> fp++; pred == 0 && segY[i] == 0 -> tn++; else -> fn++ }
+            }
+        }
+        val acc = (tp + tn).toDouble() / n
+        val prec = tp.toDouble() / (tp + fp).coerceAtLeast(1); val rec = tp.toDouble() / (tp + fn).coerceAtLeast(1)
+        println("5-fold CV (segment-level): accuracy ${pct(acc)}  |  cough precision ${pct(prec)}  recall ${pct(rec)}  F1 ${fmt(2 * prec * rec / (prec + rec).coerceAtLeast(1e-9))}")
+        println("confusion: TP=$tp FN=$fn FP=$fp TN=$tn")
+    }
+
+    private fun evalBinary(emb: Map<String, DoubleArray>, labels: Map<String, String>) {
+        val items = emb.keys.filter { labels.containsKey(it) }.map { it to (labels[it] in COUGH) }
+        if (items.size < 20) { println("binary: too few labelled clips (${items.size})"); return }
+        val d = emb.values.first().size; val n = items.size
+        // z-normalise over the labelled clips
+        val mean = DoubleArray(d); for ((id, _) in items) { val v = emb[id]!!; for (i in 0 until d) mean[i] += v[i] }
+        for (i in 0 until d) mean[i] /= n
+        val std = DoubleArray(d); for ((id, _) in items) { val v = emb[id]!!; for (i in 0 until d) { val e = v[i] - mean[i]; std[i] += e * e } }
+        for (i in 0 until d) std[i] = sqrt(std[i] / n).coerceAtLeast(1e-9)
+        val X = items.map { (id, _) -> val v = emb[id]!!; DoubleArray(d) { (v[it] - mean[it]) / std[it] } }
+        val Y = items.map { if (it.second) 1 else 0 }
+        val nC = Y.count { it == 1 }
+        println("\n=== BINARY cough / not-cough discriminator (HuBERT whole-clip) ===")
+        println("$n labelled clips: $nC cough, ${n - nC} not-cough")
+
+        var tp = 0; var fp = 0; var tn = 0; var fn = 0
+        for (fold in 0 until 5) {
+            val test = X.indices.filter { it % 5 == fold }; val train = X.indices.filter { it % 5 != fold }
+            if (train.isEmpty() || test.isEmpty()) continue
+            val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { Y[it] }, 2)
+            for (i in test) {
+                val pred = if (SoftmaxLR.probs(w, b, X[i])[1] >= 0.5) 1 else 0
+                when { pred == 1 && Y[i] == 1 -> tp++; pred == 1 && Y[i] == 0 -> fp++; pred == 0 && Y[i] == 0 -> tn++; else -> fn++ }
+            }
+        }
+        val acc = (tp + tn).toDouble() / n
+        val prec = tp.toDouble() / (tp + fp).coerceAtLeast(1)
+        val rec = tp.toDouble() / (tp + fn).coerceAtLeast(1)
+        val f1 = 2 * prec * rec / (prec + rec).coerceAtLeast(1e-9)
+        println("5-fold CV: accuracy ${pct(acc)}  |  cough precision ${pct(prec)}  recall ${pct(rec)}  F1 ${fmt(f1)}")
+        println("confusion: TP=$tp (cough→cough)  FN=$fn (cough missed)  FP=$fp (false alarm)  TN=$tn (bg rejected)")
     }
 
     // ---- embeddings + append-cache -----------------------------------------------------------------
