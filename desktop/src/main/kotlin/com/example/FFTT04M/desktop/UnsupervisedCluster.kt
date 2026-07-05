@@ -60,6 +60,9 @@ object UnsupervisedCluster {
         // -Dcluster.probe=true → run the SAVED cough head on each clip and print P(cough) whole-clip vs
         // loudest-window, to diagnose why some clips pass/fail the AutoReject gate.
         if (System.getProperty("cluster.probe")?.toBoolean() == true) { probeHead(wavs, labels); return }
+        // -Dcluster.wavelet=true → naive image classifier over the EXISTING CWT .jpg scalograms, to see
+        // whether a hand-crafted wavelet view finds the same structure as the learned HuBERT features.
+        if (System.getProperty("cluster.wavelet")?.toBoolean() == true) { waveletClassify(wavs, labels); return }
 
         // ---- embeddings (cached on disk; resumable append) ----
         val embAll = computeEmbeddings(corpus, wavs)
@@ -130,6 +133,72 @@ object UnsupervisedCluster {
 
         val txt = File(Workspace.dir("codebooks"), "cluster_${outTag}.txt").apply { writeText(rep.toString()) }
         println("\nwrote $txt and cluster_${outTag}.png")
+    }
+
+    // ---- naive wavelet-IMAGE classifier: downsample the EXISTING CWT .jpg scalograms → logistic reg --
+
+    private fun waveletClassify(wavs: Map<String, File>, labels: Map<String, String>) {
+        val g = 24
+        val feats = ArrayList<DoubleArray>(); val labs = ArrayList<String>()
+        var missing = 0
+        for ((id, wav) in wavs) {
+            val lbl = labels[id] ?: continue
+            val jpg = File(wav.parentFile, "$id.jpg")
+            if (!jpg.isFile) { missing++; continue }
+            val img = runCatching { ImageIO.read(jpg) }.getOrNull() ?: continue
+            feats.add(downsampleRgb(img, g)); labs.add(lbl)
+        }
+        val n = feats.size
+        if (n < 30) { println("wavelet: too few labelled scalograms (n=$n, missing .jpg=$missing)"); return }
+        val d = feats[0].size
+        val mean = DoubleArray(d); for (f in feats) for (i in 0 until d) mean[i] += f[i]; for (i in 0 until d) mean[i] /= n
+        val std = DoubleArray(d); for (f in feats) for (i in 0 until d) { val e = f[i] - mean[i]; std[i] += e * e }
+        for (i in 0 until d) std[i] = sqrt(std[i] / n).coerceAtLeast(1e-9)
+        val X = feats.map { f -> DoubleArray(d) { (f[it] - mean[it]) / std[it] } }
+
+        println("=== NAIVE WAVELET-IMAGE classifier (existing CWT .jpg → ${g}x${g} RGB → logistic reg) ===")
+        println("$n labelled scalograms ($missing labelled clips had no .jpg)")
+
+        // multi-class 5-fold CV
+        val classes = labs.distinct().sorted(); val ci = classes.withIndex().associate { (i, s) -> s to i }
+        val Y = labs.map { ci[it]!! }
+        val conf = Array(classes.size) { IntArray(classes.size) }; var correct = 0
+        for (fold in 0 until 5) {
+            val test = X.indices.filter { it % 5 == fold }; val train = X.indices.filter { it % 5 != fold }
+            if (train.isEmpty() || test.isEmpty()) continue
+            val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { Y[it] }, classes.size)
+            for (i in test) { val p = SoftmaxLR.probs(w, b, X[i]); val pr = p.indices.maxByOrNull { p[it] } ?: 0; conf[Y[i]][pr]++; if (pr == Y[i]) correct++ }
+        }
+        println("multi-class 5-fold CV accuracy: ${pct(correct.toDouble() / n)}   (cf. HuBERT codebook 89%, DSP 64%)")
+        for (c in classes.indices) { val row = conf[c]; val t = row.sum(); if (t > 0) println("  ${classes[c].take(20).padEnd(20)} recall ${pct(row[c].toDouble() / t)}  n=$t  ►${classes[row.indices.maxByOrNull { row[it] }!!].take(16)}") }
+
+        // binary cough/not-cough (direct compare to the HuBERT head F1 0.81)
+        val yb = labs.map { if (it in COUGH) 1 else if (it in NOT_COUGH) 0 else -1 }
+        val bi = X.indices.filter { yb[it] >= 0 }
+        if (bi.size >= 20) {
+            var tp = 0; var fp = 0; var tn = 0; var fn = 0
+            for (fold in 0 until 5) {
+                val test = bi.filter { it % 5 == fold }; val train = bi.filter { it % 5 != fold }
+                if (train.isEmpty() || test.isEmpty()) continue
+                val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { yb[it] }, 2)
+                for (i in test) { val pr = if (SoftmaxLR.probs(w, b, X[i])[1] >= 0.5) 1 else 0; when { pr == 1 && yb[i] == 1 -> tp++; pr == 1 && yb[i] == 0 -> fp++; pr == 0 && yb[i] == 0 -> tn++; else -> fn++ } }
+            }
+            val acc = (tp + tn).toDouble() / bi.size; val prec = tp.toDouble() / (tp + fp).coerceAtLeast(1); val rec = tp.toDouble() / (tp + fn).coerceAtLeast(1)
+            println("binary cough/not-cough 5-fold CV: accuracy ${pct(acc)}  precision ${pct(prec)} recall ${pct(rec)} F1 ${fmt(2 * prec * rec / (prec + rec).coerceAtLeast(1e-9))}  (cf. HuBERT head F1 0.81)")
+        }
+    }
+
+    private fun downsampleRgb(img: java.awt.image.BufferedImage, g: Int): DoubleArray {
+        val small = java.awt.image.BufferedImage(g, g, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val gr = small.createGraphics()
+        gr.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        gr.drawImage(img, 0, 0, g, g, null); gr.dispose()
+        val v = DoubleArray(g * g * 3); var k = 0
+        for (y in 0 until g) for (x in 0 until g) {
+            val rgb = small.getRGB(x, y)
+            v[k++] = ((rgb shr 16) and 0xFF) / 255.0; v[k++] = ((rgb shr 8) and 0xFF) / 255.0; v[k++] = (rgb and 0xFF) / 255.0
+        }
+        return v
     }
 
     // ---- probe: run the saved head on clips (diagnose why some pass AutoReject) --------------------
