@@ -119,6 +119,19 @@ tasks.register<JavaExec>("unsupervisedCluster") {
     maxHeapSize = "3g"
 }
 
+// Non-destructive cough harvester: isolate + extract likely coughs from a corpus into a bucketed review
+// folder + manifest (all cores, DSP-only). Usage: -Dharvest.source=D:\AndroidProjects\ALLDATA
+tasks.register<JavaExec>("harvestCoughs") {
+    group = "application"
+    description = "Isolate + extract likely coughs from a corpus into a review folder, bucketed by metadata."
+    mainClass.set("com.example.FFTT04M.desktop.HarvestCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("harvest.source", System.getProperty("harvest.source") ?: "")
+    systemProperty("harvest.out", System.getProperty("harvest.out") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {
