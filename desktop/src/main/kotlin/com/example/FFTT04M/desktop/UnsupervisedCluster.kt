@@ -13,6 +13,7 @@ import java.io.EOFException
 import java.io.File
 import java.util.Random
 import javax.imageio.ImageIO
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.sqrt
 
@@ -56,6 +57,9 @@ object UnsupervisedCluster {
         // -Dcluster.segbinary=true → chop clips into short windows and measure a segment-level
         // cough/not-cough discriminator (handles long recordings; does its own bounded embedding).
         if (System.getProperty("cluster.segbinary")?.toBoolean() == true) { evalSegmentBinary(corpus, wavs, labels); return }
+        // -Dcluster.probe=true → run the SAVED cough head on each clip and print P(cough) whole-clip vs
+        // loudest-window, to diagnose why some clips pass/fail the AutoReject gate.
+        if (System.getProperty("cluster.probe")?.toBoolean() == true) { probeHead(wavs, labels); return }
 
         // ---- embeddings (cached on disk; resumable append) ----
         val embAll = computeEmbeddings(corpus, wavs)
@@ -126,6 +130,47 @@ object UnsupervisedCluster {
 
         val txt = File(Workspace.dir("codebooks"), "cluster_${outTag}.txt").apply { writeText(rep.toString()) }
         println("\nwrote $txt and cluster_${outTag}.png")
+    }
+
+    // ---- probe: run the saved head on clips (diagnose why some pass AutoReject) --------------------
+
+    private fun probeHead(wavs: Map<String, File>, labels: Map<String, String>) {
+        val hf = File(Workspace.dir("codebooks"), "cough_head_ALLDATA.json")
+        if (!hf.isFile) { println("no head at $hf"); return }
+        @Suppress("UNCHECKED_CAST")
+        val h = Gson().fromJson(hf.readText(), Map::class.java) as Map<String, Any?>
+        fun arr(k: String) = (h[k] as List<*>).map { (it as Number).toDouble() }.toDoubleArray()
+        val mean = arr("mean"); val std = arr("std"); val b = arr("b")
+        val w = (h["w"] as List<*>).map { row -> (row as List<*>).map { (it as Number).toDouble() }.toDoubleArray() }
+        val classes = (h["classes"] as? List<*>)?.map { it.toString() } ?: listOf("not_cough", "cough")
+        val ci = classes.indexOf("cough").coerceAtLeast(1)
+        fun pCough(emb: DoubleArray): Double {
+            val z = DoubleArray(emb.size) { (emb[it] - mean[it]) / std[it] }
+            val lg = DoubleArray(w.size) { k -> var s = b[k]; for (j in z.indices) s += w[k][j] * z[j]; s }
+            val mx = lg.max(); var sum = 0.0; val p = DoubleArray(lg.size) { val e = exp(lg[it] - mx); sum += e; e }
+            return p[ci] / sum
+        }
+        fun meanFrames(fe: Array<FloatArray>): DoubleArray { val d = fe[0].size; val v = DoubleArray(d); for (f in fe) for (j in 0 until d) v[j] += f[j]; for (j in 0 until d) v[j] /= fe.size; return v }
+        println(String.format("%-38s %-8s %-14s %-14s", "clip", "label", "P(cough)whole", "P(cough)loud"))
+        for ((id, wav) in wavs.entries.sortedBy { it.key }.take(40)) {
+            val pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: continue
+            if (pcm.size < SR / 16 || pcm.size > SR * 30) continue
+            val feW = HubertKMeansUnits.frameEmbeddings(pcm, SR) ?: continue
+            if (feW.isEmpty()) continue
+            val pWhole = pCough(meanFrames(feW))
+            // loudest 1 s window
+            var bestS = 0; var bestE = (SR).coerceAtMost(pcm.size); var bestEn = -1.0
+            var sMs = 0
+            while (sMs < (pcm.size.toLong() * 1000 / SR)) {
+                val s = (sMs / 1000.0 * SR).toInt(); val e = (s + SR).coerceAtMost(pcm.size)
+                if (e - s >= SR / 16) { var en = 0.0; for (i in s until e) en += pcm[i].toDouble() * pcm[i]; if (en > bestEn) { bestEn = en; bestS = s; bestE = e } }
+                sMs += 500
+            }
+            val pLoud = HubertKMeansUnits.frameEmbeddings(pcm.copyOfRange(bestS, bestE), SR)?.takeIf { it.isNotEmpty() }?.let { pCough(meanFrames(it)) }
+            val lbl = labels[id] ?: File(wav.parentFile, "$id.phon").takeIf { it.isFile }
+                ?.let { runCatching { com.google.gson.JsonParser.parseString(it.readText()).asJsonObject.get("label")?.asString }.getOrNull() } ?: "?"
+            println(String.format("%-38s %-8s %-14s %-14s", id.take(38), lbl.take(8), fmt(pWhole), pLoud?.let { fmt(it) } ?: "-"))
+        }
     }
 
     // ---- binary cough / not-cough discriminator (whole-clip HuBERT → class-balanced logistic reg) ----
