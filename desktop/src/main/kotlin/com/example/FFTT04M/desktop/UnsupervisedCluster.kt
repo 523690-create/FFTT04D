@@ -163,6 +163,16 @@ object UnsupervisedCluster {
         println("=== NAIVE WAVELET-IMAGE classifier (existing CWT .jpg → ${g}x${g} RGB → logistic reg) ===")
         println("$n labelled scalograms ($missing had no .jpg), feature dim $d")
 
+        // model: linear logistic regression, or a data-parallel MLP (-Dcluster.wavmlp=true) that uses ALL cores
+        val useMlp = System.getProperty("cluster.wavmlp")?.toBoolean() == true
+        val hidden = System.getProperty("cluster.mlp.hidden")?.toIntOrNull() ?: 256
+        val iters = System.getProperty("cluster.mlp.iters")?.toIntOrNull() ?: 300
+        val cores = Runtime.getRuntime().availableProcessors()
+        println(if (useMlp) "model: MLP (hidden=$hidden, iters=$iters, $cores cores)" else "model: linear logistic regression")
+        fun fit(xs: List<DoubleArray>, ys: List<Int>, nc: Int): (DoubleArray) -> Int =
+            if (useMlp) { val mm = trainMlp(xs, ys, nc, hidden, iters, cores); { x -> mm.argmax(x) } }
+            else { val (w, b) = SoftmaxLR.train(xs, ys, nc); { x -> val p = SoftmaxLR.probs(w, b, x); p.indices.maxByOrNull { p[it] } ?: 0 } }
+
         // multi-class 5-fold CV
         val classes = labs.distinct().sorted(); val ci = classes.withIndex().associate { (i, s) -> s to i }
         val Y = labs.map { ci[it]!! }
@@ -170,8 +180,8 @@ object UnsupervisedCluster {
         for (fold in 0 until 5) {
             val test = X.indices.filter { it % 5 == fold }; val train = X.indices.filter { it % 5 != fold }
             if (train.isEmpty() || test.isEmpty()) continue
-            val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { Y[it] }, classes.size)
-            for (i in test) { val p = SoftmaxLR.probs(w, b, X[i]); val pr = p.indices.maxByOrNull { p[it] } ?: 0; conf[Y[i]][pr]++; if (pr == Y[i]) correct++ }
+            val pred = fit(train.map { X[it] }, train.map { Y[it] }, classes.size)
+            for (i in test) { val pr = pred(X[i]); conf[Y[i]][pr]++; if (pr == Y[i]) correct++ }
         }
         println("multi-class 5-fold CV accuracy: ${pct(correct.toDouble() / n)}   (cf. HuBERT codebook 89%, DSP 64%)")
         for (c in classes.indices) { val row = conf[c]; val t = row.sum(); if (t > 0) println("  ${classes[c].take(20).padEnd(20)} recall ${pct(row[c].toDouble() / t)}  n=$t  ►${classes[row.indices.maxByOrNull { row[it] }!!].take(16)}") }
@@ -184,12 +194,71 @@ object UnsupervisedCluster {
             for (fold in 0 until 5) {
                 val test = bi.filter { it % 5 == fold }; val train = bi.filter { it % 5 != fold }
                 if (train.isEmpty() || test.isEmpty()) continue
-                val (w, b) = SoftmaxLR.train(train.map { X[it] }, train.map { yb[it] }, 2)
-                for (i in test) { val pr = if (SoftmaxLR.probs(w, b, X[i])[1] >= 0.5) 1 else 0; when { pr == 1 && yb[i] == 1 -> tp++; pr == 1 && yb[i] == 0 -> fp++; pr == 0 && yb[i] == 0 -> tn++; else -> fn++ } }
+                val pred = fit(train.map { X[it] }, train.map { yb[it] }, 2)
+                for (i in test) { val pr = pred(X[i]); when { pr == 1 && yb[i] == 1 -> tp++; pr == 1 && yb[i] == 0 -> fp++; pr == 0 && yb[i] == 0 -> tn++; else -> fn++ } }
             }
             val acc = (tp + tn).toDouble() / bi.size; val prec = tp.toDouble() / (tp + fp).coerceAtLeast(1); val rec = tp.toDouble() / (tp + fn).coerceAtLeast(1)
             println("binary cough/not-cough 5-fold CV: accuracy ${pct(acc)}  precision ${pct(prec)} recall ${pct(rec)} F1 ${fmt(2 * prec * rec / (prec + rec).coerceAtLeast(1e-9))}  (cf. HuBERT head F1 0.81)")
         }
+    }
+
+    // ---- small MLP (1 hidden ReLU layer), DATA-PARALLEL over all cores -----------------------------
+
+    class MlpModel(val w1: Array<DoubleArray>, val b1: DoubleArray, val w2: Array<DoubleArray>, val b2: DoubleArray) {
+        fun argmax(x: DoubleArray): Int {
+            val h = DoubleArray(b1.size); for (j in h.indices) { var s = b1[j]; val w = w1[j]; for (k in x.indices) s += w[k] * x[k]; h[j] = if (s > 0) s else 0.0 }
+            var best = 0; var bv = Double.NEGATIVE_INFINITY
+            for (k in b2.indices) { var s = b2[k]; val w = w2[k]; for (j in h.indices) s += w[j] * h[j]; if (s > bv) { bv = s; best = k } }
+            return best
+        }
+    }
+
+    private class Grad(hidden: Int, f: Int, nc: Int) {
+        val gW1 = Array(hidden) { DoubleArray(f) }; val gb1 = DoubleArray(hidden)
+        val gW2 = Array(nc) { DoubleArray(hidden) }; val gb2 = DoubleArray(nc)
+        fun zero() { for (r in gW1) java.util.Arrays.fill(r, 0.0); java.util.Arrays.fill(gb1, 0.0); for (r in gW2) java.util.Arrays.fill(r, 0.0); java.util.Arrays.fill(gb2, 0.0) }
+    }
+
+    /** Full-batch gradient descent; each iteration fans the sample loop across [cores] threads (each owns
+     *  a reusable gradient accumulator over shared read-only weights), then a barrier + reduce + update. */
+    private fun trainMlp(xs: List<DoubleArray>, ys: List<Int>, nc: Int, hidden: Int, iters: Int, cores: Int): MlpModel {
+        val f = xs[0].size; val rnd = java.util.Random(42)
+        val w1 = Array(hidden) { DoubleArray(f) { rnd.nextGaussian() * sqrt(2.0 / f) } }; val b1 = DoubleArray(hidden)
+        val w2 = Array(nc) { DoubleArray(hidden) { rnd.nextGaussian() * sqrt(2.0 / hidden) } }; val b2 = DoubleArray(nc)
+        val freq = IntArray(nc); for (y in ys) if (y in 0 until nc) freq[y]++
+        val cw = DoubleArray(nc) { if (freq[it] > 0) xs.size.toDouble() / (nc * freq[it]) else 0.0 }
+        val m = xs.size.toDouble(); val lr = 0.1; val l2 = 1e-4
+        val chunks = xs.indices.chunked(((xs.size + cores - 1) / cores).coerceAtLeast(1))
+        val accs = chunks.map { Grad(hidden, f, nc) }
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(cores)
+        try {
+            repeat(iters) {
+                chunks.indices.map { c ->
+                    pool.submit {
+                        val g = accs[c]; g.zero()
+                        for (n in chunks[c]) {
+                            val x = xs[n]; val yi = ys[n]; val wt = cw[yi]
+                            val h = DoubleArray(hidden); for (j in 0 until hidden) { var s = b1[j]; val w = w1[j]; for (k in 0 until f) s += w[k] * x[k]; h[j] = if (s > 0) s else 0.0 }
+                            val lg = DoubleArray(nc) { k -> var s = b2[k]; val w = w2[k]; for (j in 0 until hidden) s += w[j] * h[j]; s }
+                            val mx = lg.max(); var sum = 0.0; val p = DoubleArray(nc) { val e = exp(lg[it] - mx); sum += e; e }; for (k in 0 until nc) p[k] /= sum
+                            val dl = DoubleArray(nc) { (p[it] - if (it == yi) 1.0 else 0.0) * wt }
+                            for (k in 0 until nc) { g.gb2[k] += dl[k]; val gg = g.gW2[k]; for (j in 0 until hidden) gg[j] += dl[k] * h[j] }
+                            val dh = DoubleArray(hidden); for (j in 0 until hidden) { var s = 0.0; for (k in 0 until nc) s += w2[k][j] * dl[k]; dh[j] = if (h[j] > 0) s else 0.0 }
+                            for (j in 0 until hidden) { g.gb1[j] += dh[j]; val gg = g.gW1[j]; for (k in 0 until f) gg[k] += dh[j] * x[k] }
+                        }
+                    }
+                }.forEach { it.get() }
+                for (j in 0 until hidden) {
+                    var db = 0.0; for (a in accs) db += a.gb1[j]; b1[j] -= lr * db / m
+                    val w = w1[j]; for (k in 0 until f) { var dw = 0.0; for (a in accs) dw += a.gW1[j][k]; w[k] -= lr * (dw / m + l2 * w[k]) }
+                }
+                for (k in 0 until nc) {
+                    var db = 0.0; for (a in accs) db += a.gb2[k]; b2[k] -= lr * db / m
+                    val w = w2[k]; for (j in 0 until hidden) { var dw = 0.0; for (a in accs) dw += a.gW2[k][j]; w[j] -= lr * (dw / m + l2 * w[j]) }
+                }
+            }
+        } finally { pool.shutdown() }
+        return MlpModel(w1, b1, w2, b2)
     }
 
     private fun downsampleRgb(img: java.awt.image.BufferedImage, g: Int): DoubleArray {
