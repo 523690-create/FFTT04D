@@ -112,6 +112,7 @@ tasks.register<JavaExec>("unsupervisedCluster") {
     systemProperty("cluster.segbinary", System.getProperty("cluster.segbinary") ?: "")  // -Dcluster.segbinary=true → segment-level
     systemProperty("cluster.probe", System.getProperty("cluster.probe") ?: "")          // -Dcluster.probe=true → run head on clips
     systemProperty("cluster.wavelet", System.getProperty("cluster.wavelet") ?: "")   // -Dcluster.wavelet=true → CWT-image classifier
+    systemProperty("cluster.wavgrid", System.getProperty("cluster.wavgrid") ?: "")   // -Dcluster.wavgrid=48 image size
     for (p in listOf("seg.max", "seg.win", "seg.hop", "seg.maxwin")) systemProperty(p, System.getProperty(p) ?: "")
     // HARD heap cap: a runaway allocation OOMs this forked JVM instead of thrashing the whole machine.
     maxHeapSize = "3g"

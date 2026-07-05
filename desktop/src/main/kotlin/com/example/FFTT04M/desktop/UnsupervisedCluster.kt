@@ -138,26 +138,30 @@ object UnsupervisedCluster {
     // ---- naive wavelet-IMAGE classifier: downsample the EXISTING CWT .jpg scalograms → logistic reg --
 
     private fun waveletClassify(wavs: Map<String, File>, labels: Map<String, String>) {
-        val g = 24
-        val feats = ArrayList<DoubleArray>(); val labs = ArrayList<String>()
-        var missing = 0
+        val g = System.getProperty("cluster.wavgrid")?.toIntOrNull() ?: 24
+        val maxN = System.getProperty("cluster.max")?.toIntOrNull() ?: 12000   // cap so big grids don't OOM
+        val X = ArrayList<DoubleArray>(); val labs = ArrayList<String>()
+        var missing = 0; var loaded = 0
         for ((id, wav) in wavs) {
+            if (X.size >= maxN) break
             val lbl = labels[id] ?: continue
             val jpg = File(wav.parentFile, "$id.jpg")
             if (!jpg.isFile) { missing++; continue }
             val img = runCatching { ImageIO.read(jpg) }.getOrNull() ?: continue
-            feats.add(downsampleRgb(img, g)); labs.add(lbl)
+            X.add(downsampleRgb(img, g)); labs.add(lbl)
+            if (++loaded % 2000 == 0) println("  loaded $loaded scalograms…")
         }
-        val n = feats.size
+        val n = X.size
         if (n < 30) { println("wavelet: too few labelled scalograms (n=$n, missing .jpg=$missing)"); return }
-        val d = feats[0].size
-        val mean = DoubleArray(d); for (f in feats) for (i in 0 until d) mean[i] += f[i]; for (i in 0 until d) mean[i] /= n
-        val std = DoubleArray(d); for (f in feats) for (i in 0 until d) { val e = f[i] - mean[i]; std[i] += e * e }
+        val d = X[0].size
+        // z-normalise IN PLACE (no second copy — keeps memory bounded for big grids / big corpora)
+        val mean = DoubleArray(d); for (f in X) for (i in 0 until d) mean[i] += f[i]; for (i in 0 until d) mean[i] /= n
+        val std = DoubleArray(d); for (f in X) for (i in 0 until d) { val e = f[i] - mean[i]; std[i] += e * e }
         for (i in 0 until d) std[i] = sqrt(std[i] / n).coerceAtLeast(1e-9)
-        val X = feats.map { f -> DoubleArray(d) { (f[it] - mean[it]) / std[it] } }
+        for (f in X) for (i in 0 until d) f[i] = (f[i] - mean[i]) / std[i]
 
         println("=== NAIVE WAVELET-IMAGE classifier (existing CWT .jpg → ${g}x${g} RGB → logistic reg) ===")
-        println("$n labelled scalograms ($missing labelled clips had no .jpg)")
+        println("$n labelled scalograms ($missing had no .jpg), feature dim $d")
 
         // multi-class 5-fold CV
         val classes = labs.distinct().sorted(); val ci = classes.withIndex().associate { (i, s) -> s to i }
