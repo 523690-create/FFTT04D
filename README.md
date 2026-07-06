@@ -102,6 +102,29 @@ trains the app's cough/non-cough discrimination.
   phones. (The old median-threshold segmenter remains for the rich per-event analysis.)
 - **Auto dataset drill-down** — Build ALLDATA descends through unzip wrappers automatically, so a
   freshly-unzipped sources root (e.g. `H:\`) works without flattening folders.
+- **Harvest ⇱ window** — third breakout button: pops a bucket chooser over `../cough_harvest/` and opens ONE
+  bucket per window (loaded non-recursively, so found-in-other shows only its kept coughs).
+
+## Cough-harvest + analysis pipeline (headless gradle tasks)
+
+Non-destructive tools that isolate coughs from a corpus and cross-check classifiers so manual labelling is
+minimised. All cap the forked JVM at 3g and use every core; GPU tasks need `-PuseOnnxGpu`. Outputs go to
+`../cough_harvest/` (a sibling of the projects, not tracked by git).
+
+```
+gradlew.bat :desktop:harvestCoughs   -Dharvest.source=D:\AndroidProjects\ALLDATA   # isolate → bucketed segments
+gradlew.bat :desktop:verifyHarvest   -Dverify.dir=...\cough_found_in_other -PuseOnnxGpu  # HuBERT head P(cough); low-P → _rejected_lowP\
+gradlew.bat :desktop:cwtImages       -Dimage.dir=...\cough_found_in_other -Dimage.skip=_rejected_lowP  # CWT jpgs (GPU)
+gradlew.bat :desktop:harvestClassify -PuseOnnxGpu     # wavelet-image classifier vs HuBERT head → harvest_compare.csv
+gradlew.bat :desktop:forestScore                      # re-gate via CoughForest + 3-way (note: forest over-fires post-segmentation)
+gradlew.bat :desktop:coughPhonemes   -Dcp.export=true -PuseOnnxGpu  # cough-hallmark HuBERT units → cough_hallmark_units.json
+gradlew.bat :desktop:hallmarkDecode  -PuseOnnxGpu     # decode all + fuse w/ head+wavelet → harvest_triage.csv
+```
+
+Key finding: the wavelet-image gate and the HuBERT head are correlated but not interchangeable (agreement
+68.8%); ~80/256 HuBERT units are cough-hallmarks (top ones 100% precise) giving an interpretable, language-
+agnostic cough/speech gate (~85% precision). The CoughForest is a raw-stream gate — it over-fires (77.9% FP)
+when applied to already-segmented candidates, so it's excluded from the post-segmentation consensus.
 
 ## Module layout (`desktop/src/main/kotlin/com/example/FFTT04M/desktop/`)
 

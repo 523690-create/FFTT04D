@@ -132,6 +132,77 @@ tasks.register<JavaExec>("harvestCoughs") {
     maxHeapSize = "3g"
 }
 
+// Verify harvested coughs with the trained head (P(cough)); low-P → _rejected_lowP/. -PuseOnnxGpu.
+tasks.register<JavaExec>("verifyHarvest") {
+    group = "application"
+    description = "Run the cough head over harvested segments; move likely non-coughs into _rejected_lowP/."
+    mainClass.set("com.example.FFTT04M.desktop.HarvestVerify")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("verify.dir", System.getProperty("verify.dir") ?: "")
+    systemProperty("verify.threshold", System.getProperty("verify.threshold") ?: "")
+    maxHeapSize = "3g"
+}
+
+// Decode the whole harvest with the exported hallmark codebook + fuse with head+wavelet consensus (triage).
+tasks.register<JavaExec>("hallmarkDecode") {
+    group = "application"
+    description = "Hallmark-hit decode every harvested segment; fuse with head+wavelet to shrink the review pile."
+    mainClass.set("com.example.FFTT04M.desktop.HallmarkDecodeCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("hd.harvest", System.getProperty("hd.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
+// Discover cough-HALLMARK HuBERT units from consensus-labelled harvest segments (cough-specific phonemes).
+tasks.register<JavaExec>("coughPhonemes") {
+    group = "application"
+    description = "Cluster HuBERT windows from consensus cough/not-cough segments; rank units by cough-specificity."
+    mainClass.set("com.example.FFTT04M.desktop.CoughPhonemeCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    for (p in listOf("cp.harvest", "cp.perclass", "cp.k", "cp.prec", "cp.minsup", "cp.export")) systemProperty(p, System.getProperty(p) ?: "")
+    maxHeapSize = "3g"
+}
+
+// Re-gate the harvest through the trained CoughForest (mobile's real gate) + 3-way consensus. CPU, all cores.
+tasks.register<JavaExec>("forestScore") {
+    group = "application"
+    description = "Score harvested segments with the CoughForest; join wavelet+head for a 3-way comparison."
+    mainClass.set("com.example.FFTT04M.desktop.HarvestForestCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("hf.harvest", System.getProperty("hf.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
+// CWT-image cough classifier over the harvest, compared head-to-head vs the HuBERT head (+ contamination
+// guard). Needs harvest CWT jpgs + per-bucket *_verified.csv (verifyHarvest -Dverify.threshold=0).
+tasks.register<JavaExec>("harvestClassify") {
+    group = "application"
+    description = "Train a wavelet-image cough classifier on ALLDATA, predict on harvest, compare vs HuBERT head."
+    mainClass.set("com.example.FFTT04M.desktop.HarvestClassifyCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    for (p in listOf("hc.alldata", "hc.harvest", "hc.grid", "hc.maxtrain")) systemProperty(p, System.getProperty(p) ?: "")
+    maxHeapSize = "3g"
+}
+
+// Headless CWT/FFT image generation over a folder (resumable, all cores, GPU CWT via jcufft).
+// e.g. -Dimage.dir=D:\AndroidProjects\cough_harvest\cough_found_in_other -Dimage.skip=_rejected_lowP
+tasks.register<JavaExec>("cwtImages") {
+    group = "application"
+    description = "Render CWT (GPU) / FFT images for every WAV under a folder; skips clips already imaged."
+    mainClass.set("com.example.FFTT04M.desktop.ImageCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("image.dir", System.getProperty("image.dir") ?: "")
+    systemProperty("image.mode", System.getProperty("image.mode") ?: "")
+    systemProperty("image.skip", System.getProperty("image.skip") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {

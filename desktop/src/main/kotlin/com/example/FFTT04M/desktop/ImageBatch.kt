@@ -36,11 +36,16 @@ object ImageBatch {
      * a per-run flag the caller owns, so several passes (e.g. CPU + GPU CWT) can run concurrently and
      * be cancelled independently — the GPU pass offloads its FFTs while the CPU passes use the cores.
      */
-    fun run(folder: File, mode: Mode, cancel: AtomicBoolean, onProgress: (Progress) -> Unit): Summary {
+    fun run(folder: File, mode: Mode, cancel: AtomicBoolean,
+            skipDirName: String? = null, onProgress: (Progress) -> Unit): Summary {
         val startNs = System.nanoTime()
 
         val wavs = folder.walkTopDown()
-            .filter { it.isFile && it.extension.equals("wav", true) }.toList()
+            .filter { it.isFile && it.extension.equals("wav", true) }
+            // optionally prune a subtree (e.g. `_rejected_lowP`) so a pass images only the review pile
+            .filter { wav -> skipDirName == null || generateSequence(wav.parentFile) { it.parentFile }
+                .takeWhile { it != folder.parentFile }.none { it.name.equals(skipDirName, true) } }
+            .toList()
         val todo = wavs.filter { !targetFor(it, mode).isFile }
         val total = todo.size
 

@@ -61,3 +61,12 @@ nearest phoneme is beyond its radius → "not in our codebook".
 1. Label p3 clips (manual comments). 2. Build codebook from the labeled ones. 3. Decode the *unlabeled*
 p3 clips. 4. Review the colored words + flag correct/error. 5. Fold corrections back → rebuild. 
 Headless `:desktop:phonemeCodebookCli` does steps 2–3; the grid does 4. See [[fractionation-validation-hubert]].
+
+## Cough-hallmark phonemes (2026-07-06)
+A spin-off of the codebook idea for cough isolation: `:desktop:coughPhonemes` clusters HuBERT-768 windows
+(180/90ms) from CONSENSUS-labelled harvest segments into K=256 units and ranks each by cough-specificity
+(precision, lift, embedding distance to the nearest non-cough unit). ~80/256 are **hallmarks** (train
+precision ≥90%; the top ~9 are 100% precise, lift up to 111×). "Segment contains ≥1 hallmark unit ⇒ cough"
+is an interpretable, LANGUAGE-AGNOSTIC cough/speech gate (~85% precision / ~84% recall, held-out). `-Dcp.export`
+writes the deployable `data/codebooks/cough_hallmark_units.json`; `:desktop:hallmarkDecode` decodes the whole
+harvest and fuses with the head+wavelet consensus (`harvest_triage.csv`). See HANDOFF.md §2026-07-06.

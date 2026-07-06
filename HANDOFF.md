@@ -1,7 +1,49 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13.
+Date: 2026-06-13 (latest session appended at top: 2026-07-06).
+
+## SESSION 2026-07-06 — cough-harvest → verify → classify → forest → hallmark-phoneme pipeline
+
+Goal: naive-isolate likely coughs from ALLDATA, auto-verify them cheaply, and cross-check classifiers so
+manual labelling is minimised. New headless gradle tasks (all `maxHeapSize=3g`, `--no-daemon`; GPU ones need
+`-PuseOnnxGpu`). Outputs land under `<repoRoot>/../cough_harvest/` (sibling of the projects, NOT in any repo).
+
+- **`harvestCoughs`** (`HarvestCli`/`CoughIsolator.harvest`) — non-destructive, DSP-only, all cores. Extracts
+  each `isLikelyCough` event tightly (>4s skipped, monster-file guard) into buckets by filename metadata:
+  `cough_confirmed` (111,027), `cough_found_in_other` (61,140, high-recall/low-precision), `cough_unknown`
+  (3,316) + `harvest_manifest.csv`.
+- **`verifyHarvest`** (`HarvestVerify`, GPU) — HuBERT whole-clip embedding → `cough_head_ALLDATA.json` P(cough);
+  low-P → `_rejected_lowP/`, writes `<bucket>_verified.csv`. found_in_other kept 6,534 @ P≥0.75. **WINDOWS
+  MOUNTVOL GOTCHA**: `File.renameTo()` silently returns false ~85% under concurrent load on the G:/D: NVMe
+  mount — the tool now scores in parallel then MOVES in a sequential `java.nio.file.Files.move` pass. Never
+  trust renameTo's boolean here.
+- **`cwtImages`** (`ImageCli`/`ImageBatch`, GPU jcufft) — CWT `.jpg` scalograms over a folder (resumable,
+  all cores). `-Dimage.skip=<subdir>` prunes a subtree. `ImageBatch.run` gained an optional `skipDirName`.
+- **`harvestClassify`** (`HarvestClassifyCli`, CPU) — trains a linear wavelet-image cough classifier on 30k
+  ALLDATA scalograms (81% fit), predicts on all 175k harvest jpgs, joins the head scores, writes
+  `harvest_compare.csv`. **BAG-AWARE eval** ("cough" filename = a cough is present SOMEWHERE, not that every
+  segment is cough; speech/breath/counting DENY cough → hard per-segment negatives).
+- **`forestScore`** (`HarvestForestCli`, CPU) — re-gate through the trained CoughForest (mobile's real gate).
+  **NEGATIVE RESULT**: forest over-fires as a POST-segmentation filter (77.9% FP on hard negatives vs head
+  13.7% / wavelet 17.5%) because every candidate is already a pre-selected burst; the forest belongs on the
+  RAW STREAM (mobile's `CoughDetector`), not on isolated candidates. Keep the head+wavelet 2-way.
+- **`coughPhonemes`** (`CoughPhonemeCli`, GPU) — discovers a fresh HuBERT acoustic-unit vocabulary (180/90ms
+  windows → HuBERT-768 → k-means K=256) from consensus-labelled segments; ranks units by cough-specificity.
+  **~80 of 256 are HALLMARKS** (train precision ≥90%; top ~9 are 100% precise, lift up to 111×, far from all
+  non-cough units). Detector "≥1 hallmark unit ⇒ cough" = ~85% precision / ~84% recall on held-out TEST — an
+  interpretable, LANGUAGE-AGNOSTIC speech/breath rejector. `-Dcp.export` writes the deployable
+  `data/codebooks/cough_hallmark_units.json` (256 centroids + norm + isHallmark flags). NOTE: k-means picks up
+  slight run-to-run variation from parallel-embedding row order (sort windows first for bit-reproducibility).
+- **`hallmarkDecode`** (`HallmarkDecodeCli`, GPU) — decode all 175k with the exported codebook →
+  `harvest_hallmark.csv`, fuse with head+wavelet → `harvest_triage.csv` (final label + confidence tier).
+
+Comparison headline (175,483 segments, from `harvest_compare.csv`): wavelet↔head per-segment agreement 68.8%,
+r=0.42 (correlated, NOT interchangeable). Consensus triage: 30.8% both-cough (auto-accept), 38.1% both-not
+(auto-reject), 31.2% disagree (manual review). 19,725 confirmed segments both call not-cough = suspected
+pre/post-cough phonemes (flagged `suspectPhoneme` in the CSV). GUI: third **Harvest ⇱ window** breakout button
+(`Main.kt openHarvestBucket()`) pops a per-bucket chooser, loads NON-recursively (`DatasetLoader.loadFolder(…,
+recursive=false)`) so found_in_other shows only kept coughs, not its `_rejected_lowP` subfolder.
 
 ## HARDWARE (this desktop, 2026-06-13) + acceleration status
 - **GPU: NVIDIA RTX 4060 Ti** (cuFFT path applies) · **CPU: Intel Core Ultra 7 265 (20C)** ·

@@ -154,6 +154,10 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                 showStatus("${dir.name} opened in its own window (${list.size} clips)")
             }
         })
+        // Third breakout: our harvested cough SEGMENTS. Pops a bucket chooser so ONE bucket opens per
+        // window, each loaded NON-recursively — so "found_in_other (kept)" shows only the verified coughs,
+        // not the 50k+ in its _rejected_lowP subfolder (offered as its own bucket).
+        buttonPanel.add(createButton("Harvest ⇱ window") { openHarvestBucket() })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
         // Secondary image passes over a ready ALLDATA folder (resumable; skip clips already imaged).
@@ -754,6 +758,39 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             if (recordings.size > shown.size)
                 model.addElement("… and ${recordings.size - shown.size} more (all will be analyzed)")
             recordingsGrid.setRecordings(recordings.toList())   // grid virtualizes; show all loaded
+        }
+    }
+
+    /** Bucket chooser for the harvested-cough segments: pick one bucket under `cough_harvest\` and open it
+     *  (loaded non-recursively) in its own breakout window, so found_in_other's 50k+ _rejected_lowP clips
+     *  don't get dragged in unless you explicitly pick that bucket. */
+    private fun openHarvestBucket() {
+        val root = Workspace.repoRoot?.resolve("cough_harvest")?.takeIf { it.isDirectory }
+            ?: pickDirectory("Locate the cough_harvest folder", "harvestBreakout", null) ?: return
+        val fio = File(root, "cough_found_in_other")
+        // (display name, folder). Non-recursive, so cough_found_in_other excludes its _rejected_lowP subdir.
+        val candidates = listOf(
+            "cough_confirmed" to File(root, "cough_confirmed"),
+            "found_in_other — kept coughs" to fio,
+            "found_in_other — rejected (low P)" to File(fio, "_rejected_lowP"),
+            "cough_unknown" to File(root, "cough_unknown"),
+        )
+        val buckets = candidates.mapNotNull { (name, d) ->
+            if (!d.isDirectory) return@mapNotNull null
+            val n = d.list { _, fn -> fn.endsWith(".wav", true) }?.size ?: 0
+            if (n == 0) null else Triple(name, d, n)
+        }
+        if (buckets.isEmpty()) { showStatus("No harvested WAVs under ${root.name}"); return }
+        val labels = buckets.map { (name, _, n) -> "$name  ($n)" }.toTypedArray()
+        val choice = JOptionPane.showInputDialog(this, "Which harvested bucket to open?",
+            "Harvest breakout", JOptionPane.QUESTION_MESSAGE, null, labels, labels[0]) as? String ?: return
+        val (name, dir, _) = buckets[labels.indexOf(choice)]
+        thread {
+            showStatus("Loading $name into a new window…")
+            val list = DatasetLoader.loadFolder(dir, "harvest:${dir.name}", recursive = false)
+            if (list.isEmpty()) { showStatus("No .wav segments in ${dir.name}"); return@thread }
+            openBreakout("Harvest: $name — ${list.size} segments", list)
+            showStatus("$name opened in its own window (${list.size} segments)")
         }
     }
 

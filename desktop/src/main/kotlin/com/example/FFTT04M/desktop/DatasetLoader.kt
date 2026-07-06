@@ -75,10 +75,13 @@ object DatasetLoader {
      * Picks up an optional `<base>.json` metadata sidecar and `<base>.txt` comment beside each WAV
      * (ALLDATA has neither; its WAV name carries the metadata and its rows live in metadata.csv).
      */
-    fun loadFolder(dir: File, source: String): List<AudioRecording> {
+    fun loadFolder(dir: File, source: String, recursive: Boolean = true): List<AudioRecording> {
         if (!dir.isDirectory) return emptyList()
         val recordings = mutableListOf<AudioRecording>()
-        dir.walkTopDown().forEach { f ->
+        // recursive=false loads only this folder's own WAVs — e.g. cough_found_in_other WITHOUT descending
+        // into its _rejected_lowP subfolder (the harvest bucket picker relies on this).
+        val files = if (recursive) dir.walkTopDown() else (dir.listFiles()?.asSequence() ?: emptySequence())
+        files.forEach { f ->
             if (f.isFile && f.extension.equals("wav", true)) {
                 val meta = flatJson(File(f.parentFile, "${f.nameWithoutExtension}.json")).toMutableMap()
                 meta["source"] = source
