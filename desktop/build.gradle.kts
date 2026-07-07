@@ -166,6 +166,17 @@ tasks.register<JavaExec>("coughPhonemes") {
     maxHeapSize = "3g"
 }
 
+// Headless ingest of manually-labelled USB-import clips → device_ingest + manual_comments.json (GUI parity).
+tasks.register<JavaExec>("ingestClips") {
+    group = "application"
+    description = "Ingest USB-import clips with manual-comment sidecars into the training corpus."
+    mainClass.set("com.example.FFTT04M.desktop.IngestCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("ingest.source", System.getProperty("ingest.source") ?: "")
+    maxHeapSize = "2g"
+}
+
 // Re-gate the harvest through the trained CoughForest (mobile's real gate) + 3-way consensus. CPU, all cores.
 tasks.register<JavaExec>("forestScore") {
     group = "application"
