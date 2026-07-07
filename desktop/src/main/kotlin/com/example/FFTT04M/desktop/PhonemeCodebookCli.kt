@@ -128,6 +128,7 @@ object PhonemeCodebookCli {
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
+                if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) continue   // skip degenerate/monster (see decode loop)
                 val frags = framesFor(pcm, SR)
                 val clipVecs = clipFeatures(pcm, SR, frags)   // DSP(13) or HuBERT(768) per window
                 for (v in clipVecs) labelled.add(FV(label, v))
@@ -265,34 +266,48 @@ object PhonemeCodebookCli {
         val decoded = java.util.concurrent.ConcurrentHashMap<String, Any?>()
         val cores = if (USE_HUBERT) 3 else Runtime.getRuntime().availableProcessors().coerceAtLeast(1)   // cap GPU concurrency for HuBERT
         val pool = java.util.concurrent.Executors.newFixedThreadPool(cores)
-        println("decoding ${wavById.size} clips on $cores threads…")
+        val total = wavById.size
+        val done = java.util.concurrent.atomic.AtomicInteger()
+        val skippedDegenerate = java.util.concurrent.atomic.AtomicInteger()
+        val step = (total / 50).coerceAtLeast(1)   // ~2 % progress ticks (visible in the headless log)
+        println("decoding $total clips on $cores threads…")
         try {
             wavById.entries.map { (id, wav) ->
                 pool.submit {
-                    val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: return@submit
-                    val frags = framesFor(pcm, SR)
-                    val word = ArrayList<String>()
-                    for (v in clipFeatures(pcm, SR, frags)) {
-                        znorm(v, mean, std)
-                        var best: Phoneme? = null; var bestD = Double.MAX_VALUE
-                        for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
-                        word.add(if (best != null && bestD <= best.radius) best.code else "?")
+                    try {
+                        val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: return@submit
+                        // SAFETY, both ends: HuBERT's 7 strided convs (÷320) COLLAPSE an empty/<~100 ms clip
+                        // to zero length → cuDNN BAD_PARAM / "Invalid input shape {0}"; and its O(T^2) attention
+                        // OOM-crashes the machine on a multi-minute clip. Skip <100 ms and >45 s (never a single
+                        // phoneme either way). 3 g heap cap is the backstop.
+                        if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) { skippedDegenerate.incrementAndGet(); return@submit }
+                        val frags = framesFor(pcm, SR)
+                        val word = ArrayList<String>()
+                        for (v in clipFeatures(pcm, SR, frags)) {
+                            znorm(v, mean, std)
+                            var best: Phoneme? = null; var bestD = Double.MAX_VALUE
+                            for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
+                            word.add(if (best != null && bestD <= best.radius) best.code else "?")
+                        }
+                        val hist = word.groupingBy { it }.eachCount()
+                        val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
+                            .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
+                        val cls = clsModel?.predict(word)
+                        val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
+                        decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
+                            "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
+                            "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
+                            "word" to word, "histogram" to hist)
+                    } finally {
+                        val n = done.incrementAndGet()
+                        if (n % step == 0 || n == total) println("  decoded $n/$total (${n * 100 / total}%)")
                     }
-                    val hist = word.groupingBy { it }.eachCount()
-                    val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
-                        .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-                    val cls = clsModel?.predict(word)
-                    val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
-                    decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
-                        "inferredLetter" to inferred, "classLabel" to cls?.first, "classProb" to cls?.second,
-                        "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
-                        "word" to word, "histogram" to hist)
                 }
             }.forEach { it.get() }
         } finally { pool.shutdown() }
         val nDec = decoded.size
         File(outDir, "${tag}_decoded.json").writeText(gson.toJson(decoded))
-        println("decoded $nDec clips → ${outDir}\\${tag}_decoded.json")
+        println("decoded $nDec clips → ${outDir}\\${tag}_decoded.json  (skipped ${skippedDegenerate.get()} degenerate clip(s) <100 ms or >45 s)")
 
         // ---- 5. quick self-check: inferred letter vs manual label on the labelled clips ----
         var correct = 0; var labelledDec = 0
