@@ -168,6 +168,17 @@ tasks.register<JavaExec>("coughPhonemes") {
     maxHeapSize = "3g"
 }
 
+// Precompute per-phoneme FFT (average spectrum + exemplar spectrogram) for the desktop Phoneme-FFT atlas.
+tasks.register<JavaExec>("phonemeFft") {
+    group = "application"
+    description = "Assign corpus windows to codebook phonemes; write each phoneme's avg FFT + exemplar spectrogram."
+    mainClass.set("com.example.FFTT04M.desktop.PhonemeFftCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    for (p in listOf("fft.codebook", "fft.corpus")) systemProperty(p, System.getProperty(p) ?: "")
+    maxHeapSize = "3g"
+}
+
 // Headless ingest of manually-labelled USB-import clips → device_ingest + manual_comments.json (GUI parity).
 tasks.register<JavaExec>("ingestClips") {
     group = "application"

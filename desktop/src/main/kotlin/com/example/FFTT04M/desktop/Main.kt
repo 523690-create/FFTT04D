@@ -158,6 +158,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // window, each loaded NON-recursively — so "found_in_other (kept)" shows only the verified coughs,
         // not the 50k+ in its _rejected_lowP subfolder (offered as its own bucket).
         buttonPanel.add(createButton("Harvest ⇱ window") { openHarvestBucket() })
+        // Phoneme-FFT atlas: each codebook phoneme's average FFT spectrum + exemplar spectrogram, by class.
+        buttonPanel.add(createButton("Phoneme FFT ⇱ window") { PhonemeFftAtlas.show(this) })
         buildAllDataButton = createButton("Build ALLDATA") { onBuildAllData() }
         buttonPanel.add(buildAllDataButton)
         // Secondary image passes over a ready ALLDATA folder (resumable; skip clips already imaged).
