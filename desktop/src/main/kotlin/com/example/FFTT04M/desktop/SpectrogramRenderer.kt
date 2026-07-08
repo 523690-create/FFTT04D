@@ -62,7 +62,7 @@ object SpectrogramRenderer {
     // ---- public API ----------------------------------------------------------------------------
 
     fun renderFftPng(pcm: FloatArray, sampleRate: Int, out: File) {
-        val grid = fftSpectrogram(pcm)              // [freqLow→high][time]
+        val grid = fftSpectrogram(pcm, sampleRate)  // [freqLow→high][time], LOG-frequency rows
         toImage(grid).let { ImageIO.write(it, "png", out) }
     }
 
@@ -74,13 +74,17 @@ object SpectrogramRenderer {
 
     // ---- FFT spectrogram -----------------------------------------------------------------------
 
-    /** STFT log-magnitude grid `[bin][frame]`, bins ordered low→high frequency. */
-    private fun fftSpectrogram(pcm: FloatArray): Array<FloatArray> {
+    private const val LOG_ROWS = 300      // log-frequency output rows
+    private const val FFT_F_MIN = 50.0    // lowest displayed frequency (Hz)
+
+    /** STFT log-magnitude grid `[row][frame]`, rows ordered low→high frequency on a LOG scale (so the
+     *  300–1000 Hz cough squiggles occupy a legible band instead of the bottom ~4% of a linear axis). */
+    private fun fftSpectrogram(pcm: FloatArray, sampleRate: Int): Array<FloatArray> {
         val n = pcm.size
         val bins = FFT_SIZE / 2
         val frames = if (n < FFT_SIZE) 1 else (n - FFT_SIZE) / FFT_STEP + 1
         val hann = FloatArray(FFT_SIZE) { 0.5f - 0.5f * cos(2f * PI.toFloat() * it / (FFT_SIZE - 1)) }
-        val grid = Array(bins) { FloatArray(frames) }
+        val lin = Array(bins) { FloatArray(frames) }        // linear-bin dB grid
         val re = FloatArray(FFT_SIZE)
         val im = FloatArray(FFT_SIZE)
         for (f in 0 until frames) {
@@ -93,10 +97,20 @@ object SpectrogramRenderer {
             FFTUtils.compute(re, im)
             for (b in 0 until bins) {
                 val mag = sqrt(re[b] * re[b] + im[b] * im[b])
-                grid[b][f] = 20f * (ln(mag + 1e-9f) / LN10)   // dB-ish log magnitude
+                lin[b][f] = 20f * (ln(mag + 1e-9f) / LN10)   // dB-ish log magnitude
             }
         }
-        return grid
+        // resample linear bins → log-spaced frequency rows (bin b ↔ b·SR/FFT_SIZE Hz)
+        val nyq = sampleRate / 2.0
+        val out = Array(LOG_ROWS) { FloatArray(frames) }
+        for (r in 0 until LOG_ROWS) {
+            val fHz = FFT_F_MIN * Math.pow(nyq / FFT_F_MIN, r.toDouble() / (LOG_ROWS - 1))
+            val binF = (fHz * FFT_SIZE / sampleRate).coerceIn(0.0, (bins - 1).toDouble())
+            val b0 = binF.toInt(); val b1 = (b0 + 1).coerceAtMost(bins - 1); val fr = (binF - b0).toFloat()
+            val a = lin[b0]; val c = lin[b1]; val o = out[r]
+            for (t in 0 until frames) o[t] = a[t] * (1 - fr) + c[t] * fr
+        }
+        return out
     }
 
     // ---- Morlet CWT scalogram (ported from WaveletActivity.runCwt) ------------------------------

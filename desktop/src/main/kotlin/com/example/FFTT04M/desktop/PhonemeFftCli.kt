@@ -28,6 +28,7 @@ object PhonemeFftCli {
     private const val WIN_MS = 180
     private const val HOP_MS = 90
     private const val BINS = 96
+    private const val FMIN = 50.0
     private const val FMAX = 8000
     private const val FFTN = 4096
 
@@ -166,15 +167,23 @@ object PhonemeFftCli {
         return out
     }
 
-    /** Hann-windowed FFT magnitude of pcm16[a,b), binned into [BINS] log-magnitude bins over [0,FMAX]. */
+    /** Hann-windowed FFT magnitude of pcm16[a,b), binned into [BINS] log-magnitude bins on a LOG-FREQUENCY
+     *  axis over [FMIN, FMAX] (so low-Hz cough energy isn't crushed into the first few bins). */
     private fun magSpectrum(x: FloatArray, a: Int, b: Int): DoubleArray {
         val re = DoubleArray(FFTN); val im = DoubleArray(FFTN)
         val len = (b - a).coerceAtMost(FFTN)
         for (i in 0 until len) { val w = 0.5 - 0.5 * cos(2 * PI * i / (len - 1).coerceAtLeast(1)); re[i] = x[a + i] * w }
         fft(re, im)
         val maxK = (FMAX.toDouble() / SR16 * FFTN).toInt().coerceIn(1, FFTN / 2)
+        val logSpan = ln(FMAX / FMIN)
         val out = DoubleArray(BINS); val cnt = IntArray(BINS)
-        for (k in 1..maxK) { val mag = sqrt(re[k] * re[k] + im[k] * im[k]); val bi = ((k - 1) * BINS / maxK).coerceIn(0, BINS - 1); out[bi] += mag; cnt[bi]++ }
+        for (k in 1..maxK) {
+            val freq = k.toDouble() * SR16 / FFTN
+            if (freq < FMIN) continue
+            val mag = sqrt(re[k] * re[k] + im[k] * im[k])
+            val bi = ((ln(freq / FMIN) / logSpan) * BINS).toInt().coerceIn(0, BINS - 1)
+            out[bi] += mag; cnt[bi]++
+        }
         for (j in 0 until BINS) out[j] = 20.0 * ln((if (cnt[j] > 0) out[j] / cnt[j] else 0.0) + 1e-9) / ln(10.0)
         return out
     }

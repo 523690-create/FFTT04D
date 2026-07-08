@@ -92,6 +92,9 @@ object PhonemePlayer {
         private var timer: Timer? = null
         private var tmpWav: File? = null
         private val TOP = 26
+        // renderFftPng's STFT (2048/1024 @ 44.1 kHz) puts the first/last frame CENTRE ~23 ms in from each
+        // edge, so the spectrogram content spans [HALF_WIN, dur-HALF_WIN] — map boundaries/cursor to that.
+        private val HALF_WIN = 1024.0 * 1000.0 / SR
         private val CLASSES = listOf("voice", "snoring", "noise", "dry", "dry hacking", "bronchitis", "typical bronchitis", "croup", "sneeze")
 
         init {
@@ -159,7 +162,9 @@ object PhonemePlayer {
 
         /** The phoneme segment under an x pixel (for right-click "play phoneme only"). */
         private fun segAt(x: Int): Triple<Int, Int, String>? {
-            val ms = (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt()
+            val span = durMs - 2 * HALF_WIN
+            val ms = if (span > 1) (HALF_WIN + x.toDouble() / width.coerceAtLeast(1) * span).toInt()
+                     else (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt()
             return segs.firstOrNull { ms >= it.first && ms < it.second }
         }
 
@@ -170,7 +175,9 @@ object PhonemePlayer {
             val g = g0 as Graphics2D
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             val w = width; val h = height; val specY = TOP; val specH = h - TOP
-            fun xOf(ms: Int) = (ms.toDouble() / durMs * w).toInt().coerceIn(0, w)
+            val xSpan = durMs - 2 * HALF_WIN
+            fun xOf(ms: Int) = if (xSpan > 1) (((ms - HALF_WIN) / xSpan) * w).toInt().coerceIn(0, w)
+                               else (ms.toDouble() / durMs * w).toInt().coerceIn(0, w)
             // spectrogram
             if (img != null) g.drawImage(img, 0, specY, w, specH, null)
             else { g.color = Color(0x22, 0x22, 0x28); g.fillRect(0, specY, w, specH) }

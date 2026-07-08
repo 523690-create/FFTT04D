@@ -145,7 +145,7 @@ object PhonemeFftAtlas {
             g.fillPolygon(band)
             g.color = Color(cc.red, cc.green, cc.blue).brighter(); g.stroke = java.awt.BasicStroke(1.3f)
             for (i in 1 until n) g.drawLine(xOf(i - 1), yOf(ph.avg[i - 1]), xOf(i), yOf(ph.avg[i]))
-            g.color = Color(0x77, 0x77, 0x77); g.font = g.font.deriveFont(8f); g.drawString("FFT 0–8k", x + 2, y + 9)
+            g.color = Color(0x77, 0x77, 0x77); g.font = g.font.deriveFont(8f); g.drawString("FFT 50–8k log", x + 2, y + 9)
         }
 
         private fun drawRidge(g: Graphics2D, x: Int, y: Int, w: Int, h: Int, cc: Color) {
