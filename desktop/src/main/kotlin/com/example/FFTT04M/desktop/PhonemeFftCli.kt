@@ -55,13 +55,25 @@ object PhonemeFftCli {
         val cent = phs.map { (it["centroid"] as List<*>).map { x -> (x as Number).toDouble() }.toDoubleArray() }
         val d = mean.size
         val outDir = File(Workspace.dir("codebooks"), "${tag}_phoneme_fft").apply { mkdirs() }
-        println("=== PHONEME-FFT atlas: $K phonemes, corpus=$corpus, HuBERT ${HubertKMeansUnits.provider} ===")
+        // Class labels: draw each phoneme's exemplar + average ONLY from clips of ITS OWN class, else a
+        // p3-trained "voice"/"snoring"/"dry" centroid grabs an unrelated ALLDATA window as its face
+        // (D13→silence, V31→bronchitis, S2/S11→voice). Match on canonical label (cleanLabel both sides).
+        val phLabelClean = labels.map { cleanLabel(it) ?: it.lowercase() }
+        val phLabelSet = phLabelClean.toSet()
+        val manual = loadManual()
+        fun clipLabel(id: String): String? = manual[id] ?: cleanLabel(AutoLabel.forId(id))
+        val roots = (if (corpus.isDirectory) listOf(corpus) else emptyList()) +
+            listOf("p3", "ALLDATA", "true_cough", "device_ingest").map { File(repo, it) }.filter { it.isDirectory }
+        val rootsD = roots.distinctBy { it.absolutePath }
+        println("=== PHONEME-FFT atlas: $K phonemes, ${phLabelSet.size} classes, roots=${rootsD.joinToString { it.name }}, HuBERT ${HubertKMeansUnits.provider} ===")
 
         val sumMag = Array(K) { DoubleArray(BINS) }; val sumSq = Array(K) { DoubleArray(BINS) }; val count = IntArray(K)
         val exDist = DoubleArray(K) { Double.MAX_VALUE }; val exClip = arrayOfNulls<File>(K)
         val exS = IntArray(K); val exE = IntArray(K)
         val lock = Any()
-        val wavs = corpus.walkTopDown().filter { it.isFile && it.extension.equals("wav", true) }.toList()
+        val wavs = rootsD.asSequence().flatMap { it.walkTopDown() }
+            .filter { it.isFile && it.extension.equals("wav", true) && clipLabel(it.nameWithoutExtension) in phLabelSet }.toList()
+        println("  ${wavs.size} labelled clips whose class matches a phoneme")
         val done = AtomicInteger()
         val pool = Executors.newFixedThreadPool(4)
         try {
@@ -70,6 +82,7 @@ object PhonemeFftCli {
                     try {
                         val pcm = AudioDecoder.decode(wav)?.also { rms(it) } ?: return@submit
                         if (pcm.size < SR / 10 || pcm.size > SR * 45) return@submit
+                        val clipLbl = clipLabel(wav.nameWithoutExtension) ?: return@submit
                         val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR) ?: return@submit
                         if (fe.isEmpty()) return@submit
                         val pcm16 = resample(pcm, SR, SR16)
@@ -82,6 +95,7 @@ object PhonemeFftCli {
                             val inv = 1.0 / (f1 - f0); for (j in 0 until d) v[j] = (v[j] * inv - mean[j]) / std[j]
                             var best = 0; var bd = Double.MAX_VALUE
                             for (c in 0 until K) { var s = 0.0; val cc = cent[c]; for (j in 0 until d) { val e = v[j] - cc[j]; s += e * e }; if (s < bd) { bd = s; best = c } }
+                            if (clipLbl != phLabelClean[best]) continue   // keep the window only for a SAME-CLASS phoneme
                             // FFT magnitude of the window audio (16 kHz view, matches HuBERT)
                             val a = (sMs * SR16 / 1000).coerceIn(0, pcm16.size - 1)
                             val b = (eMs * SR16 / 1000).coerceIn(a + 1, pcm16.size)
@@ -203,6 +217,30 @@ object PhonemeFftCli {
     private fun rms(pcm: FloatArray, target: Float = 0.1f) { var s = 0.0; for (v in pcm) s += v.toDouble() * v; val r = sqrt(s / pcm.size.coerceAtLeast(1)); if (r > 1e-5) { val g = (target / r).toFloat(); for (i in pcm.indices) pcm[i] *= g } }
     private fun round1(x: Double) = Math.round(x * 10.0) / 10.0
     private fun round3(x: Double) = Math.round(x * 1000.0) / 1000.0
+
+    /** Canonicalize a raw label to the codebook's class string (mirrors PhonemeCodebookCli.cleanLabel). */
+    private fun cleanLabel(raw: String?): String? {
+        var s = raw?.trim() ?: return null
+        val am = s.indexOf("auto-match", ignoreCase = true); if (am >= 0) s = s.substring(0, am)
+        s = s.trim().removePrefix("manual:").trim().lowercase(); if (s.isBlank()) return null
+        return when {
+            s == "snore" || s.contains("snor") -> "snoring"
+            s.contains("bronchitis") || s.contains("brinchitis") || s.contains("evin") || s.contains("quad") -> "bronchitis"
+            s.startsWith("dry hack") -> "dry hacking"
+            s.startsWith("dry") -> "dry"
+            s == "noise" -> "noise"
+            s == "croup" -> "croup"
+            s == "speech" || s.contains("music") || s.contains("singing") || s == "crying" || s == "cry" -> "voice"
+            s == "sneeze" || s == "sneezing" -> "sneeze"
+            else -> s
+        }
+    }
+    private fun loadManual(): Map<String, String> {
+        val f = Workspace.file("manual_comments.json"); if (!f.isFile) return emptyMap()
+        @Suppress("UNCHECKED_CAST")
+        val raw = runCatching { com.google.gson.Gson().fromJson(f.readText(), Map::class.java) as Map<String, String> }.getOrNull() ?: return emptyMap()
+        val out = HashMap<String, String>(); for ((id, v) in raw) cleanLabel(v)?.let { out[id] = it }; return out
+    }
 
     /** MFCC-gram heatmap: coeffs c1.. as rows (low→high, bottom→top), frames as cols. c0 (energy) skipped. */
     private fun renderMfccPng(frames: List<DoubleArray>, out: File) {
