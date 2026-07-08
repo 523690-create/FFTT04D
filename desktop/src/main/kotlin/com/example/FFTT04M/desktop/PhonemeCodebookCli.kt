@@ -69,7 +69,11 @@ object PhonemeCodebookCli {
         val wavById = wavDir.walkTopDown().filter { it.isFile && it.extension.equals("wav", true) }
             .associateBy { it.nameWithoutExtension }
         val fragsById = loadFragments(fragFile)                     // id -> [(startMs,endMs)]
+        val segmentEdits = loadSegmentEdits()                       // id -> windowIdx -> Tier-B override code
+        val segEditWeight = System.getProperty("segedit.weight")?.toIntOrNull()?.coerceAtLeast(1) ?: 8
         println("labels=${labels.size}  wavs=${wavById.size}  clips-with-frags=${fragsById.size}")
+        if (segmentEdits.isNotEmpty()) println("segment edits: ${segmentEdits.values.sumOf { it.size }} window override(s) " +
+            "across ${segmentEdits.size} clip(s) — weight ×$segEditWeight as k-means exemplars (-Dsegedit.weight=N)")
         if (decodeFeedback.isNotEmpty())
             println("decode feedback: ${decodeFeedback.count { it.value }} confirmed → training labels, ${decodeFeedback.count { !it.value }} marked wrong → excluded")
         if (USE_HUBERT) println("HuBERT features ON — available=${HubertKMeansUnits.available} provider=${HubertKMeansUnits.provider}" +
@@ -121,7 +125,7 @@ object PhonemeCodebookCli {
             val perClip = ArrayList<Pair<String, List<DoubleArray>>>()   // (label, fragment vecs) per clip → classifier training
             val perClipWhole = ArrayList<Pair<DoubleArray, String>>()    // (14-dim whole-clip feature, label) → whole-clip classifier
             val autoFrags = HashMap<String, Int>()
-            var usedClips = 0; var autoClips = 0
+            var usedClips = 0; var autoClips = 0; var segEditExemplars = 0
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
                 val manual = labels[id]
                 val label = trainLabel(id, manual) ?: continue
@@ -129,15 +133,28 @@ object PhonemeCodebookCli {
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
                 if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) continue   // skip degenerate/monster (see decode loop)
-                val frags = framesFor(pcm, SR)
+                val frags = framesFor(pcm, SR)                // same fixed 180/90 grid as PhonemeSegmentEdits' windowIdx
                 val clipVecs = clipFeatures(pcm, SR, frags)   // DSP(13) or HuBERT(768) per window
-                for (v in clipVecs) labelled.add(FV(label, v))
+                val edits = segmentEdits[id]
+                for ((i, v) in clipVecs.withIndex()) {
+                    labelled.add(FV(label, v))
+                    // A Tier-B override that agrees with this clip's own class (same letter) is a
+                    // human-confirmed exemplar of a specific phoneme within it — duplicate-weight it so
+                    // the label's k-means is pulled toward forming a cluster there, instead of blurring
+                    // it with the surrounding un-vetted windows.
+                    val override = edits?.get(i)
+                    if (override != null && override.takeWhile { it.isLetter() } == letterFor(label)) {
+                        segEditExemplars++
+                        repeat(segEditWeight - 1) { labelled.add(FV(label, v)) }
+                    }
+                }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
                 perClipWhole.add(wholeClipFeat(pcm, frags) to label)   // 14-dim whole-clip feature (always DSP)
                 if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
                 usedClips++
             }
-            println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}")
+            println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}" +
+                (if (segEditExemplars > 0) "  (incl. $segEditExemplars segment-edit exemplar(s) × $segEditWeight)" else ""))
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
 
             // ---- 2. z-normalize ----
@@ -436,6 +453,19 @@ object PhonemeCodebookCli {
         val out = HashMap<String, String>()
         for ((id, v) in raw) cleanLabel(v)?.let { out[id] = it }
         return out
+    }
+
+    /** Tier-B per-window overrides (player right-click edits), for weighting the codebook's k-means
+     *  toward human-confirmed exemplars. Same file/shape as [PhonemeSegmentEdits] in RecordingsGrid.kt —
+     *  reloaded independently here since this CLI has no Swing dependency on that class. */
+    @Suppress("UNCHECKED_CAST")
+    private fun loadSegmentEdits(): Map<String, Map<Int, String>> {
+        val f = File(Workspace.dir("codebooks"), "phoneme_segment_edits.json")
+        if (!f.isFile) return emptyMap()
+        return try {
+            val raw = com.google.gson.Gson().fromJson(f.readText(), Map::class.java) as Map<String, Map<String, String>>
+            raw.mapValues { (_, m) -> m.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }.toMap() }
+        } catch (e: Exception) { System.err.println("phoneme_segment_edits load: ${e.message}"); emptyMap() }
     }
 
     /** Strip auto-match dumps + "manual:" prefixes, canonicalize synonyms. Null if not a usable label. */

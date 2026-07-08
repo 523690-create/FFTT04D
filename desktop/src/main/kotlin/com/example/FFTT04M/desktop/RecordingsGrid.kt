@@ -156,6 +156,15 @@ object PhonemeSegmentEdits {
     @Synchronized fun clear(id: String) { if (map.remove(id) != null) save() }
     private fun save() = try { file.parentFile?.mkdirs(); file.writeText(gson.toJson(map)) }
         catch (e: Exception) { System.err.println("phoneme_segment_edits save: ${e.message}") }
+
+    /** Apply this clip's per-window overrides on top of a raw decode `word`, for anywhere the decode is
+     *  displayed (grid tooltip, player ribbon) so Tier-B edits show up everywhere — not baked into
+     *  decoded.json (a later phonemeFft/codebook rebuild would just clobber a baked-in edit), just
+     *  overlaid at read time. */
+    fun overlay(id: String, word: List<String>): List<String> {
+        val edits = get(id) ?: return word
+        return word.mapIndexed { i, w -> edits[i] ?: w }
+    }
 }
 
 /** Sequential WAV player — used for single clips and for playing a multi-selection in order. */
@@ -667,7 +676,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
             else rec.label()?.let { append("<br><span style='color:#999'>").append(escape(it)).append("</span>") }
             DecodeStore.get(rec.id)?.let { dec ->                       // phoneme-codebook decode, coloured by class
                 val fb = DecodeFeedback.get(rec.id)?.let { if (it) " ✓" else " ✗" } ?: ""
-                val w = dec.word.joinToString(" ")                          // full word — no truncation
+                val w = PhonemeSegmentEdits.overlay(rec.id, dec.word).joinToString(" ")   // full word, Tier-B overlaid
                 val cls = PhonemeLegend.labelFor(dec.letter)?.let { "$it (${dec.letter})" } ?: dec.letter
                 append("<br><span style='color:${letterColor(dec.letter)}'>≈ ")
                     .append(escape(cls)).append(": ").append(escape(w)).append(fb).append("</span>")
