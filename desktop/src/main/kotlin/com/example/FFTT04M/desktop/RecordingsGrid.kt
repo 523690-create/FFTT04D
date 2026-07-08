@@ -122,8 +122,10 @@ object DecodeFeedback {
     @Synchronized fun get(id: String): Boolean? = map[id]
     @Synchronized fun setAll(ids: Collection<String>, correct: Boolean) {
         for (id in ids) map[id] = correct
-        try { file.writeText(gson.toJson(map)) } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
+        save()
     }
+    @Synchronized fun clear(id: String) { if (map.remove(id) != null) save() }
+    private fun save() = try { file.writeText(gson.toJson(map)) } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
 }
 
 /** Sequential WAV player — used for single clips and for playing a multi-selection in order. */

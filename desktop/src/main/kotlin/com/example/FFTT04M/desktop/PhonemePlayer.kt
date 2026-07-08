@@ -70,7 +70,7 @@ object PhonemePlayer {
             frame = this
         }
         f.title = "Phoneme player — ${wav.nameWithoutExtension.take(60)}"
-        p.load(img, segs, durMs, pcm)
+        p.load(wav, img, segs, durMs, pcm)
         f.isVisible = true; f.toFront()
         p.play()
     }
@@ -85,22 +85,49 @@ object PhonemePlayer {
         private var segs: List<Triple<Int, Int, String>> = emptyList()
         private var durMs = 1
         private var pcm: FloatArray = FloatArray(0)
+        private var wav: File? = null
         private var curMs = 0
+        private var status = ""
         private var clip: Clip? = null
         private var timer: Timer? = null
         private var tmpWav: File? = null
         private val TOP = 22
+        private val CLASSES = listOf("voice", "snoring", "noise", "dry", "dry hacking", "bronchitis", "typical bronchitis", "croup", "sneeze")
 
         init {
             background = Color(0x14, 0x14, 0x18)
             preferredSize = Dimension(1040, 440)
             addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent?) { play() }   // click to replay
+                override fun mousePressed(e: java.awt.event.MouseEvent) { if (e.isPopupTrigger) showMenu(e) }
+                override fun mouseReleased(e: java.awt.event.MouseEvent) { if (e.isPopupTrigger) showMenu(e) }
+                override fun mouseClicked(e: java.awt.event.MouseEvent) { if (SwingUtilities.isLeftMouseButton(e)) play() }
             })
         }
 
-        fun load(image: BufferedImage?, s: List<Triple<Int, Int, String>>, dur: Int, samples: FloatArray) {
-            img = image; segs = s; durMs = dur.coerceAtLeast(1); pcm = samples; curMs = 0; repaint()
+        fun load(w: File?, image: BufferedImage?, s: List<Triple<Int, Int, String>>, dur: Int, samples: FloatArray) {
+            wav = w; img = image; segs = s; durMs = dur.coerceAtLeast(1); pcm = samples; curMs = 0; status = ""; repaint()
+        }
+
+        /** Tier-A reclassification: clip-level feedback/label that the next phonemeCodebookCli rebuild consumes. */
+        private fun showMenu(e: java.awt.event.MouseEvent) {
+            val id = wav?.nameWithoutExtension ?: return
+            val dec = DecodeStore.get(id); val cls = dec?.classLabel ?: dec?.letter ?: "?"
+            val fb = DecodeFeedback.get(id); val lbl = ManualComments.get(id)
+            fun note(msg: String) { status = msg; repaint() }
+            javax.swing.JPopupMenu().apply {
+                add(javax.swing.JMenuItem("decoded: $cls${fb?.let { if (it) "  ✓" else "  ✗" } ?: ""}${lbl?.let { "  · label: $it" } ?: ""}").apply { isEnabled = false })
+                addSeparator()
+                add(javax.swing.JMenuItem("✓  Confirm decode ($cls)").apply { addActionListener { DecodeFeedback.setAll(listOf(id), true); note("confirmed → $cls (feeds training on next rebuild)") } })
+                add(javax.swing.JMenuItem("✗  Mark decode wrong").apply { addActionListener { DecodeFeedback.setAll(listOf(id), false); note("marked wrong (excluded from training)") } })
+                add(javax.swing.JMenu("Re-label clip →").apply {
+                    CLASSES.forEach { c -> add(javax.swing.JMenuItem(c).apply { addActionListener { ManualComments.setAll(listOf(id), c); DecodeFeedback.clear(id); note("re-labelled → $c") } }) }
+                    add(javax.swing.JMenuItem("custom…").apply { addActionListener {
+                        val t = javax.swing.JOptionPane.showInputDialog(this@PlayerPanel, "Label for $id:", lbl ?: "")
+                        if (t != null) { ManualComments.setAll(listOf(id), t.trim()); DecodeFeedback.clear(id); note(if (t.isBlank()) "label cleared" else "re-labelled → ${t.trim()}") }
+                    } })
+                })
+                add(javax.swing.JMenuItem("Clear label + feedback").apply { addActionListener { ManualComments.setAll(listOf(id), ""); DecodeFeedback.clear(id); note("cleared") } })
+            }.show(this, e.x, e.y)
         }
 
         fun play() {
@@ -150,6 +177,16 @@ object PhonemePlayer {
             val cx = xOf(curMs)
             g.color = Color(0xff, 0xff, 0xff); g.stroke = java.awt.BasicStroke(1.5f)
             g.drawLine(cx, 0, cx, h)
+
+            // status (after a reclassify action) + interaction hint
+            if (status.isNotEmpty()) {
+                g.font = g.font.deriveFont(11f); val sw = g.fontMetrics.stringWidth(status)
+                g.color = Color(0, 0, 0, 180); g.fillRect(4, h - 20, sw + 10, 16)
+                g.color = Color(0x9f, 0xe0, 0x9f); g.drawString(status, 9, h - 8)
+            }
+            g.color = Color(0x88, 0x88, 0x88); g.font = g.font.deriveFont(9.5f)
+            val hint = "click: replay   ·   right-click: reclassify"
+            g.drawString(hint, w - g.fontMetrics.stringWidth(hint) - 6, h - 7)
         }
     }
 }
