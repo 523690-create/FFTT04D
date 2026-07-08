@@ -91,7 +91,7 @@ object PhonemePlayer {
         private var clip: Clip? = null
         private var timer: Timer? = null
         private var tmpWav: File? = null
-        private val TOP = 22
+        private val TOP = 26
         private val CLASSES = listOf("voice", "snoring", "noise", "dry", "dry hacking", "bronchitis", "typical bronchitis", "croup", "sneeze")
 
         init {
@@ -114,7 +114,12 @@ object PhonemePlayer {
             val dec = DecodeStore.get(id); val cls = dec?.classLabel ?: dec?.letter ?: "?"
             val fb = DecodeFeedback.get(id); val lbl = ManualComments.get(id)
             fun note(msg: String) { status = msg; repaint() }
+            val seg = segAt(e.x)
             javax.swing.JPopupMenu().apply {
+                if (seg != null) {
+                    add(javax.swing.JMenuItem("▶  Play phoneme only (${seg.third})").apply { addActionListener { playRange(seg.first, seg.second) } })
+                    addSeparator()
+                }
                 add(javax.swing.JMenuItem("decoded: $cls${fb?.let { if (it) "  ✓" else "  ✗" } ?: ""}${lbl?.let { "  · label: $it" } ?: ""}").apply { isEnabled = false })
                 addSeparator()
                 add(javax.swing.JMenuItem("✓  Confirm decode ($cls)").apply { addActionListener { DecodeFeedback.setAll(listOf(id), true); note("confirmed → $cls (feeds training on next rebuild)") } })
@@ -130,20 +135,32 @@ object PhonemePlayer {
             }.show(this, e.x, e.y)
         }
 
-        fun play() {
+        fun play() = playRange(0, durMs)
+
+        /** Play [sMs, eMs) of the clip (full clip, or a single phoneme segment) with the cursor swept over it. */
+        private fun playRange(sMs: Int, eMs: Int) {
             stop()
+            val a = (sMs.toLong() * SR / 1000).toInt().coerceIn(0, pcm.size)
+            val b = (eMs.toLong() * SR / 1000).toInt().coerceIn(a, pcm.size)
+            if (b - a < 200) return
             try {
                 val tmp = File.createTempFile("phonplay", ".wav").apply { deleteOnExit() }
-                AudioDecoder.writeWavMono16(pcm, SR, tmp); tmpWav = tmp
+                AudioDecoder.writeWavMono16(pcm.copyOfRange(a, b), SR, tmp); tmpWav = tmp
                 val c = AudioSystem.getClip(); c.open(AudioSystem.getAudioInputStream(tmp)); clip = c; c.start()
-                curMs = 0
+                curMs = sMs
                 timer = Timer(25) {
                     val len = c.microsecondLength.coerceAtLeast(1)
-                    curMs = (c.microsecondPosition * durMs / len).toInt().coerceIn(0, durMs)
-                    if (!c.isRunning && c.microsecondPosition >= len) { curMs = durMs; timer?.stop() }
+                    curMs = (sMs + c.microsecondPosition * (eMs - sMs) / len).toInt().coerceIn(sMs, eMs)
+                    if (!c.isRunning && c.microsecondPosition >= len) { curMs = eMs; timer?.stop() }
                     repaint()
                 }.also { it.start() }
             } catch (_: Exception) {}
+        }
+
+        /** The phoneme segment under an x pixel (for right-click "play phoneme only"). */
+        private fun segAt(x: Int): Triple<Int, Int, String>? {
+            val ms = (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt()
+            return segs.firstOrNull { ms >= it.first && ms < it.second }
         }
 
         private fun stop() { timer?.stop(); timer = null; runCatching { clip?.stop(); clip?.close() }; clip = null }
@@ -157,20 +174,22 @@ object PhonemePlayer {
             // spectrogram
             if (img != null) g.drawImage(img, 0, specY, w, specH, null)
             else { g.color = Color(0x22, 0x22, 0x28); g.fillRect(0, specY, w, specH) }
-            // top strip = phoneme "ribbon": one CLASS-COLOURED, labelled block per segment, so each label
-            // unambiguously belongs to its coloured segment; the block boundary carries down onto the spectrogram.
+            // top strip = phoneme ribbon. Each segment: faint class TINT + a bright full-height boundary at
+            // its START, with its code LEFT-ALIGNED just inside that boundary (2-row stagger so crowded labels
+            // never collide). So a label always sits at the left edge of its own segment — unambiguous.
             g.color = Color(0x0a, 0x0a, 0x0e); g.fillRect(0, 0, w, TOP)
             g.font = g.font.deriveFont(java.awt.Font.BOLD, 11f)
+            val lastRight = intArrayOf(-1000, -1000)
             for ((s, e, code) in segs) {
                 val x0 = xOf(s); val x1 = xOf(e); val bw = (x1 - x0).coerceAtLeast(1)
-                val cc = if (code == "?") Color(0x44, 0x44, 0x48) else PhonemeCloud.classColor(code.takeWhile { it.isLetter() })
-                g.color = Color(cc.red, cc.green, cc.blue, 235); g.fillRect(x0, 0, bw, TOP - 1)
-                g.color = Color(0x0a, 0x0a, 0x0e); g.drawLine(x1 - 1, 0, x1 - 1, TOP)                       // block separator
-                g.color = Color(0, 0, 0); g.stroke = java.awt.BasicStroke(1.3f); g.drawLine(x1, TOP, x1, h) // spectrogram divider
-                val lum = 0.299 * cc.red + 0.587 * cc.green + 0.114 * cc.blue
-                g.color = if (lum > 140) Color.black else Color.white
-                val lw = g.fontMetrics.stringWidth(code)
-                when { bw > lw + 3 -> g.drawString(code, x0 + (bw - lw) / 2, 15); bw > 8 -> g.drawString(code.take(2), x0 + 1, 15) }
+                val cc = if (code == "?") Color(0x55, 0x55, 0x5a) else PhonemeCloud.classColor(code.takeWhile { it.isLetter() })
+                g.color = Color(cc.red, cc.green, cc.blue, 110); g.fillRect(x0, 0, bw, TOP - 1)              // faint class tint
+                g.color = Color(0xcc, 0xcc, 0xcc); g.stroke = java.awt.BasicStroke(1.1f); g.drawLine(x0, 0, x0, h)   // boundary, full height
+                if (bw >= 3) {
+                    val lx = x0 + 3; val lw = g.fontMetrics.stringWidth(code)
+                    val r = if (lx >= lastRight[0]) 0 else if (lx >= lastRight[1]) 1 else if (lastRight[0] <= lastRight[1]) 0 else 1
+                    g.color = cc.brighter(); g.drawString(code, lx, if (r == 0) 12 else 23); lastRight[r] = lx + lw + 3
+                }
             }
             if (segs.isEmpty()) { g.color = Color(0x88, 0x88, 0x88); g.drawString("(no phoneme decode for this clip)", 6, 15) }
             // white sweep cursor
