@@ -122,6 +122,7 @@ object PhonemeFftCli {
                 "durSec" to round3(rf.ridgeDurationSec), "startHz" to round1(rf.startFreqHz),
                 "peakHz" to round1(rf.peakFreqHz), "endHz" to round1(rf.endFreqHz),
                 "vertexSec" to round3(rf.vertexTimeSec), "r2" to round3(rf.rSquared),
+                "curv" to Math.round(rf.curvature), "slope" to Math.round(rf.slope),
                 "winSec" to round3(win.size.toDouble() / SR),
                 "points" to rr!!.points.map { listOf(round3(it.timeSec), round1(it.freqHz)) }) else null
             exJson[c] = mapOf("fftPng" to "${codes[c]}_fft.png", "cwtPng" to "${codes[c]}_cwt.jpg",

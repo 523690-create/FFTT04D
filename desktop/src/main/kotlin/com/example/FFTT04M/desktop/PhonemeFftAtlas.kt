@@ -108,7 +108,7 @@ object PhonemeFftAtlas {
         private val mfccImg = ph.mfcc?.let { runCatching { ImageIO.read(it) }.getOrNull() }
         private val cwtImg = ph.cwt?.let { runCatching { ImageIO.read(it) }.getOrNull() }
         init {
-            preferredSize = Dimension(360, 250); background = Color(0x26, 0x26, 0x2c)
+            preferredSize = Dimension(400, 250); background = Color(0x26, 0x26, 0x2c)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = "${ph.code} · ${ph.label} — click to play"
             addMouseListener(object : java.awt.event.MouseAdapter() {
@@ -120,29 +120,28 @@ object PhonemeFftAtlas {
             super.paintComponent(g0)
             val g = g0 as Graphics2D
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val w = width; val cc = PhonemeCloud.classColor(ph.letter)
-            // header
+            val w = width; val h = height; val cc = PhonemeCloud.classColor(ph.letter)
+            // header (full width)
             g.color = Color(cc.red, cc.green, cc.blue, 210); g.fillRect(0, 0, w, 20)
             g.color = Color.white; g.font = g.font.deriveFont(11f); g.drawString("${ph.code}  ${ph.label}  n=${ph.n}", 4, 14)
 
-            // row 1: avg spectrum (left) + ridge plot (right)
-            val topY = 22; val topH = 84; val half = w / 2
-            drawSpectrum(g, 0, topY, half - 2, topH, cc)
-            drawRidge(g, half + 2, topY, w - half - 2, topH, cc)
+            // FFT + ridge are TALL (full cell height) and NARROW, side by side on the left.
+            val cy = 22; val ch = h - cy - 2; val colW = 74
+            drawTile(g, fftImg, 0, cy, colW, ch, "FFT")
+            drawRidge(g, colW + 2, cy, colW, ch, cc)
 
-            // row 2: three tall-narrow tiles FFT | MFCC | CWT
-            val tY = topY + topH + 16; val tH = height - tY - 4; val tW = (w - 4) / 3
-            drawTile(g, fftImg, 0, tY, tW, tH, "FFT")
-            drawTile(g, mfccImg, tW + 2, tY, tW, tH, "MFCC")
-            drawTile(g, cwtImg, 2 * tW + 4, tY, tW - 4, tH, "CWT")
-
-            // ridge param strip (between rows)
+            // right region: avg spectrum (top) · MFCC | CWT (middle) · ridge label (bottom)
+            val rx = 2 * colW + 6; val rw = w - rx - 2; val specH = 78
+            drawSpectrum(g, rx, cy, rw, specH, cc)
+            val tY = cy + specH + 14; val tH = ch - specH - 14 - 16; val hw = (rw - 2) / 2
+            drawTile(g, mfccImg, rx, tY, hw, tH, "MFCC")
+            drawTile(g, cwtImg, rx + hw + 2, tY, rw - hw - 2, tH, "CWT")
             g.color = Color(0xcc, 0xcc, 0xcc); g.font = g.font.deriveFont(9.5f)
             val r = ph.ridge
             val txt = if (r != null && r.pts.size >= 3)
                 "ridge ${(r.durSec * 1000).toInt()}ms  ${r.startHz.toInt()}→${r.peakHz.toInt()}→${r.endHz.toInt()}Hz  r²=${"%.2f".format(r.r2)}"
             else "no ridge"
-            g.drawString(txt, 2, tY - 4)
+            g.drawString(txt, rx, h - 6)
         }
 
         private fun drawSpectrum(g: Graphics2D, x: Int, y: Int, w: Int, h: Int, cc: Color) {
