@@ -39,30 +39,40 @@ object PhonemePlayer {
             val durMs = (pcm.size.toLong() * 1000 / SR).toInt().coerceAtLeast(1)
             val tmp = File.createTempFile("phonspec", ".png")
             val img = try { SpectrogramRenderer.renderFftPng(pcm, SR, tmp); ImageIO.read(tmp) } catch (_: Exception) { null } finally { tmp.delete() }
-            val segs = segments(DecodeStore.get(wav.nameWithoutExtension)?.word ?: emptyList(), durMs)
-            SwingUtilities.invokeLater { open(parent, wav, pcm, img, segs, durMs) }
+            val word = DecodeStore.get(wav.nameWithoutExtension)?.word ?: emptyList()
+            SwingUtilities.invokeLater { open(parent, wav, pcm, img, word, durMs) }
         }
     }
 
-    /** Fixed-grid windows (mirrors the decode) → merge consecutive equal codes into labelled segments. */
-    private fun segments(word: List<String>, durMs: Int): List<Triple<Int, Int, String>> {
+    /** A decoded phoneme segment: [sMs,eMs) on the timeline, its code, and its decode-window index range. */
+    data class Seg(val sMs: Int, val eMs: Int, val code: String, val wFrom: Int, val wTo: Int)
+
+    /** Fixed-grid decode windows (180 ms / 90 ms), mirroring PhonemeCodebookCli. */
+    private fun windowsFor(durMs: Int): List<Pair<Int, Int>> {
         val wins = ArrayList<Pair<Int, Int>>()
         if (durMs <= WIN_MS) wins.add(0 to durMs)
         else { var s = 0; while (s < durMs) { val e = (s + WIN_MS).coerceAtMost(durMs); if (e - s >= WIN_MS / 2) wins.add(s to e); if (e >= durMs) break; s += HOP_MS } }
+        return wins
+    }
+
+    /** Merge consecutive equal codes — after applying any Tier-B per-window overrides — into segments. */
+    private fun segments(id: String, word: List<String>, durMs: Int): List<Seg> {
+        val wins = windowsFor(durMs)
         if (word.isEmpty() || wins.isEmpty()) return emptyList()
-        val out = ArrayList<Triple<Int, Int, String>>()
+        val edits = PhonemeSegmentEdits.get(id)
+        fun codeAt(i: Int) = edits?.get(i) ?: word.getOrElse(i) { "?" }
+        val out = ArrayList<Seg>()
         var i = 0
         while (i < wins.size) {
-            val code = word.getOrElse(i) { "?" }
-            var j = i
-            while (j + 1 < wins.size && word.getOrElse(j + 1) { "?" } == code) j++
-            out.add(Triple(wins[i].first, wins[j].second, code))
+            val code = codeAt(i); var j = i
+            while (j + 1 < wins.size && codeAt(j + 1) == code) j++
+            out.add(Seg(wins[i].first, wins[j].second, code, i, j))
             i = j + 1
         }
         return out
     }
 
-    private fun open(parent: Component?, wav: File, pcm: FloatArray, img: BufferedImage?, segs: List<Triple<Int, Int, String>>, durMs: Int) {
+    private fun open(parent: Component?, wav: File, pcm: FloatArray, img: BufferedImage?, word: List<String>, durMs: Int) {
         val p = panel ?: PlayerPanel().also { panel = it }
         val f = frame ?: JFrame("Phoneme player").apply {
             contentPane.add(p, BorderLayout.CENTER); size = Dimension(1040, 440); setLocationByPlatform(true)
@@ -70,7 +80,7 @@ object PhonemePlayer {
             frame = this
         }
         f.title = "Phoneme player — ${wav.nameWithoutExtension.take(60)}"
-        p.load(wav, img, segs, durMs, pcm)
+        p.load(wav, img, word, durMs, pcm)
         f.isVisible = true; f.toFront()
         p.play()
     }
@@ -82,7 +92,9 @@ object PhonemePlayer {
 
     private class PlayerPanel : JPanel(BorderLayout()) {
         private var img: BufferedImage? = null
-        private var segs: List<Triple<Int, Int, String>> = emptyList()
+        private var segs: List<Seg> = emptyList()
+        private var word: List<String> = emptyList()
+        private var id: String = ""
         private var durMs = 1
         private var pcm: FloatArray = FloatArray(0)
         private var wav: File? = null
@@ -107,20 +119,38 @@ object PhonemePlayer {
             })
         }
 
-        fun load(w: File?, image: BufferedImage?, s: List<Triple<Int, Int, String>>, dur: Int, samples: FloatArray) {
-            wav = w; img = image; segs = s; durMs = dur.coerceAtLeast(1); pcm = samples; curMs = 0; status = ""; repaint()
+        fun load(w: File?, image: BufferedImage?, wrd: List<String>, dur: Int, samples: FloatArray) {
+            wav = w; id = w?.nameWithoutExtension ?: ""; img = image; word = wrd; durMs = dur.coerceAtLeast(1)
+            pcm = samples; curMs = 0; status = ""; rebuildSegs(); repaint()
         }
 
-        /** Tier-A reclassification: clip-level feedback/label that the next phonemeCodebookCli rebuild consumes. */
+        private fun rebuildSegs() { segs = segments(id, word, durMs) }
+
+        /**
+         * Right-click menu. Tier-B (top): per-PHONEME edits on the segment under the cursor — merge with a
+         * neighbour, set an arbitrary code, or reset — persisted to [PhonemeSegmentEdits] and reflected live.
+         * Tier-A (bottom): clip-level feedback/label consumed by the next phonemeCodebookCli rebuild.
+         */
         private fun showMenu(e: java.awt.event.MouseEvent) {
-            val id = wav?.nameWithoutExtension ?: return
+            if (id.isEmpty()) return
             val dec = DecodeStore.get(id); val cls = dec?.classLabel ?: dec?.letter ?: "?"
             val fb = DecodeFeedback.get(id); val lbl = ManualComments.get(id)
             fun note(msg: String) { status = msg; repaint() }
-            val seg = segAt(e.x)
+            fun applyEdit(from: Int, to: Int, code: String) { PhonemeSegmentEdits.setRange(id, from, to, code); rebuildSegs() }
+            val idx = segIndexAt(e.x); val seg = segs.getOrNull(idx)
             javax.swing.JPopupMenu().apply {
                 if (seg != null) {
-                    add(javax.swing.JMenuItem("▶  Play phoneme only (${seg.third})").apply { addActionListener { playRange(seg.first, seg.second) } })
+                    val prev = segs.getOrNull(idx - 1); val next = segs.getOrNull(idx + 1)
+                    add(javax.swing.JMenuItem("▶  Play phoneme only (${seg.code})").apply { addActionListener { playRange(seg.sMs, seg.eMs) } })
+                    addSeparator()
+                    add(javax.swing.JMenuItem("phoneme #${idx + 1}: ${seg.code}   (win ${seg.wFrom}–${seg.wTo})").apply { isEnabled = false })
+                    if (prev != null) add(javax.swing.JMenuItem("⇤  Merge with previous  → ${prev.code}").apply { addActionListener { applyEdit(seg.wFrom, seg.wTo, prev.code); note("merged into ${prev.code}") } })
+                    if (next != null) add(javax.swing.JMenuItem("⇥  Merge with next  → ${next.code}").apply { addActionListener { applyEdit(seg.wFrom, seg.wTo, next.code); note("merged into ${next.code}") } })
+                    add(javax.swing.JMenuItem("✎  Set this phoneme's code…").apply { addActionListener {
+                        val t = javax.swing.JOptionPane.showInputDialog(this@PlayerPanel, "New code for phoneme #${idx + 1} (e.g. BT18):", seg.code)
+                        if (t != null && t.isNotBlank()) { applyEdit(seg.wFrom, seg.wTo, t.trim()); note("phoneme → ${t.trim()}") }
+                    } })
+                    add(javax.swing.JMenuItem("↺  Reset this phoneme").apply { addActionListener { PhonemeSegmentEdits.clearRange(id, seg.wFrom, seg.wTo); rebuildSegs(); note("phoneme reset to decode") } })
                     addSeparator()
                 }
                 add(javax.swing.JMenuItem("decoded: $cls${fb?.let { if (it) "  ✓" else "  ✗" } ?: ""}${lbl?.let { "  · label: $it" } ?: ""}").apply { isEnabled = false })
@@ -160,12 +190,12 @@ object PhonemePlayer {
             } catch (_: Exception) {}
         }
 
-        /** The phoneme segment under an x pixel (for right-click "play phoneme only"). */
-        private fun segAt(x: Int): Triple<Int, Int, String>? {
+        /** Index of the phoneme segment under an x pixel (-1 if none), for right-click per-phoneme edits. */
+        private fun segIndexAt(x: Int): Int {
             val span = durMs - 2 * HALF_WIN
             val ms = if (span > 1) (HALF_WIN + x.toDouble() / width.coerceAtLeast(1) * span).toInt()
                      else (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt()
-            return segs.firstOrNull { ms >= it.first && ms < it.second }
+            return segs.indexOfFirst { ms >= it.sMs && ms < it.eMs }
         }
 
         private fun stop() { timer?.stop(); timer = null; runCatching { clip?.stop(); clip?.close() }; clip = null }
@@ -187,7 +217,8 @@ object PhonemePlayer {
             g.color = Color(0x0a, 0x0a, 0x0e); g.fillRect(0, 0, w, TOP)
             g.font = g.font.deriveFont(java.awt.Font.BOLD, 11f)
             val lastRight = intArrayOf(-1000, -1000)
-            for ((s, e, code) in segs) {
+            for (sg in segs) {
+                val s = sg.sMs; val e = sg.eMs; val code = sg.code
                 val x0 = xOf(s); val x1 = xOf(e); val bw = (x1 - x0).coerceAtLeast(1)
                 val cc = if (code == "?") Color(0x55, 0x55, 0x5a) else PhonemeCloud.classColor(code.takeWhile { it.isLetter() })
                 g.color = Color(cc.red, cc.green, cc.blue, 110); g.fillRect(x0, 0, bw, TOP - 1)              // faint class tint
@@ -211,7 +242,7 @@ object PhonemePlayer {
                 g.color = Color(0x9f, 0xe0, 0x9f); g.drawString(status, 9, h - 8)
             }
             g.color = Color(0x88, 0x88, 0x88); g.font = g.font.deriveFont(9.5f)
-            val hint = "click: replay   ·   right-click: reclassify"
+            val hint = "click: replay   ·   right-click a phoneme: merge / set code / relabel clip"
             g.drawString(hint, w - g.fontMetrics.stringWidth(hint) - 6, h - 7)
         }
     }

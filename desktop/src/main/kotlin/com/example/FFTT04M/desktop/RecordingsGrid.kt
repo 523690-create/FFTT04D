@@ -128,6 +128,36 @@ object DecodeFeedback {
     private fun save() = try { file.writeText(gson.toJson(map)) } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
 }
 
+/**
+ * Tier-B manual phoneme edits: per-window code overrides for a clip's decode. Reassign / merge / extend
+ * all reduce to "set decode windows [from..to] = code" (merging two phonemes = relabel one to match the
+ * other; extending over a `?` tail = relabel the tail's windows to the phoneme's code). Persisted to
+ * data/codebooks/phoneme_segment_edits.json (clipId → windowIndex → code); a later codebook rebuild can
+ * consume these as supervised per-window labels. Window indices follow the 180 ms / 90 ms decode grid.
+ */
+object PhonemeSegmentEdits {
+    private val file = File(Workspace.dir("codebooks"), "phoneme_segment_edits.json")
+    private val gson = Gson()
+    // JSON object keys are strings, so store window indices as strings and parse on read.
+    private val map: MutableMap<String, MutableMap<String, String>> = try {
+        if (file.isFile) gson.fromJson(file.readText(),
+            object : TypeToken<MutableMap<String, MutableMap<String, String>>>() {}.type) ?: mutableMapOf()
+        else mutableMapOf()
+    } catch (e: Exception) { mutableMapOf() }
+
+    @Synchronized fun get(id: String): Map<Int, String>? =
+        map[id]?.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }?.toMap()?.takeIf { it.isNotEmpty() }
+    @Synchronized fun setRange(id: String, from: Int, to: Int, code: String) {
+        val m = map.getOrPut(id) { linkedMapOf() }; for (i in from..to) m[i.toString()] = code; save()
+    }
+    @Synchronized fun clearRange(id: String, from: Int, to: Int) {
+        map[id]?.let { m -> for (i in from..to) m.remove(i.toString()); if (m.isEmpty()) map.remove(id) }; save()
+    }
+    @Synchronized fun clear(id: String) { if (map.remove(id) != null) save() }
+    private fun save() = try { file.parentFile?.mkdirs(); file.writeText(gson.toJson(map)) }
+        catch (e: Exception) { System.err.println("phoneme_segment_edits save: ${e.message}") }
+}
+
 /** Sequential WAV player — used for single clips and for playing a multi-selection in order. */
 object AudioPlayer {
     private var clip: Clip? = null
