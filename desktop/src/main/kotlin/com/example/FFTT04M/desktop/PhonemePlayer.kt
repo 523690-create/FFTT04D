@@ -103,6 +103,9 @@ object PhonemePlayer {
         private var clip: Clip? = null
         private var timer: Timer? = null
         private var tmpWav: File? = null
+        private var selStartX = -1
+        private var selEndX = -1
+        private var dragging = false
         private val TOP = 26
         // renderFftPng's STFT (2048/1024 @ 44.1 kHz) puts the first/last frame CENTRE ~23 ms in from each
         // edge, so the spectrogram content spans [HALF_WIN, dur-HALF_WIN] — map boundaries/cursor to that.
@@ -112,11 +115,23 @@ object PhonemePlayer {
         init {
             background = Color(0x14, 0x14, 0x18)
             preferredSize = Dimension(1040, 440)
-            addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mousePressed(e: java.awt.event.MouseEvent) { if (e.isPopupTrigger) showMenu(e) }
-                override fun mouseReleased(e: java.awt.event.MouseEvent) { if (e.isPopupTrigger) showMenu(e) }
-                override fun mouseClicked(e: java.awt.event.MouseEvent) { if (SwingUtilities.isLeftMouseButton(e)) play() }
-            })
+            val ma = object : java.awt.event.MouseAdapter() {
+                override fun mousePressed(e: java.awt.event.MouseEvent) {
+                    if (e.isPopupTrigger) { showMenu(e); return }
+                    if (SwingUtilities.isLeftMouseButton(e)) { selStartX = e.x; selEndX = e.x; dragging = false }
+                }
+                override fun mouseDragged(e: java.awt.event.MouseEvent) {
+                    if (selStartX >= 0) { selEndX = e.x; if (kotlin.math.abs(selEndX - selStartX) >= 5) dragging = true; repaint() }
+                }
+                override fun mouseReleased(e: java.awt.event.MouseEvent) {
+                    if (e.isPopupTrigger) { showMenu(e); return }
+                    if (SwingUtilities.isLeftMouseButton(e)) {
+                        if (dragging) spanRelabel(selStartX, selEndX) else play()
+                        selStartX = -1; dragging = false; repaint()
+                    }
+                }
+            }
+            addMouseListener(ma); addMouseMotionListener(ma)
         }
 
         fun load(w: File?, image: BufferedImage?, wrd: List<String>, dur: Int, samples: FloatArray) {
@@ -190,12 +205,46 @@ object PhonemePlayer {
             } catch (_: Exception) {}
         }
 
+        /** Pixel x → clip time (ms), inverse of the frame-centre xOf mapping used for drawing. */
+        private fun msAt(x: Int): Int {
+            val span = durMs - 2 * HALF_WIN
+            return if (span > 1) (HALF_WIN + x.toDouble() / width.coerceAtLeast(1) * span).toInt().coerceIn(0, durMs)
+                   else (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt().coerceIn(0, durMs)
+        }
+
         /** Index of the phoneme segment under an x pixel (-1 if none), for right-click per-phoneme edits. */
         private fun segIndexAt(x: Int): Int {
-            val span = durMs - 2 * HALF_WIN
-            val ms = if (span > 1) (HALF_WIN + x.toDouble() / width.coerceAtLeast(1) * span).toInt()
-                     else (x.toDouble() / width.coerceAtLeast(1) * durMs).toInt()
+            val ms = msAt(x)
             return segs.indexOfFirst { ms >= it.sMs && ms < it.eMs }
+        }
+
+        /** Drag-select a span of the ribbon → set every decode window it covers to ONE code. Default is the
+         *  loudest (peak-RMS) window's code — a squiggle's vertex — so a chopped parabola becomes one phoneme
+         *  in a single gesture. Reversible: right-click any window → "Reset this phoneme". */
+        private fun spanRelabel(xa: Int, xb: Int) {
+            if (id.isEmpty() || word.isEmpty()) return
+            val msLo = msAt(minOf(xa, xb)); val msHi = msAt(maxOf(xa, xb))
+            val wins = windowsFor(durMs)
+            val idxs = wins.indices.filter { wins[it].second > msLo && wins[it].first < msHi }
+            if (idxs.isEmpty()) return
+            val wFrom = idxs.first(); val wTo = idxs.last()
+            fun codeAt(i: Int) = PhonemeSegmentEdits.get(id)?.get(i) ?: word.getOrElse(i) { "?" }
+            val peak = idxs.maxByOrNull { winRms(wins[it].first, wins[it].second) } ?: wFrom
+            val def = codeAt(peak)
+            val t = javax.swing.JOptionPane.showInputDialog(this, "Set ${wTo - wFrom + 1} windows (one phoneme span) to code:", def)
+            if (t != null && t.isNotBlank()) {
+                PhonemeSegmentEdits.setRange(id, wFrom, wTo, t.trim()); rebuildSegs()
+                status = "span → ${t.trim()}  (win $wFrom–$wTo)"
+            }
+            repaint()
+        }
+
+        private fun winRms(sMs: Int, eMs: Int): Double {
+            val a = (sMs.toLong() * SR / 1000).toInt().coerceIn(0, pcm.size)
+            val b = (eMs.toLong() * SR / 1000).toInt().coerceIn(a, pcm.size)
+            if (b <= a) return 0.0
+            var s = 0.0; for (i in a until b) s += pcm[i].toDouble() * pcm[i]
+            return kotlin.math.sqrt(s / (b - a))
         }
 
         private fun stop() { timer?.stop(); timer = null; runCatching { clip?.stop(); clip?.close() }; clip = null }
@@ -230,6 +279,12 @@ object PhonemePlayer {
                 }
             }
             if (segs.isEmpty()) { g.color = Color(0x88, 0x88, 0x88); g.drawString("(no phoneme decode for this clip)", 6, 15) }
+            // drag-selection highlight (span → one code)
+            if (dragging && selStartX >= 0) {
+                val a = minOf(selStartX, selEndX); val bb = maxOf(selStartX, selEndX)
+                g.color = Color(0x66, 0xcc, 0xff, 60); g.fillRect(a, 0, bb - a, h)
+                g.color = Color(0x66, 0xcc, 0xff, 170); g.stroke = java.awt.BasicStroke(1f); g.drawRect(a, 0, (bb - a).coerceAtLeast(1), h - 1)
+            }
             // white sweep cursor
             val cx = xOf(curMs)
             g.color = Color(0xff, 0xff, 0xff); g.stroke = java.awt.BasicStroke(1.5f)
@@ -242,7 +297,7 @@ object PhonemePlayer {
                 g.color = Color(0x9f, 0xe0, 0x9f); g.drawString(status, 9, h - 8)
             }
             g.color = Color(0x88, 0x88, 0x88); g.font = g.font.deriveFont(9.5f)
-            val hint = "click: replay   ·   right-click a phoneme: merge / set code / relabel clip"
+            val hint = "click: replay   ·   drag: set a span to one code   ·   right-click: merge / set code / relabel"
             g.drawString(hint, w - g.fontMetrics.stringWidth(hint) - 6, h - 7)
         }
     }
