@@ -4,6 +4,7 @@ import com.example.FFTT04M.desktop.fractionation.HubertKMeansUnits
 import com.google.gson.GsonBuilder
 import java.io.File
 import java.util.concurrent.Executors
+import javax.imageio.ImageIO
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.cos
@@ -98,7 +99,11 @@ object PhonemeFftCli {
             }.forEach { it.get() }
         } finally { pool.shutdown() }
 
-        // exemplar spectrogram PNGs (window ±60 ms context, so a 180 ms unit is legible)
+        // Per phoneme: from the exemplar window (±60 ms context) render FFT + MFCC-gram + CWT tiles, fit
+        // the ridge ("squiggle") → start/peak/end freq + points (for the atlas overlay + click-to-play).
+        val mfcc = com.example.FFTT04M.desktop.cough.MfccExtractor()
+        val ridgeEx = com.example.FFTT04M.desktop.cough.RidgeExtractor()
+        val exJson = HashMap<Int, Map<String, Any?>>()
         var pngs = 0
         for (c in 0 until K) {
             val wav = exClip[c] ?: continue
@@ -106,22 +111,37 @@ object PhonemeFftCli {
             val a = ((exS[c] - 60) * SR / 1000).coerceAtLeast(0)
             val b = ((exE[c] + 60) * SR / 1000).coerceAtMost(pcm.size)
             if (b - a < SR / 20) continue
-            runCatching { SpectrogramRenderer.renderFftPng(pcm.copyOfRange(a, b), SR, File(outDir, "${codes[c]}.png")); pngs++ }
+            val win = pcm.copyOfRange(a, b)
+            runCatching { SpectrogramRenderer.renderFftPng(win, SR, File(outDir, "${codes[c]}_fft.png")) }
+            runCatching { SpectrogramRenderer.renderCwtJpg(win, SR, File(outDir, "${codes[c]}_cwt.jpg"), useGpu = false) }
+            runCatching { renderMfccPng(mfcc.frames(win, 0, win.size, SR), File(outDir, "${codes[c]}_mfcc.png")) }
+            pngs++
+            val rr = runCatching { ridgeEx.extract(win, 0, win.size, SR) }.getOrNull()
+            val rf = rr?.features
+            val ridgeMap: Map<String, Any?>? = if (rf != null && rf.valid) mapOf(
+                "durSec" to round3(rf.ridgeDurationSec), "startHz" to round1(rf.startFreqHz),
+                "peakHz" to round1(rf.peakFreqHz), "endHz" to round1(rf.endFreqHz),
+                "vertexSec" to round3(rf.vertexTimeSec), "r2" to round3(rf.rSquared),
+                "winSec" to round3(win.size.toDouble() / SR),
+                "points" to rr!!.points.map { listOf(round3(it.timeSec), round1(it.freqHz)) }) else null
+            exJson[c] = mapOf("fftPng" to "${codes[c]}_fft.png", "cwtPng" to "${codes[c]}_cwt.jpg",
+                "mfccPng" to "${codes[c]}_mfcc.png", "wav" to wav.absolutePath,
+                "exStartMs" to exS[c], "exEndMs" to exE[c], "ridge" to ridgeMap)
         }
 
         val gson = GsonBuilder().create()
-        val phonemes = (0 until K).map { c ->
+        val phonemes: List<Map<String, Any?>> = (0 until K).map { c ->
             val n = count[c].coerceAtLeast(1)
             val avg = DoubleArray(BINS) { sumMag[c][it] / n }
             val sd = DoubleArray(BINS) { sqrt((sumSq[c][it] / n - avg[it] * avg[it]).coerceAtLeast(0.0)) }
-            mapOf("code" to codes[c], "letter" to letters[c], "label" to labels[c], "n" to count[c],
-                "avgMag" to avg.map { round1(it) }, "stdMag" to sd.map { round1(it) },
-                "exemplar" to (if (exClip[c] != null) "${codes[c]}.png" else null))
+            val base: Map<String, Any?> = mapOf("code" to codes[c], "letter" to letters[c], "label" to labels[c], "n" to count[c],
+                "avgMag" to avg.map { round1(it) }, "stdMag" to sd.map { round1(it) })
+            base + (exJson[c] ?: emptyMap<String, Any?>())
         }
         File(Workspace.dir("codebooks"), "${tag}_phoneme_fft.json").writeText(gson.toJson(
             mapOf("tag" to tag, "bins" to BINS, "fmaxHz" to FMAX, "winMs" to WIN_MS,
                 "corpus" to corpus.name, "phonemes" to phonemes)))
-        println("=== wrote ${tag}_phoneme_fft.json (${count.count { it > 0 }}/$K phonemes covered, $pngs exemplar PNGs) ===")
+        println("=== wrote ${tag}_phoneme_fft.json (${count.count { it > 0 }}/$K phonemes, $pngs exemplars ×3 tiles) ===")
     }
 
     private fun framesFor(durMs: Int): List<Pair<Int, Int>> {
@@ -181,4 +201,22 @@ object PhonemeFftCli {
 
     private fun rms(pcm: FloatArray, target: Float = 0.1f) { var s = 0.0; for (v in pcm) s += v.toDouble() * v; val r = sqrt(s / pcm.size.coerceAtLeast(1)); if (r > 1e-5) { val g = (target / r).toFloat(); for (i in pcm.indices) pcm[i] *= g } }
     private fun round1(x: Double) = Math.round(x * 10.0) / 10.0
+    private fun round3(x: Double) = Math.round(x * 1000.0) / 1000.0
+
+    /** MFCC-gram heatmap: coeffs c1.. as rows (low→high, bottom→top), frames as cols. c0 (energy) skipped. */
+    private fun renderMfccPng(frames: List<DoubleArray>, out: File) {
+        if (frames.isEmpty()) return
+        val rows = (frames[0].size - 1).coerceAtLeast(1); val cols = frames.size.coerceAtLeast(1)
+        var lo = Double.MAX_VALUE; var hi = -Double.MAX_VALUE
+        for (fr in frames) for (k in 1 until fr.size) { if (fr[k] < lo) lo = fr[k]; if (fr[k] > hi) hi = fr[k] }
+        val rng = (hi - lo).coerceAtLeast(1e-9)
+        val img = java.awt.image.BufferedImage(cols, rows, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        for (x in 0 until cols) for (r in 0 until rows) img.setRGB(x, rows - 1 - r, viridis(((frames[x][r + 1] - lo) / rng).coerceIn(0.0, 1.0)))
+        ImageIO.write(img, "png", out)
+    }
+    private fun viridis(t: Double): Int {
+        val r = (255 * t * t).toInt().coerceIn(0, 255); val g = (255 * kotlin.math.sqrt(t)).toInt().coerceIn(0, 255)
+        val b = (255 * ((1 - t) * 0.7) + 40).toInt().coerceIn(0, 255)
+        return (r shl 16) or (g shl 8) or b
+    }
 }

@@ -28,7 +28,8 @@ object MetaAnalyzer {
         val age: String, val gender: String, val health: String,
     )
 
-    data class Row(val label: String, val isCough: Boolean, val raw: DoubleArray, val meta: Meta)
+    data class Row(val label: String, val isCough: Boolean, val raw: DoubleArray, val meta: Meta,
+                   val ridge: com.example.FFTT04M.desktop.cough.RidgeFeatures = com.example.FFTT04M.desktop.cough.RidgeFeatures.NONE)
 
     private val GENDERS = setOf("male", "female", "other", "m", "f", "man", "woman")
     private val AGE_RE = Regex("^a(\\d{1,3})$")
@@ -82,6 +83,7 @@ object MetaAnalyzer {
                     isCough = e.speech.isLikelyCough,
                     raw = eventVector(e),
                     meta = meta,
+                    ridge = e.ridge,
                 ))
             }
         }
@@ -135,7 +137,8 @@ object MetaAnalyzer {
     fun tensorCsv(t: Tensor, standardized: Boolean = true): String {
         val sb = StringBuilder()
         sb.append("clip_id,source,sound_type,age,gender,health,is_cough,")
-            .append(featureNames.joinToString(",")).append('\n')
+            .append(featureNames.joinToString(","))
+            .append(",ridge_dur_s,ridge_fstart_hz,ridge_fpeak_hz,ridge_fend_hz,ridge_vertex_t").append('\n')
         for (idx in t.rows.indices) {
             val row = t.rows[idx]
             val m = row.meta
@@ -144,7 +147,10 @@ object MetaAnalyzer {
                 .append(q(m.source)).append(',').append(q(m.soundType)).append(',')
                 .append(q(m.age)).append(',').append(q(m.gender)).append(',').append(q(m.health)).append(',')
             sb.append(if (row.isCough) 1 else 0).append(',')
-            sb.append(vec.joinToString(",") { fmt(it) }).append('\n')
+            sb.append(vec.joinToString(",") { fmt(it) })
+            val rg = row.ridge   // located-squiggle params in RAW Hz/s (not standardised) for distribution analysis
+            sb.append(',').append(fmt(rg.ridgeDurationSec)).append(',').append(fmt(rg.startFreqHz)).append(',')
+                .append(fmt(rg.peakFreqHz)).append(',').append(fmt(rg.endFreqHz)).append(',').append(fmt(rg.vertexTimeSec)).append('\n')
         }
         return sb.toString()
     }
