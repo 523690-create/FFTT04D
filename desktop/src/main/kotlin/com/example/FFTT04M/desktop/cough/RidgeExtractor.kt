@@ -20,16 +20,21 @@ class RidgeExtractor(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig(
     /** Full ridge result including the per-frame points (for drawing the overlay). */
     data class RidgeResult(val features: RidgeFeatures, val points: List<RidgePoint>)
 
-    fun extract(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): RidgeResult {
+    /**
+     * Per-frame ridge points across [startSample,endSample), time-relative to [startSample]. Shared by
+     * [extract] (single global parabola) and [MultiRidgeExtractor] (multi-event splitting) so both stay
+     * in lock-step on frame timing / prominence gating.
+     */
+    fun collectPoints(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): List<RidgePoint> {
         val n = (endSample - startSample).coerceAtLeast(0)
-        if (n < 16) return RidgeResult(RidgeFeatures.NONE, emptyList())
+        if (n < 16) return emptyList()
 
         val win = max(8, (cfg.stftWindowMs / 1000.0 * sampleRate).roundToInt())
         val hop = max(1, (cfg.stftHopMs / 1000.0 * sampleRate).roundToInt())
         val fftSize = FFTUtils.nextPowerOfTwo(win)
         val loBin = CoughDsp.hzToBin(cfg.ridgeLoHz, sampleRate, fftSize).coerceAtLeast(1)
         val hiBin = CoughDsp.hzToBin(cfg.ridgeHiHz, sampleRate, fftSize).coerceAtMost(fftSize / 2 - 1)
-        if (hiBin <= loBin) return RidgeResult(RidgeFeatures.NONE, emptyList())
+        if (hiBin <= loBin) return emptyList()
 
         val points = ArrayList<RidgePoint>()
         var frameStart = startSample
@@ -58,7 +63,11 @@ class RidgeExtractor(private val cfg: CoughAnalysisConfig = CoughAnalysisConfig(
             }
             frameStart += hop
         }
+        return points
+    }
 
+    fun extract(x: FloatArray, startSample: Int, endSample: Int, sampleRate: Int): RidgeResult {
+        val points = collectPoints(x, startSample, endSample, sampleRate)
         if (points.size < 3) return RidgeResult(RidgeFeatures.NONE, points)
 
         val t = DoubleArray(points.size) { points[it].timeSec }

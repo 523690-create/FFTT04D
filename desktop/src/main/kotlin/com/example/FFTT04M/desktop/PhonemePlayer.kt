@@ -168,6 +168,8 @@ object PhonemePlayer {
                     add(javax.swing.JMenuItem("↺  Reset this phoneme").apply { addActionListener { PhonemeSegmentEdits.clearRange(id, seg.wFrom, seg.wTo); rebuildSegs(); note("phoneme reset to decode") } })
                     addSeparator()
                 }
+                add(javax.swing.JMenuItem("🔍  Auto-detect squiggles (this clip)").apply { addActionListener { autoDetectSquiggles() } })
+                addSeparator()
                 add(javax.swing.JMenuItem("decoded: $cls${fb?.let { if (it) "  ✓" else "  ✗" } ?: ""}${lbl?.let { "  · label: $it" } ?: ""}").apply { isEnabled = false })
                 addSeparator()
                 add(javax.swing.JMenuItem("✓  Confirm decode ($cls)").apply { addActionListener { DecodeFeedback.setAll(listOf(id), true); note("confirmed → $cls (feeds training on next rebuild)") } })
@@ -236,6 +238,33 @@ object PhonemePlayer {
                 PhonemeSegmentEdits.setRange(id, wFrom, wTo, t.trim()); rebuildSegs()
                 status = "span → ${t.trim()}  (win $wFrom–$wTo)"
             }
+            repaint()
+        }
+
+        /** Multi-event ridge detection over the whole clip → relabel each detected squiggle's covering
+         *  decode windows to its vertex's code, same as a manual [spanRelabel] drag but automatic and
+         *  batched over every chirp found. Skips spans that are already a single code (nothing to fix).
+         *  Reviewable/reversible exactly like manual edits: written through [PhonemeSegmentEdits], so any
+         *  span can be right-clicked → "Reset this phoneme" afterward. */
+        private fun autoDetectSquiggles() {
+            if (id.isEmpty() || word.isEmpty()) { status = "no decode to relabel"; repaint(); return }
+            val wins = windowsFor(durMs)
+            fun codeAt(i: Int) = PhonemeSegmentEdits.get(id)?.get(i) ?: word.getOrElse(i) { "?" }
+            val events = com.example.FFTT04M.desktop.cough.MultiRidgeExtractor().detect(pcm, 0, pcm.size, SR)
+            var applied = 0
+            for (ev in events) {
+                val msLo = (ev.t0Sec * 1000).toInt(); val msHi = (ev.t1Sec * 1000).toInt()
+                val idxs = wins.indices.filter { wins[it].second > msLo && wins[it].first < msHi }
+                if (idxs.size < 2) continue
+                val wFrom = idxs.first(); val wTo = idxs.last()
+                if (idxs.map { codeAt(it) }.toSet().size <= 1) continue
+                val vMs = (ev.vertexTimeSec * 1000).toInt()
+                val vertexWin = idxs.minByOrNull { w -> kotlin.math.abs((wins[w].first + wins[w].second) / 2 - vMs) } ?: wFrom
+                PhonemeSegmentEdits.setRange(id, wFrom, wTo, codeAt(vertexWin))
+                applied++
+            }
+            rebuildSegs()
+            status = if (applied == 0) "auto-detect: no chopped squiggles found" else "auto-detect: relabeled $applied span(s)"
             repaint()
         }
 

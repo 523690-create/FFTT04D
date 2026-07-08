@@ -179,6 +179,18 @@ tasks.register<JavaExec>("ridgeCheck") {
     maxHeapSize = "3g"
 }
 
+// Headless verification for MultiRidgeExtractor: prints detected squiggle events + the decode windows
+// they cover, for eyeballing against known "chopped squiggle" repro clips without opening the GUI.
+tasks.register<JavaExec>("squiggleDetect") {
+    group = "application"
+    description = "Run multi-event ridge (squiggle) detection over clips and print events vs. decode windows."
+    mainClass.set("com.example.FFTT04M.desktop.SquiggleDetectCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("squiggle.clips", System.getProperty("squiggle.clips") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Precompute per-phoneme FFT (average spectrum + exemplar spectrogram) for the desktop Phoneme-FFT atlas.
 tasks.register<JavaExec>("phonemeFft") {
     group = "application"
