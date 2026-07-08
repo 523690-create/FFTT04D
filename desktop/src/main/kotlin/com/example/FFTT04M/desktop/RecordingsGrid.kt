@@ -393,7 +393,9 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                 val vr = table.rowAtPoint(e.point); val c = table.columnAtPoint(e.point)
                 if (vr < 0) return
                 val r = table.convertRowIndexToModel(vr)
-                if (r in rows.indices && c == 1) AudioPlayer.playSequence(listOf(rows[r].rec.audioFile))
+                // Left-click the FFT cell → the expanded phoneme player (spectrogram + phoneme dividers +
+                // sweep cursor), same as the phoneme atlas. Multi-select sequential play stays on the menu.
+                if (r in rows.indices && c == 1) PhonemePlayer.show(null, rows[r].rec.audioFile)
             }
         })
 
