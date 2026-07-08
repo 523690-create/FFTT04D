@@ -92,17 +92,6 @@ object PhonemeFftAtlas {
         }
     }
 
-    private fun playWindow(wav: File, sMs: Int, eMs: Int) = thread {
-        try {
-            val pcm = AudioDecoder.decode(wav) ?: return@thread
-            val a = ((sMs - 60) * 44100 / 1000).coerceAtLeast(0); val b = ((eMs + 60) * 44100 / 1000).coerceAtMost(pcm.size)
-            if (b - a < 441) return@thread
-            val tmp = File.createTempFile("phon", ".wav").apply { deleteOnExit() }
-            AudioDecoder.writeWavMono16(pcm.copyOfRange(a, b), 44100, tmp)
-            val clip = AudioSystem.getClip(); clip.open(AudioSystem.getAudioInputStream(tmp)); clip.start()
-        } catch (_: Exception) {}
-    }
-
     private class Cell(val ph: Ph, val gMin: Double, val gMax: Double) : JPanel() {
         private val fftImg = ph.fft?.let { runCatching { ImageIO.read(it) }.getOrNull() }
         private val mfccImg = ph.mfcc?.let { runCatching { ImageIO.read(it) }.getOrNull() }
@@ -112,7 +101,7 @@ object PhonemeFftAtlas {
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             toolTipText = "${ph.code} · ${ph.label} — click to play"
             addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent?) { ph.wav?.let { playWindow(it, ph.sMs, ph.eMs) } }
+                override fun mouseClicked(e: java.awt.event.MouseEvent?) { ph.wav?.let { PhonemePlayer.show(null, it) } }
             })
         }
 
