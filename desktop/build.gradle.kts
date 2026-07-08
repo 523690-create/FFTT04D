@@ -168,6 +168,17 @@ tasks.register<JavaExec>("coughPhonemes") {
     maxHeapSize = "3g"
 }
 
+// Ridge ("squiggle") curvature/slope stats grouped by manual label, straight from the labelled clips.
+tasks.register<JavaExec>("ridgeCheck") {
+    group = "application"
+    description = "Report ridge curvature/slope sign + start/peak/end freq per manual label (e.g. croup)."
+    mainClass.set("com.example.FFTT04M.desktop.RidgeCheckCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("ridge.labels", System.getProperty("ridge.labels") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Precompute per-phoneme FFT (average spectrum + exemplar spectrogram) for the desktop Phoneme-FFT atlas.
 tasks.register<JavaExec>("phonemeFft") {
     group = "application"
