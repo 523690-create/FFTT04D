@@ -89,7 +89,7 @@ object PhonemePlayer {
         private var clip: Clip? = null
         private var timer: Timer? = null
         private var tmpWav: File? = null
-        private val TOP = 20
+        private val TOP = 22
 
         init {
             background = Color(0x14, 0x14, 0x18)
@@ -130,19 +130,22 @@ object PhonemePlayer {
             // spectrogram
             if (img != null) g.drawImage(img, 0, specY, w, specH, null)
             else { g.color = Color(0x22, 0x22, 0x28); g.fillRect(0, specY, w, specH) }
-            // top label strip
-            g.color = Color(0x00, 0x00, 0x00); g.fillRect(0, 0, w, TOP)
-            // phoneme segments: black dividers + centred code labels
-            g.font = g.font.deriveFont(11f)
+            // top strip = phoneme "ribbon": one CLASS-COLOURED, labelled block per segment, so each label
+            // unambiguously belongs to its coloured segment; the block boundary carries down onto the spectrogram.
+            g.color = Color(0x0a, 0x0a, 0x0e); g.fillRect(0, 0, w, TOP)
+            g.font = g.font.deriveFont(java.awt.Font.BOLD, 11f)
             for ((s, e, code) in segs) {
-                val x0 = xOf(s); val x1 = xOf(e)
-                g.color = Color(0, 0, 0); g.stroke = java.awt.BasicStroke(1.5f)
-                g.drawLine(x1, specY, x1, h)                    // divider at segment end
-                g.color = if (code == "?") Color(0x66, 0x66, 0x66) else Color(0xe8, 0xe8, 0xe8)
+                val x0 = xOf(s); val x1 = xOf(e); val bw = (x1 - x0).coerceAtLeast(1)
+                val cc = if (code == "?") Color(0x44, 0x44, 0x48) else PhonemeCloud.classColor(code.takeWhile { it.isLetter() })
+                g.color = Color(cc.red, cc.green, cc.blue, 235); g.fillRect(x0, 0, bw, TOP - 1)
+                g.color = Color(0x0a, 0x0a, 0x0e); g.drawLine(x1 - 1, 0, x1 - 1, TOP)                       // block separator
+                g.color = Color(0, 0, 0); g.stroke = java.awt.BasicStroke(1.3f); g.drawLine(x1, TOP, x1, h) // spectrogram divider
+                val lum = 0.299 * cc.red + 0.587 * cc.green + 0.114 * cc.blue
+                g.color = if (lum > 140) Color.black else Color.white
                 val lw = g.fontMetrics.stringWidth(code)
-                if (x1 - x0 > lw + 4) g.drawString(code, ((x0 + x1) / 2 - lw / 2), 14)
+                when { bw > lw + 3 -> g.drawString(code, x0 + (bw - lw) / 2, 15); bw > 8 -> g.drawString(code.take(2), x0 + 1, 15) }
             }
-            if (segs.isEmpty()) { g.color = Color(0x88, 0x88, 0x88); g.drawString("(no phoneme decode for this clip)", 6, 14) }
+            if (segs.isEmpty()) { g.color = Color(0x88, 0x88, 0x88); g.drawString("(no phoneme decode for this clip)", 6, 15) }
             // white sweep cursor
             val cx = xOf(curMs)
             g.color = Color(0xff, 0xff, 0xff); g.stroke = java.awt.BasicStroke(1.5f)
