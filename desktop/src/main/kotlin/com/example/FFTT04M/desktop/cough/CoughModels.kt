@@ -120,7 +120,7 @@ data class CoughAnalysisConfig(
     val highBandHiHz: Double = 6000.0,
     // Ridge band (Hz) — the "squiggle" lives here
     val ridgeLoHz: Double = 300.0,
-    val ridgeHiHz: Double = 1000.0,
+    val ridgeHiHz: Double = 2000.0,
     val stftWindowMs: Double = 25.0,
     val stftHopMs: Double = 10.0,
     /** A frame contributes a ridge point only if its in-band peak exceeds this fraction of the

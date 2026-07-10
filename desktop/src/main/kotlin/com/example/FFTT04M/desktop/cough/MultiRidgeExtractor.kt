@@ -3,7 +3,7 @@ package com.example.FFTT04M.desktop.cough
 import kotlin.math.abs
 
 /**
- * Multi-event extension of [RidgeExtractor]. A cough segment's 300–1000 Hz ridge often contains
+ * Multi-event extension of [RidgeExtractor]. A cough segment's 300–2000 Hz ridge often contains
  * SEVERAL short parabolic chirps ("squiggles") back to back, not one — [RidgeExtractor.extract] fits a
  * single global parabola and blurs them together. This groups the frame-level ridge points into
  * contiguous runs (breaking on any gap where a frame failed the prominence gate), then RECURSIVELY

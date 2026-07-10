@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * "Squiggle sweep": scan a folder of COMPLETE clips, detect every 300–1000 Hz parabolic-ridge chirp
+ * "Squiggle sweep": scan a folder of COMPLETE clips, detect every 300–2000 Hz parabolic-ridge chirp
  * ("squiggle") in each via [MultiRidgeExtractor], and for each squiggle:
  *   - extract its `[t0,t1]` span (padded, min-kept) into [outDir] (default `G:\squiggles`) as a mono-16
  *     WAV named with its parameters,

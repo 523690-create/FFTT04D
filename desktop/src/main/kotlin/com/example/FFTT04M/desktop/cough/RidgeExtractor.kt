@@ -5,10 +5,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
- * Extracts the "bronchitis squiggle": a short time–frequency ridge in the 300–1000 Hz band whose
+ * Extracts the "bronchitis squiggle": a short time–frequency ridge in the 300–2000 Hz band whose
  * instantaneous frequency follows a near-parabolic trajectory (research brief / email §2).
  *
- * Pipeline: STFT (Hann, ~25 ms / ~10 ms) → for each frame keep only the 300–1000 Hz rows → take the
+ * Pipeline: STFT (Hann, ~25 ms / ~10 ms) → for each frame keep only the 300–2000 Hz rows → take the
  * peak-energy bin (sub-bin interpolated) as f_t, if it's prominent enough → fit f ≈ a·t² + b·t + c
  * to the {(t, f_t)} sequence by least squares. Yields a compact, comparable feature vector.
  */
