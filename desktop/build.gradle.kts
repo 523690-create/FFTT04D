@@ -249,6 +249,19 @@ tasks.register<JavaExec>("harvestClassify") {
     maxHeapSize = "3g"
 }
 
+// Stacked multi-signal cough-isolation gate (see COUGH_ISOLATION.md): joins harvest_compare/forest/
+// hallmark CSVs, trains a fused LR over head+wavelet+forest+hallmark, 5-fold CV vs each single method,
+// saves data/codebooks/cough_gate.json + cough_harvest/cough_gate.csv. No GPU re-burn.
+tasks.register<JavaExec>("coughGate") {
+    group = "application"
+    description = "Train + evaluate the stacked cough-isolation gate over existing harvest signal CSVs."
+    mainClass.set("com.example.FFTT04M.desktop.CoughGateCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("gate.harvest", System.getProperty("gate.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Headless CWT/FFT image generation over a folder (resumable, all cores, GPU CWT via jcufft).
 // e.g. -Dimage.dir=D:\AndroidProjects\cough_harvest\cough_found_in_other -Dimage.skip=_rejected_lowP
 tasks.register<JavaExec>("cwtImages") {
