@@ -739,11 +739,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
             tp.finish()
             sweeping = false
-            if (!s.cancelled && s.squiggles > 0) {
-                val list = DatasetLoader.loadFolder(outDir, "squiggles", recursive = false)
-                if (list.isNotEmpty()) openBreakout("Squiggles — ${list.size}", list)
-                else showStatus("Squiggle sweep done but no clips loaded from ${outDir.absolutePath}")
-            }
+            if (!s.cancelled && s.squiggles > 0) SquiggleAtlas.show(this@AnalyzerWindow, outDir)
         }
     }
 
