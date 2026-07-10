@@ -115,14 +115,15 @@ object BreathSpecCli {
         println("\nsamples ${data.size} · feature coverage: HuBERT ${hubIdx.size}/${data.size} · segHuBERT ${segIdx.size}/${data.size}")
 
         // ---- per-modality OOF ----
-        val pStat = oof(data.map { it.stat }, y)
-        val pResp = oof(data.map { it.resp }, y)
-        val pDsp = oof(data.map { it.resp + it.stat }, y)
-        val pMfcc = oof(data.map { it.mfcc }, y)
+        val ids = data.map { it.id }
+        val pStat = oof(data.map { it.stat }, y, ids)
+        val pResp = oof(data.map { it.resp }, y, ids)
+        val pDsp = oof(data.map { it.resp + it.stat }, y, ids)
+        val pMfcc = oof(data.map { it.mfcc }, y, ids)
         var pHub: DoubleArray? = null
         var pSeg: DoubleArray? = null
-        if (hasHub) pHub = oofMasked(data.map { it.hub }, y)
-        if (hasSeg) pSeg = oofMasked(data.map { it.seg }, y)
+        if (hasHub) pHub = oofMasked(data.map { it.hub }, y, ids)
+        if (hasSeg) pSeg = oofMasked(data.map { it.seg }, y, ids)
 
         println("\nmodality               acc    cough-recall  breath-reject")
         m("static (WholeClip)", pStat, y); m("DSP look-back event", pResp, y); m("DSP (event+static)", pDsp, y)
@@ -136,13 +137,13 @@ object BreathSpecCli {
             val withMfcc = if (useMfcc) base + pMfcc[i] else base
             if (useSeg && hasSeg) withMfcc + pSeg!![i] else withMfcc
         }
-        val pFusedBase = oof(stackOf(false, false), y)
+        val pFusedBase = oof(stackOf(false, false), y, ids)
         m(if (hasHub) "FUSED DSP+HuBERT" else "FUSED DSP", pFusedBase, y)
-        val pFusedMfcc = oof(stackOf(true, false), y)
+        val pFusedMfcc = oof(stackOf(true, false), y, ids)
         m("FUSED +MFCC-dyn", pFusedMfcc, y)
         var pFusedAll = pFusedMfcc
         if (hasSeg) {
-            pFusedAll = oof(stackOf(true, true), y)
+            pFusedAll = oof(stackOf(true, true), y, ids)
             m("FUSED +MFCC+segHuBERT", pFusedAll, y)
         }
 
@@ -173,7 +174,7 @@ object BreathSpecCli {
             val breathByScore = data.indices.filter { !y[it] }.sortedByDescending { curFused[it] }
             val cut = breathByScore.take((breathByScore.size * 0.25).toInt().coerceAtLeast(1)).toSet()
             for (i in cut) weights[i] *= 3.0
-            curFused = oofWeighted(stackFinal, y, weights)
+            curFused = oofWeighted(stackFinal, y, weights, ids)
             m("round $round upweighted", curFused, y)
             report("round $round upweighted", curFused, y, breathRate)
         }
@@ -189,11 +190,11 @@ object BreathSpecCli {
             val hardBreath = data.indices.filter { !y[it] }.sortedByDescending { curFused[it] }
                 .take((nBreath * 0.25).toInt().coerceAtLeast(1)).toSet()
             val hubWeights = DoubleArray(data.size) { if (it in hardBreath) 3.0 else 1.0 }
-            val pHubUp = oofMaskedWeighted(data.map { it.hub }, y, hubWeights)
+            val pHubUp = oofMaskedWeighted(data.map { it.hub }, y, hubWeights, ids)
             m("HuBERT (hard-neg upweighted)", pHubUp, y, hubIdx)
             report("HuBERT (hard-neg upweighted)", pHubUp, y, breathRate, hubIdx)
             val stackHubUp = data.indices.map { i -> doubleArrayOf(pDsp[i], pHubUp[i], pMfcc[i]) }
-            pFusedHubUp = oof(stackHubUp, y)
+            pFusedHubUp = oof(stackHubUp, y, ids)
             m("FUSED (HuBERT upweighted)", pFusedHubUp, y)
             report("FUSED (HuBERT upweighted)", pFusedHubUp, y, breathRate)
         }
@@ -205,11 +206,15 @@ object BreathSpecCli {
         }
     }
 
+    /** Deterministic id-hash fold (same clip -> same fold across every oof() call and every run,
+     *  regardless of the concurrent-decode thread pool's completion order). */
+    private fun fold(id: String) = ((id.hashCode() % 5) + 5) % 5
+
     /** 5-fold out-of-fold P(cough) for a feature set (full coverage). */
-    private fun oof(x: List<DoubleArray>, y: List<Boolean>): DoubleArray {
+    private fun oof(x: List<DoubleArray>, y: List<Boolean>, ids: List<String>): DoubleArray {
         val out = DoubleArray(x.size)
         for (k in 0 until 5) {
-            val tr = x.indices.filter { it % 5 != k }; val te = x.indices.filter { it % 5 == k }
+            val tr = x.indices.filter { fold(ids[it]) != k }; val te = x.indices.filter { fold(ids[it]) == k }
             val model = WholeClipClassifier.train(tr.map { x[it] to if (y[it]) "cough" else "expiration" }, classes)
             for (i in te) { val (lab, p) = model.predict(x[i]); out[i] = if (lab == "cough") p else 1 - p }
         }
@@ -217,12 +222,12 @@ object BreathSpecCli {
     }
 
     /** 5-fold OOF over a possibly-null feature set — trains/tests only on covered indices, neutral (0.5) elsewhere. */
-    private fun oofMasked(x: List<DoubleArray?>, y: List<Boolean>): DoubleArray {
+    private fun oofMasked(x: List<DoubleArray?>, y: List<Boolean>, ids: List<String>): DoubleArray {
         val out = DoubleArray(x.size) { 0.5 }
         val idx = x.indices.filter { x[it] != null }
         if (idx.size < 50) return out
         for (k in 0 until 5) {
-            val trI = idx.filter { it % 5 != k }; val teI = idx.filter { it % 5 == k }
+            val trI = idx.filter { fold(ids[it]) != k }; val teI = idx.filter { fold(ids[it]) == k }
             if (trI.isEmpty() || teI.isEmpty()) continue
             val model = WholeClipClassifier.train(trI.map { x[it]!! to if (y[it]) "cough" else "expiration" }, classes)
             for (i in teI) { val (lab, p) = model.predict(x[i]!!); out[i] = if (lab == "cough") p else 1 - p }
@@ -231,10 +236,10 @@ object BreathSpecCli {
     }
 
     /** 5-fold OOF with per-sample weights fed into the meta-LR (hard-negative upweighting). */
-    private fun oofWeighted(x: List<DoubleArray>, y: List<Boolean>, w: DoubleArray): DoubleArray {
+    private fun oofWeighted(x: List<DoubleArray>, y: List<Boolean>, w: DoubleArray, ids: List<String>): DoubleArray {
         val out = DoubleArray(x.size)
         for (k in 0 until 5) {
-            val tr = x.indices.filter { it % 5 != k }; val te = x.indices.filter { it % 5 == k }
+            val tr = x.indices.filter { fold(ids[it]) != k }; val te = x.indices.filter { fold(ids[it]) == k }
             val trW = DoubleArray(tr.size) { w[tr[it]] }
             val model = WholeClipClassifier.train(tr.map { x[it] to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
             for (i in te) { val (lab, p) = model.predict(x[i]); out[i] = if (lab == "cough") p else 1 - p }
@@ -244,12 +249,12 @@ object BreathSpecCli {
 
     /** 5-fold OOF over a possibly-null feature set, WITH per-sample weights on the covered subset
      *  (hard-negative upweighting applied directly to a base modality, not just the meta-stack). */
-    private fun oofMaskedWeighted(x: List<DoubleArray?>, y: List<Boolean>, w: DoubleArray): DoubleArray {
+    private fun oofMaskedWeighted(x: List<DoubleArray?>, y: List<Boolean>, w: DoubleArray, ids: List<String>): DoubleArray {
         val out = DoubleArray(x.size) { 0.5 }
         val idx = x.indices.filter { x[it] != null }
         if (idx.size < 50) return out
         for (k in 0 until 5) {
-            val trI = idx.filter { it % 5 != k }; val teI = idx.filter { it % 5 == k }
+            val trI = idx.filter { fold(ids[it]) != k }; val teI = idx.filter { fold(ids[it]) == k }
             if (trI.isEmpty() || teI.isEmpty()) continue
             val trW = DoubleArray(trI.size) { w[trI[it]] }
             val model = WholeClipClassifier.train(trI.map { x[it]!! to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
@@ -284,7 +289,6 @@ object BreathSpecCli {
      *  clip embeddings) as stage 1, then the fused discriminative gate at its 90%-recall threshold as
      *  stage 2. Reports combined recall/breath-FP/alarms-per-hour vs stage-2-alone. */
     private fun cascade(data: List<Sample>, y: List<Boolean>, pFused: DoubleArray, breathRate: Double) {
-        fun fold(id: String) = ((id.hashCode() % 5) + 5) % 5
         fun norm(v: DoubleArray): DoubleArray { var s = 0.0; for (x in v) s += x * x; val n = sqrt(s).coerceAtLeast(1e-9); return DoubleArray(v.size) { v[it] / n } }
         fun dist2(a: DoubleArray, b: DoubleArray): Double { var s = 0.0; for (i in a.indices) { val d = a[i] - b[i]; s += d * d }; return s }
 
