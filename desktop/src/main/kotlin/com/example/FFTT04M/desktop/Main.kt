@@ -47,6 +47,10 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
     @Volatile private var isolating = false
     private val isolatingToken = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    private lateinit var squiggleButton: JButton
+    @Volatile private var sweeping = false
+    private val sweepToken = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val fractionateTokens =
         java.util.concurrent.ConcurrentHashMap<JButton, java.util.concurrent.atomic.AtomicBoolean>()
 
@@ -173,6 +177,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Trim cough WAVs down to the detected cough (ALLDATA + extras, picked at runtime).
         isolateButton = createButton("ISOLATE COUGHS") { onIsolateCoughs() }
         buttonPanel.add(isolateButton)
+        // Sweep a corpus for 300–1000 Hz ridge "squiggles" → G:\squiggles + own breakout window.
+        squiggleButton = createButton("Squiggle Sweep ⇱") { onSquiggleSweep() }
+        buttonPanel.add(squiggleButton)
         // Cloud meta-analysis: measure your own (extras) recordings against ALLDATA clouds.
         buttonPanel.add(createButton("Cloud Match (extras)") { onCloudMatch() })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
@@ -674,6 +681,69 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             }
             tp.finish()
             isolating = false
+        }
+    }
+
+    /**
+     * Squiggle sweep: scan a chosen corpus of complete clips for 300–1000 Hz ridge "squiggles"
+     * ([MultiRidgeExtractor]), extract each into G:\squiggles (params in the filename + a manifest),
+     * render a CWT scalogram per squiggle, then open the results in their own breakout window (FFT +
+     * MFCC are rendered live by the grid). Background thread; the button toggles to Cancel.
+     */
+    private fun onSquiggleSweep() {
+        if (sweeping) { sweepToken.set(true); showStatus("Cancelling squiggle sweep…"); return }
+
+        val source = pickDirectory("Squiggle sweep: folder of complete clips to scan",
+            "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
+        val outDir = File("G:\\squiggles")
+        val cwtChoice = JOptionPane.showConfirmDialog(this,
+            "Also render a Morlet-CWT scalogram (<wav>.jpg) per squiggle so the Wavelet column shows?\n\n" +
+            "Yes = render now on the CPU (all cores). FFT + MFCC always show (rendered live from the WAV).\n" +
+            "No  = skip scalograms now; you can run \"CWT images (GPU)\" on G:\\squiggles later for speed.",
+            "Squiggle Sweep — scalograms", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
+        if (cwtChoice == JOptionPane.CANCEL_OPTION || cwtChoice == JOptionPane.CLOSED_OPTION) return
+        val doCwt = cwtChoice == JOptionPane.YES_OPTION
+
+        sweeping = true
+        sweepToken.set(false)
+        val tp = TaskProgress("Squiggle Sweep")
+        SwingUtilities.invokeLater {
+            squiggleButton.text = "Cancel Squiggle Sweep"
+            analysisResultsArea.append("\nSquiggle sweep: ${source.absolutePath}\n  -> ${outDir.absolutePath} (scalograms: ${if (doCwt) "yes" else "no"})\n")
+            analysisResultsArea.caretPosition = analysisResultsArea.document.length
+        }
+        thread {
+            logLine("Squiggle sweep: started over ${source.absolutePath}")
+            var nextLog = 0
+            val s = SquiggleSweep.run(source, outDir, doCwt, sweepToken) { p ->
+                tp.update(p.done, p.total, p.message)
+                if (p.done >= nextLog || p.done == p.total) {
+                    logLine("Squiggle: ${p.message}"); nextLog = p.done + (p.total / 10).coerceAtLeast(50)
+                }
+            }
+            val report = buildString {
+                append(if (s.cancelled) "=== Squiggle sweep cancelled ===\n" else "=== Squiggle sweep complete ===\n")
+                append(String.format(
+                    "%d clips · %d with squiggles · %d squiggles · %d no-detect · %d failed · %d scalograms · %.1fs%n",
+                    s.totalClips, s.clipsWithSquiggles, s.squiggles, s.noDetect, s.failed, s.cwtRendered, s.elapsedS))
+                append("out: ${s.outDir.absolutePath}\nmanifest: ${File(s.outDir, "squiggles_manifest.csv").absolutePath}\n")
+            }
+            SwingUtilities.invokeLater {
+                analysisResultsArea.append(report)
+                analysisResultsArea.caretPosition = analysisResultsArea.document.length
+                squiggleButton.text = "Squiggle Sweep ⇱"
+                statusLabel.text = if (s.cancelled)
+                    "Squiggle sweep cancelled — ${s.squiggles} squiggles"
+                else
+                    "Squiggle sweep: ${s.squiggles} squiggles from ${s.clipsWithSquiggles} clips in ${"%.1f".format(s.elapsedS)}s"
+            }
+            tp.finish()
+            sweeping = false
+            if (!s.cancelled && s.squiggles > 0) {
+                val list = DatasetLoader.loadFolder(outDir, "squiggles", recursive = false)
+                if (list.isNotEmpty()) openBreakout("Squiggles — ${list.size}", list)
+                else showStatus("Squiggle sweep done but no clips loaded from ${outDir.absolutePath}")
+            }
         }
     }
 
