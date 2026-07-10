@@ -27,7 +27,8 @@ object RespiratoryEvent {
     val names = listOf(
         "inspDurMs", "inspCentroidSlope", "inspFlat", "gapDepth", "gapDurMs",
         "attackMs", "decayMs", "widthMs", "centroidSweep", "hfRatio",
-        "snoreScore", "lowFreqRatio", "pitchStrength", "nEvents", "eventPeakRatio")
+        "snoreScore", "lowFreqRatio", "pitchStrength", "nEvents", "eventPeakRatio",
+        "inspRiseRate", "inspPeakFlow")   // inspiration RAPIDITY (hypothesis: faster/steeper before a cough)
 
     private const val WIN = 1024
     private const val EPS = 1e-9
@@ -99,9 +100,16 @@ object RespiratoryEvent {
         while (i < nf) { if (rms[i] > 0.4 * pkV) { nEvents++; i += sep } else i++ }
         val eventPeakRatio = pkV / (sortedR[(0.5 * (nf - 1)).toInt()].coerceAtLeast(EPS))
 
+        // inspiration RAPIDITY: how fast airflow ramps up during the inhale (hypothesis: steeper before
+        // a cough — a forced pre-cough inspiration is quicker/deeper than a relaxed tidal breath).
+        val inspDurSec = (inspDurMs / 1000.0).coerceAtLeast(0.01)
+        val inspRiseRate = ((rms[inspPeak] - rms[inspOnset]).coerceAtLeast(0.0) / pkV) / inspDurSec  // norm. RMS rise per sec
+        val inspPeakFlow = rms[inspPeak] / pkV                                                        // inhale loudness vs the burst
+
         return doubleArrayOf(inspDurMs, inspCentroidSlope, inspFlat, gapDepth, gapDurMs,
             attackMs, decayMs, widthMs, centroidSweep, hfRatio,
-            snoreScore, lowFreqRatio, pitchStrength, nEvents.toDouble(), eventPeakRatio)
+            snoreScore, lowFreqRatio, pitchStrength, nEvents.toDouble(), eventPeakRatio,
+            inspRiseRate, inspPeakFlow)
     }
 
     private fun slope(arr: DoubleArray, lo: Int, hi: Int): Double {

@@ -276,6 +276,18 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Best multimodal cough-vs-EXPIRATION discriminator (the residual boundary): stack HuBERT (cached) +
+// DSP look-back + static, ablation + inspiration-rapidity test. -Deval.alldata=...
+tasks.register<JavaExec>("coughVsExp") {
+    group = "application"
+    description = "Multimodal cough-vs-expiration discriminator (HuBERT + DSP look-back + static), ablated."
+    mainClass.set("com.example.FFTT04M.desktop.CoughVsExpCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    maxHeapSize = "4g"
+}
+
 // KEYSTONE: multi-class post-inspiration classifier over RespiratoryEvent look-back features
 // (expiration/cough/sneeze/snore/speech). Coswara + ESC-50, DSP only. -Deval.alldata=...
 tasks.register<JavaExec>("inspirationClassify") {
