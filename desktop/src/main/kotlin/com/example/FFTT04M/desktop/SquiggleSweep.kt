@@ -114,10 +114,32 @@ object SquiggleSweep {
             }.forEach { it.get() }
         } finally { pool.shutdown() }
 
-        // Manifest is fully derived → rewrite it each run (rows sorted for stable diffs).
-        File(outDir, "squiggles_manifest.csv").bufferedWriter().use { w ->
+        // Manifest MERGE (not overwrite): sweeping several corpora into one outDir must accumulate, and
+        // resumed runs must not drop rows from prior sweeps. Key by the `file` column (index 11 — same
+        // position in both the 12-col legacy header and the 13-col parentPath header). Keep any existing
+        // row whose WAV still exists on disk; this run's rows override on collision. Sorted for stable diffs.
+        val FILE_COL = 11
+        val merged = LinkedHashMap<String, String>()
+        val mf = File(outDir, "squiggles_manifest.csv")
+        if (mf.exists()) {
+            mf.useLines { lines ->
+                lines.drop(1).forEach { line ->
+                    if (line.isBlank()) return@forEach
+                    val cols = line.split(',')
+                    if (cols.size > FILE_COL) {
+                        val fn = cols[FILE_COL]
+                        if (File(outDir, fn).exists()) merged[fn] = line
+                    }
+                }
+            }
+        }
+        for (row in manifest) {
+            val cols = row.split(',')
+            if (cols.size > FILE_COL) merged[cols[FILE_COL]] = row
+        }
+        mf.bufferedWriter().use { w ->
             w.write("id,squiggleIdx,startMs,endMs,durMs,vertexMs,vertexHz,curvature,r2,frames,meanEnergy,file,parentPath\n")
-            for (row in manifest.sorted()) { w.write(row); w.write("\n") }
+            for (row in merged.values.sorted()) { w.write(row); w.write("\n") }
         }
         return Summary(total, clipsWith.get(), squiggles.get(), noDetect.get(), failed.get(),
             cwt.get(), (System.nanoTime() - startNs) / 1e9, cancel.get(), outDir)

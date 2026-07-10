@@ -37,7 +37,8 @@ object ImageBatch {
      * be cancelled independently — the GPU pass offloads its FFTs while the CPU passes use the cores.
      */
     fun run(folder: File, mode: Mode, cancel: AtomicBoolean,
-            skipDirName: String? = null, onProgress: (Progress) -> Unit): Summary {
+            skipDirName: String? = null, onlyNames: Set<String>? = null,
+            onProgress: (Progress) -> Unit): Summary {
         val startNs = System.nanoTime()
 
         val wavs = folder.walkTopDown()
@@ -45,6 +46,9 @@ object ImageBatch {
             // optionally prune a subtree (e.g. `_rejected_lowP`) so a pass images only the review pile
             .filter { wav -> skipDirName == null || generateSequence(wav.parentFile) { it.parentFile }
                 .takeWhile { it != folder.parentFile }.none { it.name.equals(skipDirName, true) } }
+            // optionally restrict to an explicit filename allow-list (e.g. only cough-derived squiggles
+            // in a mixed folder) — image only these, leaving the rest of the folder untouched
+            .filter { wav -> onlyNames == null || wav.name in onlyNames }
             .toList()
         val todo = wavs.filter { !targetFor(it, mode).isFile }
         val total = todo.size
