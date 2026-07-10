@@ -119,3 +119,41 @@ softmax LR reused), 5-fold CV, reports fused vs each single method (FP on hard-n
 - [ ] User-domain override: p3 multi-class letter authoritative for user voice.
 
 See memory `cough_isolation_ensemble`.
+
+---
+
+## Competitive evaluation under canonical ground truth (2026-07-10)
+
+User's 5 hard conditions (subtypes ignored) → `CoughTruth.kt`: device manual labels are hard (cond 2);
+coswara/COUGHVID cough-mention = POSITIVE BAG (cond 3); non-cough recording types / non-cough DBs = hard
+negatives (cond 4). ALLDATA `is_cough` already encodes cond 3&4. Positives inform RECALL only (a bag may
+also contain non-cough); hard negatives inform the FALSE-POSITIVE rate (the trustworthy axis).
+
+`CoughEvalCli` (`:desktop:coughEval`) OR-pools each method's per-segment calls to clip level over all
+76,146 clips (no GPU); `AllDataScoreCli` (`:desktop:allDataScore`) adds the WHOLE-CLIP method family
+(forest/squiggle/speech, segmenter-independent). Commits `72d25df`, `367050a`.
+
+```
+method            recall(POS)  FP(NEG)  Youden-J
+  head              77.5%       12.8%    +64.7     seg-OR content
+  hallmark          76.5%       19.9%    +56.6
+  fuser>=.7         73.8%        7.6%    +66.3     ← best seg-OR balance
+  fuser>=.8         68.3%        5.0%    +63.3
+  forest@seg        86.3%       35.9%    +50.5     over-fires (known)
+  forest@wc>=.5     89.3%       26.0%    +63.3     ← highest recall; whole-clip
+  forest@wc>=.7     77.1%       12.2%    +65.0     whole-clip, no segmenter
+  squiggle*         ≤60%        ≥23%     low       NOT a cough gate (fires on breath)
+UNION(fuser.7 ∨ forest@wc.7)  89.2%  17.1%        ← recall >> either alone
+INTERSECT(both)               61.8%   2.6%        ← very high precision
+```
+
+**Findings:** (1) **Breathing + counting are the dominant false positives** (impulsive non-coughs);
+vowels/urban8k are easy (~2–6% FP). (2) **Whole-clip gating fixes the short-clip blind spot**:
+dataset_1sec (1-sec coughs) recall 35.6% (head) → **95.6%** (forest@wc≥.5) — the DSP segmenter extracts
+no candidate from short/quiet clips, so any seg-downstream method misses them; a whole-clip gate doesn't.
+(3) **The two families are complementary** (union recall 89% ≫ either ~74–77%) → the best cough/not-cough
+gate is a CLIP-LEVEL stacked fuser over BOTH seg-OR content signals AND the whole-clip forest, tunable
+from INTERSECT-like (62%/2.6%) to UNION-like (89%/17%). See memory `cough_eval_framework`.
+
+- [ ] **Build the clip-level meta-fuser over both families** (recommended best gate).
+- [ ] Device-recording eval (condition 2) over device_ingest/p3 with manual hard labels.
