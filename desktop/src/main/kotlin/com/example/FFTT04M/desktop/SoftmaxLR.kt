@@ -9,10 +9,12 @@ import kotlin.math.exp
  */
 object SoftmaxLR {
 
-    /** Returns (weights[class][feature], bias[class]). */
+    /** Returns (weights[class][feature], bias[class]). [sampleWeight] (optional, one entry per sample,
+     *  same order as [xs]) multiplies the class-balanced weight — used for hard-negative upweighting. */
     fun train(
         xs: List<DoubleArray>, ys: List<Int>, nClasses: Int,
         l2: Double = 0.02, lr: Double = 0.5, iters: Int = 500,
+        sampleWeight: DoubleArray? = null,
     ): Pair<Array<DoubleArray>, DoubleArray> {
         val f = xs.firstOrNull()?.size ?: 0
         val c = nClasses
@@ -27,7 +29,7 @@ object SoftmaxLR {
                 val yi = ys[n]; if (yi < 0 || yi >= c) continue
                 val x = xs[n]
                 val p = probs(w, b, x)
-                val weight = cw[yi]
+                val weight = cw[yi] * (sampleWeight?.get(n) ?: 1.0)
                 for (k in 0 until c) {
                     val err = (p[k] - if (k == yi) 1.0 else 0.0) * weight
                     gb[k] += err; for (j in 0 until f) gw[k][j] += err * x[j]

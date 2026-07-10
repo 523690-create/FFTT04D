@@ -415,6 +415,21 @@ tasks.register<JavaExec>("cwtImages") {
     maxHeapSize = "3g"
 }
 
+// Breath-specificity refinement: reframes the metric as breath-FP @ fixed 90% cough-recall -> false-
+// alarms/hour under the real breath base rate (not balanced accuracy), adds segment-HuBERT + MFCC-
+// dynamics modalities (marginal-gain ablation), hard-negative mining + upweighted retrain, and an
+// end-to-end one-class-library -> discriminative-gate cascade. Cached embeddings only, no GPU.
+tasks.register<JavaExec>("breathSpec") {
+    group = "application"
+    description = "Breath-FP@90%recall -> alarms/hour; seg-HuBERT+MFCC ablation; hard-neg upweight; one-class cascade."
+    mainClass.set("com.example.FFTT04M.desktop.BreathSpecCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("breath.rate", System.getProperty("breath.rate") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Create fat JAR for direct execution (visible window)
 tasks.register<Jar>("fatJar") {
     manifest {

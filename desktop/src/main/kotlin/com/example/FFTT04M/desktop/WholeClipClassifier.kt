@@ -29,7 +29,7 @@ object WholeClipClassifier {
         }
     }
 
-    fun train(samples: List<Pair<DoubleArray, String>>, classes: List<String>): Model {
+    fun train(samples: List<Pair<DoubleArray, String>>, classes: List<String>, sampleWeight: DoubleArray? = null): Model {
         val d = samples.first().first.size
         val mean = DoubleArray(d); val std = DoubleArray(d)
         for ((x, _) in samples) for (i in 0 until d) mean[i] += x[i]
@@ -38,7 +38,7 @@ object WholeClipClassifier {
         for (i in 0 until d) std[i] = sqrt(std[i] / samples.size).coerceAtLeast(1e-9)
         val xs = samples.map { (x, _) -> DoubleArray(d) { (x[it] - mean[it]) / std[it] } }
         val ys = samples.map { classes.indexOf(it.second) }
-        val (w, b) = SoftmaxLR.train(xs, ys, classes.size)
+        val (w, b) = SoftmaxLR.train(xs, ys, classes.size, sampleWeight = sampleWeight)
         return Model(classes, mean, std, w, b)
     }
 
