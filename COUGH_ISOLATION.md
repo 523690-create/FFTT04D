@@ -81,24 +81,39 @@ softmax LR reused), 5-fold CV, reports fused vs each single method (FP on hard-n
   content). Saved: `data/codebooks/cough_gate.json` (fuser weights), `cough_harvest/cough_gate.csv`
   (175,483 rows: id + per-signal + pFused + verdict).
 
-- [ ] Add signal 4 (squiggle): **id-space mismatch found, NOT a simple join.** The squiggle sweep's
-      manifest `id` column is the PARENT clip's id (e.g. one whole ALLDATA/coswara recording), while a
-      harvested segment's id encodes a sub-span suffix within that parent (e.g.
-      `..._India__cough0_0-305ms`). Confirmed by direct lookup: the harvest id above has ZERO manifest
-      rows, but stripping its `__cough0_0-305ms` suffix to recover the parent id finds 2+ squiggle rows
-      with their own `[startMs,endMs]` in the *parent's* timeline. A correct per-segment join must (a)
-      parse the segment id's trailing `_coughN_STARTms-ENDms` (or equivalent) offset, (b) look up
-      squiggle events for the parsed parent id, (c) keep only squiggle spans overlapping
-      `[START,END]` (or within some pad), then aggregate max-R²/count over just those. Also coverage is
-      partial: the squiggle sweep only covered `cough_confirmed` + `ALLDATA` + `true_cough` + legacy
-      sources (per [[squiggle-sweep]]), NOT the `cough_found_in_other` bucket, so ~1/3 of harvest
-      segments (the "found in other" ones) will never have a squiggle signal — those rows must degrade
-      gracefully (NaN → 0, same pattern as the other signals). Left unimplemented rather than rushed:
-      wrong offset parsing would silently corrupt a training signal. Next session: write the id-parse +
-      overlap-join as its own small utility, spot-check 5-10 known segments by hand before trusting it.
-- [ ] Speech-cue features (pitch/flatness/syllabic) per segment — needs a per-segment DSP pass over the
-      harvest WAVs (WholeClipFeatures-style); not yet run at segment granularity (only computed on
-      whole clips elsewhere in the codebase).
+- [x] **Signals 4+5 added (squiggle + speech cues), v2 fuser measured (2026-07-10, commit `63ac5ba`).**
+      Sidestepped the id-space join entirely: the harvest segments are ALREADY isolated WAVs and the
+      segment filename == the CSV id, so `HarvestDspCli` (`:desktop:harvestDsp`, all cores, no GPU, 140s
+      for all 175,483 segments) computes squiggle (MultiRidgeExtractor 300–2000 Hz: maxR²+count) and
+      speech cues (WholeClipFeatures pitch/flatness/syllabic) DIRECTLY on each segment →
+      `harvest_dsp.csv`. `coughGate` then compares v1 vs v2 on the SAME rows:
+
+  ```
+  -- DSP subset (175,483), apples-to-apples --      acc    F1     FP-hardneg  recall
+    FUSED v1 (head+wav+forest+hallmark)             78.7%  0.819    16.5%      76.0%
+    FUSED v2 (+squiggle+speech)                     79.2%  0.824    16.4%      76.7%
+    FUSED v2 + hard speechVeto                       70.9%  0.727    12.2%      61.2%
+  -- FUSED v2 threshold sweep (the deployable knob) --
+    thr 0.50  FP 16.4%  recall 76.7%  precision 89.0%
+    thr 0.70  FP  8.7%  recall 65.7%  precision 92.9%
+    thr 0.80  FP  5.3%  recall 56.0%  precision 94.8%
+    thr 0.90  FP  1.6%  recall 31.6%  precision 97.1%
+  ```
+
+  **Honest finding (the reinvention result):** adding the two "orthogonal" DSP signals barely moved the
+  aggregate metrics (+0.5% acc). Two reasons, both worth remembering: (a) **squiggle is NOT cough-
+  specific post-segmentation — breath chirps too** (a breathing-deep segment scored squiggleCount 4 @
+  R² 0.27), so the ridge fires on the same expulsive/turbulent bursts the segmenter already selected;
+  (b) pitch/flatness/syllabic as soft LR inputs add little. The **hard `speechVeto` is too blunt** (cuts
+  FP 16→12% but craters recall 77→61%) — DON'T deploy it as a veto; its cues already feed the LR.
+  THE ACTUAL WIN is the **v2 stacked fuser + a tunable threshold**: one continuous operating point that
+  dials FP from 16%→5%→1.6% (precision 89%→95%→97%) as recall trades off — strictly dominating the fixed
+  v1 verdict and matching/beating the head∧wav consensus's 6.1% FP at a chosen point (thr≈0.78) while
+  staying tunable. **Deploy v2 at thr≈0.7–0.8 when "don't call speech a cough" matters; ~0.5 for recall.**
+  The deeper structural lesson is unchanged: the ~1/3 `found_in_other` FP pile is a SEGMENTATION artifact
+  — the real fix is to gate DURING streaming segmentation on raw audio, not re-filter isolated segments.
+  Saved: `data/codebooks/cough_gate.json` (10-dim v2 fuser), `cough_harvest/cough_gate.csv` (175,483 rows,
+  now with squiggle/speech columns + pFused + speechVeto + verdict).
 - [ ] Wire real Stage-B inference (`CoughGate` loads all models) into a GUI button + a re-harvest that
       gates DURING streaming segmentation over RAW audio (the true fix for post-seg over-fire).
 - [ ] User-domain override: p3 multi-class letter authoritative for user voice.
