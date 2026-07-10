@@ -276,6 +276,18 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// KEYSTONE: multi-class post-inspiration classifier over RespiratoryEvent look-back features
+// (expiration/cough/sneeze/snore/speech). Coswara + ESC-50, DSP only. -Deval.alldata=...
+tasks.register<JavaExec>("inspirationClassify") {
+    group = "application"
+    description = "Keystone: 5-class post-inspiration classifier (RespiratoryEvent look-back) vs static baseline."
+    mainClass.set("com.example.FFTT04M.desktop.InspirationClassifyCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Test: anchor analysis on the INSPIRATION onset (shared by cough+breath) and classify the post-
 // inspiration window — controlling for the shared inspiratory phase. Coswara cough vs breath. -Deval.alldata=...
 tasks.register<JavaExec>("respiratoryPhase") {
