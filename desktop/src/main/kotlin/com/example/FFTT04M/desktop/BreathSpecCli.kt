@@ -199,10 +199,42 @@ object BreathSpecCli {
             report("FUSED (HuBERT upweighted)", pFusedHubUp, y, breathRate)
         }
 
+        // ---- nonlinear capacity test: is the residual a genuine information ceiling, or just a LINEAR
+        // capacity ceiling? WholeClipClassifier is strictly linear; swap in a small ReLU MLP (same 768-dim
+        // HuBERT input) and see if it separates the persistent hard negatives any better. ----
+        var pFusedBest = pFusedHubUp
+        if (hasHub) {
+            println("\n=== NONLINEAR CAPACITY TEST: MLP vs linear on the SAME HuBERT embeddings ===")
+            val nBreath = data.indices.count { !y[it] }
+            val hardBreath = data.indices.filter { !y[it] }.sortedByDescending { pFusedHubUp[it] }
+                .take((nBreath * 0.25).toInt().coerceAtLeast(1)).toSet()
+            val hubWeights = DoubleArray(data.size) { if (it in hardBreath) 3.0 else 1.0 }
+            val pHubMlp = oofMlpMasked(data.map { it.hub }, y, ids)
+            m("HuBERT (MLP)", pHubMlp, y, hubIdx)
+            report("HuBERT (MLP)", pHubMlp, y, breathRate, hubIdx)
+            val pHubMlpUp = oofMlpMasked(data.map { it.hub }, y, ids, hubWeights)
+            m("HuBERT (MLP, hard-neg upweighted)", pHubMlpUp, y, hubIdx)
+            report("HuBERT (MLP, hard-neg upweighted)", pHubMlpUp, y, breathRate, hubIdx)
+            val stackMlp = data.indices.map { i -> doubleArrayOf(pDsp[i], pHubMlpUp[i], pMfcc[i]) }
+            val pFusedMlp = oof(stackMlp, y, ids)
+            m("FUSED (HuBERT-MLP upweighted)", pFusedMlp, y)
+            report("FUSED (HuBERT-MLP upweighted)", pFusedMlp, y, breathRate)
+            // keep whichever base-modality variant (linear-upweighted vs MLP-upweighted) actually won,
+            // by breath-FP at the shared 90%-recall operating point -- feed the WINNER into the cascade.
+            fun fpAt90(p: DoubleArray): Double {
+                val cs = data.indices.filter { y[it] }.map { p[it] }.sortedDescending()
+                val thr = cs[(0.90 * (cs.size - 1)).toInt()]
+                val fp = data.indices.count { !y[it] && p[it] >= thr }; val tn = data.indices.count { !y[it] && p[it] < thr }
+                return fp.toDouble() / (fp + tn).coerceAtLeast(1)
+            }
+            pFusedBest = if (fpAt90(pFusedMlp) < fpAt90(pFusedHubUp)) pFusedMlp else pFusedHubUp
+            println("  winner feeding the cascade: ${if (pFusedBest === pFusedMlp) "MLP" else "linear"} variant")
+        }
+
         // ---- end-to-end cascade: one-class cough library -> discriminative fused gate ----
         if (hasHub) {
             println("\n=== END-TO-END CASCADE: one-class cough library -> discriminative fused gate ===")
-            cascade(data, y, pFusedHubUp, breathRate)
+            cascade(data, y, pFusedBest, breathRate)
         }
     }
 
@@ -258,6 +290,22 @@ object BreathSpecCli {
             if (trI.isEmpty() || teI.isEmpty()) continue
             val trW = DoubleArray(trI.size) { w[trI[it]] }
             val model = WholeClipClassifier.train(trI.map { x[it]!! to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
+            for (i in teI) { val (lab, p) = model.predict(x[i]!!); out[i] = if (lab == "cough") p else 1 - p }
+        }
+        return out
+    }
+
+    /** 5-fold OOF over a possibly-null feature set using [Mlp] (nonlinear capacity test) instead of the
+     *  linear [WholeClipClassifier], optional per-sample weights. */
+    private fun oofMlpMasked(x: List<DoubleArray?>, y: List<Boolean>, ids: List<String>, w: DoubleArray? = null): DoubleArray {
+        val out = DoubleArray(x.size) { 0.5 }
+        val idx = x.indices.filter { x[it] != null }
+        if (idx.size < 50) return out
+        for (k in 0 until 5) {
+            val trI = idx.filter { fold(ids[it]) != k }; val teI = idx.filter { fold(ids[it]) == k }
+            if (trI.isEmpty() || teI.isEmpty()) continue
+            val trW = w?.let { ww -> DoubleArray(trI.size) { ww[trI[it]] } }
+            val model = Mlp.train(trI.map { x[it]!! to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
             for (i in teI) { val (lab, p) = model.predict(x[i]!!); out[i] = if (lab == "cough") p else 1 - p }
         }
         return out
