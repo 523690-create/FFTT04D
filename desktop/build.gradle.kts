@@ -191,6 +191,19 @@ tasks.register<JavaExec>("squiggleDetect") {
     maxHeapSize = "3g"
 }
 
+// Usage: ./gradlew :desktop:squiggleSweep -Dsweep.source=D:\AndroidProjects\true_cough -Dsweep.out=G:\squiggles -Dsweep.cwt=true
+tasks.register<JavaExec>("squiggleSweep") {
+    group = "application"
+    description = "Sweep a corpus of complete clips for 300-1000Hz ridge squiggles → out folder (WAV + CWT jpg + manifest)."
+    mainClass.set("com.example.FFTT04M.desktop.SquiggleSweepCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("sweep.source", System.getProperty("sweep.source") ?: "")
+    systemProperty("sweep.out", System.getProperty("sweep.out") ?: "")
+    systemProperty("sweep.cwt", System.getProperty("sweep.cwt") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Precompute per-phoneme FFT (average spectrum + exemplar spectrogram) for the desktop Phoneme-FFT atlas.
 tasks.register<JavaExec>("phonemeFft") {
     group = "application"
