@@ -163,3 +163,29 @@ from INTERSECT-like (62%/2.6%) to UNION-like (89%/17%). See memory `cough_eval_f
       dataset_1sec blind spot (89.8% recall @.5). **Deploy at thr≈0.6.** Saved `cough_clipgate.json`.
 - [ ] Device-recording eval (condition 2) over device_ingest/p3 with manual hard labels.
 - [ ] Wire the clip-gate verdict into a GUI button + mobile AutoReject; gate during raw-stream segmentation.
+
+---
+
+## Breath specificity under the real base rate (2026-07-10)
+
+**Why this reframe was needed:** `coughVsExp`'s 91.6% acc / 94% breath-reject is a balanced-accuracy
+number. At the real mobile base rate (~15 breaths/min, thousands/hour vs rare coughs), even 5-9%
+breath-FP is a false cough every 1-2 minutes — unusable. `BreathSpecCli` / `:desktop:breathSpec` reports
+breath-FP at a FIXED 90% cough-recall operating point, translated directly to false-alarms/hour.
+
+```
+                                   @90% cough recall:  breath-FP   alarms/hr  (base rate 15/min = 900/hr)
+  FUSED DSP+HuBERT (= coughVsExp)                         4.9%        43.9
+  + MFCC-dynamics                                         4.0%        35.6
+  + segment-HuBERT (only 4% coverage — inconclusive)      3.9%        35.5
+  hard-neg upweight (meta-stack, plateaus after round 1)   3.9%        35.1
+  FUSED (HuBERT upweighted + DSP + MFCC) — best single     3.6%        32.4
+  END-TO-END CASCADE (one-class → fused gate)              2.7%        24.0   (but cough recall 73.4%)
+```
+
+Best achieved: 24-32 alarms/hour (down from 44) — real progress, but still far above the ≤9-18/hr
+(1-2% FP) target. Hard-negative mining shows the worst false positives are breathing clips where
+`gapDepth` (RespiratoryEvent) saturates near 1.0 on an ordinary breath trough — that feature likely needs
+renormalizing against gap duration or noise floor, not just peak ratio. The one-class cascade's recall
+cost (90%→73%) is probably not worth its FP gain as configured; a gentler stage-1 threshold is the next
+thing to try. Full writeup + next steps: memory `cough_detection_architecture`.
