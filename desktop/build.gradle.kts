@@ -276,6 +276,19 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Specialist cough-vs-{breath,speech} discriminator on coswara-matched HuBERT embeddings (cached, no GPU)
+// → cough_specialist.csv (OOF scores). Targets the residual breathing/speech false positives.
+tasks.register<JavaExec>("breathHead") {
+    group = "application"
+    description = "Train coswara-matched cough-vs-breath/speech HuBERT specialist → cough_specialist.csv (OOF)."
+    mainClass.set("com.example.FFTT04M.desktop.BreathHeadCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Clip-level META-FUSER over both method families (seg-OR content signals + whole-clip forest) — the
 // recommended best cough/not-cough gate. Trains + evaluates on existing CSVs, no GPU.
 tasks.register<JavaExec>("clipGate") {

@@ -26,7 +26,8 @@ object ClipGateCli {
     private val classes = listOf("not_cough", "cough")
     val FEATURES = listOf(
         "wc_forest", "wc_sqR2", "wc_lnSqN", "wc_pitch", "wc_flat", "wc_syll",
-        "seg_maxHead", "seg_maxWav", "seg_maxFused", "seg_maxForest", "seg_hall", "seg_lnCand", "seg_maxSqR2")
+        "seg_maxHead", "seg_maxWav", "seg_maxFused", "seg_maxForest", "seg_hall", "seg_lnCand", "seg_maxSqR2",
+        "spec_cough")   // coswara-matched cough-vs-breath/speech HuBERT specialist (OOF), from cough_specialist.csv
 
     private class Agg {
         var maxHead = 0.0; var maxWav = 0.0; var maxFused = 0.0; var maxForest = 0.0; var maxSqR2 = 0.0
@@ -88,6 +89,12 @@ object ClipGateCli {
             } }
         }
 
+        // coswara-matched cough-vs-breath/speech specialist (OOF scores; neutral 0.5 if absent)
+        val spec = HashMap<String, Double>(90_000)
+        File(harvest, "cough_specialist.csv").takeIf { it.isFile }?.useLines { s -> s.drop(1).forEach { line ->
+            val c = line.split(','); if (c.size >= 2) c[1].toDoubleOrNull()?.let { spec[c[0]] = it }
+        } }
+
         // assemble samples (clips with truth + whole-clip features)
         val ids = ArrayList<String>(); val xs = ArrayList<DoubleArray>(); val ys = ArrayList<Boolean>()
         val src = ArrayList<String>(); val grp = ArrayList<String>()
@@ -95,7 +102,8 @@ object ClipGateCli {
             val w = wc[id] ?: continue
             val g = agg[id] ?: Agg()
             xs += doubleArrayOf(w[0], w[1], w[2], w[3], w[4], w[5],
-                g.maxHead, g.maxWav, g.maxFused, g.maxForest, if (g.hall) 1.0 else 0.0, ln(1.0 + g.nCand), g.maxSqR2)
+                g.maxHead, g.maxWav, g.maxFused, g.maxForest, if (g.hall) 1.0 else 0.0, ln(1.0 + g.nCand), g.maxSqR2,
+                spec[id] ?: 0.5)
             ys += t.pos; ids += id; src += t.source
             grp += if (t.source.equals("Coswara", true)) "Coswara/${t.soundType}" else t.source
         }
@@ -131,6 +139,7 @@ object ClipGateCli {
         }
         base("fuser>=.7 (seg)") { xs[it][8] >= 0.7 }
         base("forest@wc>=.7") { xs[it][0] >= 0.7 }
+        base("spec>=.5 (breath/sp)") { xs[it][13] >= 0.5 }
         base("UNION(both>=.7)") { xs[it][8] >= 0.7 || xs[it][0] >= 0.7 }
         base("INTERSECT(both>=.7)") { xs[it][8] >= 0.7 && xs[it][0] >= 0.7 }
 
