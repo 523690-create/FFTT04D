@@ -28,7 +28,14 @@ object RespiratoryEvent {
         "inspDurMs", "inspCentroidSlope", "inspFlat", "gapDepth", "gapDurMs",
         "attackMs", "decayMs", "widthMs", "centroidSweep", "hfRatio",
         "snoreScore", "lowFreqRatio", "pitchStrength", "nEvents", "eventPeakRatio",
-        "inspRiseRate", "inspPeakFlow")   // inspiration RAPIDITY (hypothesis: faster/steeper before a cough)
+        "inspRiseRate", "inspPeakFlow",   // inspiration RAPIDITY (hypothesis: faster/steeper before a cough)
+        "gapFloorNorm", "gapSharpness")   // gapDepth fix (2026-07-10): gapDepth alone saturates near 1.0 for
+    // ANY loud event with a quiet moment beforehand (peak-relative, floor-agnostic) — hard-negative mining
+    // showed breathing clips hitting gapDepth 0.85-1.00 just as often as coughs. gapFloorNorm instead asks
+    // "how close to TRUE SILENCE does the gap actually get" (floor-relative, 0=true silence, 1=barely
+    // dipped); gapSharpness asks "how V-shaped is the notch" (both the fall INTO the gap and the rise OUT
+    // of it must be steep — a real glottal closure snaps shut and reopens, a breath's envelope just
+    // wanders). Neither replaces gapDepth (kept for back-compat / ablation comparison) — both are additive.
 
     private const val WIN = 1024
     private const val EPS = 1e-9
@@ -106,10 +113,23 @@ object RespiratoryEvent {
         val inspRiseRate = ((rms[inspPeak] - rms[inspOnset]).coerceAtLeast(0.0) / pkV) / inspDurSec  // norm. RMS rise per sec
         val inspPeakFlow = rms[inspPeak] / pkV                                                        // inhale loudness vs the burst
 
+        // gapDepth FIX: floor-relative depth (0 = gap reaches TRUE silence, 1 = barely dipped below peak)
+        // instead of peak-relative-only, which saturates near 1.0 for any quiet moment before a loud event
+        // regardless of whether it's a genuine glottal closure.
+        val range = (pkV - floor).coerceAtLeast(EPS)
+        val gapFloorNorm = ((rms[gap] - floor) / range).coerceIn(0.0, 1.0)
+        // gapSharpness: how V-shaped the notch is — both the fall INTO the gap (inspPeak->gap) and the
+        // rise OUT of it (gap->pk) must be steep (normalized RMS change per second, relative to range).
+        val fallSec = ((gap - inspPeak).coerceAtLeast(1)) / fps
+        val riseSec = ((pk - gap).coerceAtLeast(1)) / fps
+        val fallRate = (rms[inspPeak] - rms[gap]).coerceAtLeast(0.0) / range / fallSec
+        val riseRate = (pkV - rms[gap]).coerceAtLeast(0.0) / range / riseSec
+        val gapSharpness = minOf(fallRate, riseRate)
+
         return doubleArrayOf(inspDurMs, inspCentroidSlope, inspFlat, gapDepth, gapDurMs,
             attackMs, decayMs, widthMs, centroidSweep, hfRatio,
             snoreScore, lowFreqRatio, pitchStrength, nEvents.toDouble(), eventPeakRatio,
-            inspRiseRate, inspPeakFlow)
+            inspRiseRate, inspPeakFlow, gapFloorNorm, gapSharpness)
     }
 
     private fun slope(arr: DoubleArray, lo: Int, hi: Int): Double {

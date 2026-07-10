@@ -287,7 +287,10 @@ object BreathSpecCli {
 
     /** End-to-end: one-class cough library (far-negative rejector, K=64 k-means on held-out-fold cough
      *  clip embeddings) as stage 1, then the fused discriminative gate at its 90%-recall threshold as
-     *  stage 2. Reports combined recall/breath-FP/alarms-per-hour vs stage-2-alone. */
+     *  stage 2. Sweeps the stage-1 recall target (90/95/97/99%) — a gentler stage-1 threshold sheds
+     *  fewer true coughs at the cost of rejecting less far-negative breath — to find the best tradeoff
+     *  instead of assuming 90% was the right cut. Reports combined recall/breath-FP/alarms-per-hour at
+     *  each stage-1 setting vs stage-2-alone. */
     private fun cascade(data: List<Sample>, y: List<Boolean>, pFused: DoubleArray, breathRate: Double) {
         fun norm(v: DoubleArray): DoubleArray { var s = 0.0; for (x in v) s += x * x; val n = sqrt(s).coerceAtLeast(1e-9); return DoubleArray(v.size) { v[it] / n } }
         fun dist2(a: DoubleArray, b: DoubleArray): Double { var s = 0.0; for (i in a.indices) { val d = a[i] - b[i]; s += d * d }; return s }
@@ -313,23 +316,28 @@ object BreathSpecCli {
         }
         fun nearest(x: DoubleArray): Double { var mn = Double.MAX_VALUE; for (c in cent) { val d = dist2(x, c); if (d < mn) mn = d }; return mn }
 
-        val testD = testIdx.map { nearest(norm(data[it].hub!!)) }.sorted()
-        val thr1 = testD[(0.90 * (testD.size - 1)).toInt()]
-        val recallStage1 = testIdx.count { nearest(norm(data[it].hub!!)) <= thr1 }.toDouble() / testIdx.size
+        // precompute distances ONCE (the expensive part), then sweep stage-1 thresholds cheaply
+        val testDist = testIdx.map { nearest(norm(data[it].hub!!)) }
+        val breathIdx = data.indices.filter { !y[it] && data[it].hub != null }
+        val breathDist = breathIdx.map { nearest(norm(data[it].hub!!)) }
 
         val coughAllScores = data.indices.filter { y[it] }.map { pFused[it] }.sortedDescending()
         val thr2 = coughAllScores[(0.90 * (coughAllScores.size - 1)).toInt()]
-
-        val e2eRecall = testIdx.count { i -> nearest(norm(data[i].hub!!)) <= thr1 && pFused[i] >= thr2 }.toDouble() / testIdx.size
-        val breathIdx = data.indices.filter { !y[it] && data[it].hub != null }
-        val stage1FpRate = breathIdx.count { nearest(norm(data[it].hub!!)) <= thr1 }.toDouble() / breathIdx.size
-        val e2eFpCount = breathIdx.count { i -> nearest(norm(data[i].hub!!)) <= thr1 && pFused[i] >= thr2 }
-        val e2eFpRate = e2eFpCount.toDouble() / breathIdx.size
-
-        println("  stage1 (one-class, K=$K): held-out cough recall %.1f%% | breath survives (not rejected) %.1f%%".format(recallStage1 * 100, stage1FpRate * 100))
         println("  stage2 threshold (fused gate, ~90%% recall op point): %.3f".format(thr2))
-        println("  END-TO-END (stage1 AND stage2): cough recall %.1f%% (held-out fold) | breath-FP %.1f%% | alarms/hr %.1f"
-            .format(e2eRecall * 100, e2eFpRate * 100, breathRate * 60 * e2eFpRate))
+
+        for (targetRecall in listOf(0.90, 0.95, 0.97, 0.99)) {
+            val sortedD = testDist.sorted()
+            val thr1 = sortedD[(targetRecall * (sortedD.size - 1)).toInt()]
+            val recallStage1 = testDist.count { it <= thr1 }.toDouble() / testDist.size
+            val stage1FpRate = breathDist.count { it <= thr1 }.toDouble() / breathDist.size
+
+            val e2eRecall = testIdx.indices.count { i -> testDist[i] <= thr1 && pFused[testIdx[i]] >= thr2 }.toDouble() / testIdx.size
+            val e2eFpCount = breathIdx.indices.count { i -> breathDist[i] <= thr1 && pFused[breathIdx[i]] >= thr2 }
+            val e2eFpRate = e2eFpCount.toDouble() / breathIdx.size
+
+            println("  stage1 target %.0f%%: actual cough recall %5.1f%% | breath survives %5.1f%%  ->  END-TO-END recall %5.1f%%  breath-FP %5.1f%%  alarms/hr %6.1f"
+                .format(targetRecall * 100, recallStage1 * 100, stage1FpRate * 100, e2eRecall * 100, e2eFpRate * 100, breathRate * 60 * e2eFpRate))
+        }
         println("  (compare vs stage2-ALONE breath-FP/alarms-hr in the OPERATING POINT table above)")
     }
 }
