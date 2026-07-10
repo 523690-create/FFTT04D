@@ -201,9 +201,32 @@ At stage-1@99% the cascade reaches the FULL 90% recall target AND beats the sing
 (32.6 alarms/hr) — the earlier "cascade costs too much recall" read was an artifact of an untuned stage-1
 cut, not a real cascading limitation.
 
-**Best/recommended deploy config:** FUSED(HuBERT-upweighted+DSP+MFCC) → one-class prefilter @99% recall
-→ **28.6 alarms/hour @ 90.4% recall** (down from a 44/hr single-gate baseline). Target (≤9-18/hr) still
-NOT met. The residual FPs are a persistent small set of ~15 breaths that no reweighting/feature addition
-has dislodged across two full rounds — likely needs either manual relabel review of those specific clips
-or a strictly more powerful model (fine-tuned HuBERT) to close further. Full writeup: memory
-`cough_detection_architecture`.
+**Best/recommended deploy config (superseded by round 3 below):** FUSED(HuBERT-upweighted+DSP+MFCC) →
+one-class prefilter @99% recall → 28.6 alarms/hour @ 90.4% recall. The residual FPs were a persistent
+small set of ~15 breaths that no reweighting/feature addition dislodged across two full rounds.
+
+### Round 3 (commit `f4f33be`): BREAKTHROUGH — the residual was a linear-capacity ceiling
+
+Every classifier used so far (`WholeClipClassifier`/`SoftmaxLR`, for the HuBERT head, DSP features, AND
+the meta-fuser) is strictly LINEAR. Added `Mlp.kt` (small shared 1-hidden-layer ReLU MLP, same interface
+shape as `WholeClipClassifier`) and re-trained the SAME 768-dim frozen HuBERT clip embeddings with it:
+
+```
+                                          @90% recall:  breath-FP   alarms/hr
+  HuBERT — LINEAR (SoftmaxLR)                              4.9%       44.0
+  HuBERT — MLP (32 hidden, ReLU)                            1.1%       10.3
+  FUSED (HuBERT-MLP + DSP + MFCC)                            1.0%        9.1   ← meets ≤1-2% target
+  CASCADE (one-class @99% recall → FUSED-MLP gate)            0.9%        8.2   ← 89.8% recall too
+```
+
+The exact same embeddings a linear model couldn't push below ~4% FP separate to ~1% with a nonlinear
+classifier — the persistent hard-negative breaths from rounds 1-2 were sitting on the wrong side of an
+under-expressive LINEAR boundary, not genuinely inseparable. **This is the first result in the whole
+investigation inside the user's ≤1-2% FP / ≤9-18 alarms/hr hard target** — on held-out coswara folds.
+
+**CRITICAL CAVEAT: not yet validated on real device audio.** This is measured entirely on coswara
+cross-validation, and the established OOD lesson (device-recording forest FP ~100% in-domain, above) means
+the real specificity on the user's own mobile captures is UNKNOWN until tested. Treat 0.9-1.0% FP as the
+coswara-domain ceiling, not a deployment-ready number. Next: serialize the MLP model (save/load), then run
+the same MLP-vs-linear comparison on the 1,899 labelled device clips before wiring into `clipGate`/mobile.
+Full writeup: memory `cough_detection_architecture`.
