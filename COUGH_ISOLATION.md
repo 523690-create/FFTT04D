@@ -229,4 +229,28 @@ cross-validation, and the established OOD lesson (device-recording forest FP ~10
 the real specificity on the user's own mobile captures is UNKNOWN until tested. Treat 0.9-1.0% FP as the
 coswara-domain ceiling, not a deployment-ready number. Next: serialize the MLP model (save/load), then run
 the same MLP-vs-linear comparison on the 1,899 labelled device clips before wiring into `clipGate`/mobile.
-Full writeup: memory `cough_detection_architecture`.
+
+### Round 4 (commit `3de79ab`): IMPORTANT CORRECTION — round 3 does NOT transfer to real device audio
+
+Built `DeviceHubertEvalCli` / `:desktop:deviceHubertEval` — the exact gating validation flagged above.
+Whole-clip HuBERT embeddings computed DIRECTLY on the user's 1,899 manually-labelled device clips (CPU
+inference, `clipemb_device.bin`), same linear-vs-MLP comparison, 5-fold id-hash CV, entirely in-domain
+(zero coswara/ALLDATA data used):
+
+```
+  IN-DOMAIN (device, 1,899 clips)     @90% recall:  breath-FP
+    LINEAR (SoftmaxLR)                                 54.7%
+    MLP (32 hidden, ReLU)                              37.2%   ← helps directionally, NOT in magnitude
+  (coswara/public-data, for comparison)                  1.1%   ← does NOT transfer
+```
+The linear→MLP finding generalizes in DIRECTION (device MLP beats device linear by a similar relative
+margin) but the absolute numbers are catastrophically worse in-domain — nowhere near the ≤1-2% target,
+worse even than coswara's original LINEAR baseline. **Round 3's "target met" claim only holds for the
+coswara public benchmark, not the domain that actually matters.** Likely causes: device set is ~6x smaller
+(1,899 vs 10,716 — less for the MLP to learn from), device audio is grabber-captured (background noise,
+mic distance, compression) vs coswara's cleaner instructed lab recordings, and frozen HuBERT (pretrained
+on clean speech) may represent this domain less discriminatively. `breath` remains the hardest negative
+category in-domain too (37.5% FP w/ MLP). Real next priorities: fuse cheap physics-based DSP features
+(no pretrained-domain gap, unlike HuBERT) with the in-domain score; grow the labelled device set; consider
+using the coswara-trained MLP as a feature extractor / fine-tuning start point rather than training
+device-only from scratch. Full writeup: memory `cough_detection_architecture`.

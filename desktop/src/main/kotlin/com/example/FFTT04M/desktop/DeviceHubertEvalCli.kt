@@ -23,6 +23,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * for ~1-2k clips; GPU via -PuseOnnxGpu is optional here, not required). Caches to
  * `data/codebooks/clipemb_device.bin` (append-only) so re-runs after adding more labelled clips are fast.
  *
+ * Also fuses cheap physics-based DSP ([RespiratoryEvent] + [WholeClipFeatures], recomputed every run, no
+ * caching needed at this scale) with the HuBERT-MLP score — DSP features have no learned/pretrained
+ * domain gap (unlike a frozen HuBERT embedding trained on clean speech corpora), so they may transfer to
+ * device audio better than content embeddings do.
+ *
  * Run: ./gradlew :desktop:deviceHubertEval -Ddevice.dir=... -Ddevice.manual=...
  */
 object DeviceHubertEvalCli {
@@ -126,6 +131,26 @@ object DeviceHubertEvalCli {
         println("labelled clips WITH embeddings: ${labelled.size} (cough=$nPosE, not-cough=$nNegE)")
         if (nPosE < 50 || nNegE < 50) { println("insufficient embedded+labelled data"); return }
 
+        // cheap DSP features (physics-based, no learned/pretrained domain gap) -- recomputed every run,
+        // fast enough at this scale (no caching needed).
+        println("computing DSP features (RespiratoryEvent + WholeClipFeatures) for the fusion test…")
+        val dsp = ConcurrentLinkedQueue<Pair<String, DoubleArray>>()
+        val dspDone = AtomicInteger(); val dspPool = Executors.newFixedThreadPool(workers)
+        try {
+            labelled.map { it -> dspPool.submit {
+                runCatching {
+                    val pcm = AudioDecoder.decode(it.wav)
+                    if (pcm != null && pcm.size > 2048) {
+                        val resp = RespiratoryEvent.extract(pcm, SR); val stat = WholeClipFeatures.extract(pcm, SR)
+                        dsp.add(it.id to (resp + stat))
+                    }
+                }
+                if (dspDone.incrementAndGet() % 500 == 0) println("  dsp ${dspDone.get()}/${labelled.size}")
+            } }.forEach { it.get() }
+        } finally { dspPool.shutdown() }
+        val dspMap = dsp.toMap()
+        println("dsp features ready: ${dspMap.size}")
+
         val ids = labelled.map { it.id }
         val y = labelled.map { it.truth == CoughTruth.Truth.POS }
         val x = labelled.map { emb[it.id]!! }
@@ -174,8 +199,35 @@ object DeviceHubertEvalCli {
         }
 
         println("\n=== 5-fold in-domain comparison (id-hash folds) ===")
-        report("LINEAR", oofLinear())
-        report("MLP", oofMlp())
+        val pLinear = oofLinear(); report("LINEAR", pLinear)
+        val pMlp = oofMlp(); report("MLP", pMlp)
+
+        // fusion test: does adding cheap physics-based DSP (no learned/pretrained domain gap) help
+        // in-domain, the way it did on coswara? Only over clips where DSP extraction succeeded.
+        val dspIdx = labelled.indices.filter { dspMap.containsKey(ids[it]) }
+        if (dspIdx.size >= 100) {
+            println("\n=== DSP fusion (in-domain, dspIdx=${dspIdx.size}/${labelled.size}) ===")
+            fun oofDsp(): DoubleArray {
+                val out = DoubleArray(x.size) { 0.5 }
+                for (k in 0 until 5) {
+                    val trI = dspIdx.filter { fold(ids[it]) != k }; val teI = dspIdx.filter { fold(ids[it]) == k }
+                    if (trI.isEmpty() || teI.isEmpty()) continue
+                    val model = WholeClipClassifier.train(trI.map { dspMap[ids[it]]!! to if (y[it]) "cough" else "not_cough" }, classes)
+                    for (i in teI) { val (lab, p) = model.predict(dspMap[ids[i]]!!); out[i] = if (lab == "cough") p else 1 - p }
+                }
+                return out
+            }
+            val pDsp = oofDsp(); report("DSP-only", pDsp)
+            val stack = labelled.indices.map { i -> doubleArrayOf(pMlp[i], pDsp[i]) }
+            val pFused = DoubleArray(x.size)
+            for (k in 0 until 5) {
+                val tr = dspIdx.filter { fold(ids[it]) != k }; val te = dspIdx.filter { fold(ids[it]) == k }
+                if (tr.isEmpty() || te.isEmpty()) continue
+                val model = WholeClipClassifier.train(tr.map { stack[it] to if (y[it]) "cough" else "not_cough" }, classes)
+                for (i in te) { val (lab, p) = model.predict(stack[i]); pFused[i] = if (lab == "cough") p else 1 - p }
+            }
+            report("FUSED (HuBERT-MLP+DSP)", pFused)
+        }
     }
 
     private fun keyOf(lab: String) = when {
