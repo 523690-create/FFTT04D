@@ -183,9 +183,27 @@ breath-FP at a FIXED 90% cough-recall operating point, translated directly to fa
   END-TO-END CASCADE (one-class → fused gate)              2.7%        24.0   (but cough recall 73.4%)
 ```
 
-Best achieved: 24-32 alarms/hour (down from 44) — real progress, but still far above the ≤9-18/hr
-(1-2% FP) target. Hard-negative mining shows the worst false positives are breathing clips where
-`gapDepth` (RespiratoryEvent) saturates near 1.0 on an ordinary breath trough — that feature likely needs
-renormalizing against gap duration or noise floor, not just peak ratio. The one-class cascade's recall
-cost (90%→73%) is probably not worth its FP gain as configured; a gentler stage-1 threshold is the next
-thing to try. Full writeup + next steps: memory `cough_detection_architecture`.
+### Round 2 (commit `430d198`): cascade tuning is a real win, DSP feature-engineering hit a wall
+
+Added `gapFloorNorm`/`gapSharpness` to `RespiratoryEvent` to fix the `gapDepth` weakness above (floor-
+relative depth + notch V-shape sharpness). **Null result:** no measurable movement, hard-negative list
+unchanged to 3 decimals — hand-crafted envelope-shape DSP features have hit their ceiling on this
+boundary; the worst breaths are genuinely cough-like at the envelope level, only HuBERT content currently
+separates them. Deprioritizing further hand-crafted respiratory-shape features.
+
+Swept the one-class cascade's stage-1 recall target (was fixed at 90%, which cost too much recall) across
+90/95/97/99%:
+```
+  stage1 target 90%: end-to-end recall 82.9%  breath-FP 2.6%  alarms/hr 23.4
+  stage1 target 99%: end-to-end recall 90.4%  breath-FP 3.2%  alarms/hr 28.6   ← RECOMMENDED
+```
+At stage-1@99% the cascade reaches the FULL 90% recall target AND beats the single fused gate alone
+(32.6 alarms/hr) — the earlier "cascade costs too much recall" read was an artifact of an untuned stage-1
+cut, not a real cascading limitation.
+
+**Best/recommended deploy config:** FUSED(HuBERT-upweighted+DSP+MFCC) → one-class prefilter @99% recall
+→ **28.6 alarms/hour @ 90.4% recall** (down from a 44/hr single-gate baseline). Target (≤9-18/hr) still
+NOT met. The residual FPs are a persistent small set of ~15 breaths that no reweighting/feature addition
+has dislodged across two full rounds — likely needs either manual relabel review of those specific clips
+or a strictly more powerful model (fine-tuned HuBERT) to close further. Full writeup: memory
+`cough_detection_architecture`.
