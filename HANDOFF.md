@@ -1,7 +1,18 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-06).
+Date: 2026-06-13 (latest session appended at top: 2026-07-10).
+
+## SESSION 2026-07-10 — cough-isolation stacked gate resumed (autonomous scheduled-task run)
+
+Resumed paused work: `COUGH_ISOLATION.md`, `CoughGate.kt`, `CoughGateCli.kt` were sitting UNTRACKED
+with no Gradle task wired up (the CLI was fully written but unreachable — the prior session almost
+certainly paused right after writing the code, before it could run/validate/commit). Added
+`:desktop:coughGate` to `desktop/build.gradle.kts`, built green (`compileKotlin` + `fatJar`, jar 'D'),
+then ran the CLI over the full 175,483-segment `cough_harvest`. See `COUGH_ISOLATION.md` and memory
+[[cough-isolation-ensemble]] for the eval numbers and the squiggle-join id-space gotcha found while
+scoping signal 4 (parent-clip id vs segment sub-span id — needs offset parsing, not a naive CSV join).
+Committed + pushed: port_windows `568279e`. FFTT04M/FFTT04L had no local unpushed work this run.
 
 ## SESSION 2026-07-06 — cough-harvest → verify → classify → forest → hallmark-phoneme pipeline
 
