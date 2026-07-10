@@ -8,16 +8,16 @@ import java.io.File
  *   cough_harvest/harvest_compare.csv   → pWavelet, pHead, srcLabel, wavCall, headCall
  *   cough_harvest/harvest_forest.csv    → pForest
  *   cough_harvest/harvest_hallmark.csv  → hallmarkHit, nHallmarkWindows
+ *   cough_harvest/harvest_dsp.csv       → squiggleMaxR2, squiggleCount, pitch, flatness, syllabic  (optional)
  * Weak labels from filename metadata (srcLabel): the hard negatives (breathing/vowel/counting/urban8k
  * DENY cough) are trustworthy → honest specificity; positives are bags (see COUGH_ISOLATION.md).
  *
- * Trains a stacked softmax-LR fuser over [pHead, pWavelet, pForest, hallmarkHit, ln(1+nHallWin)],
- * reports fused 5-fold CV vs each single method (accuracy, cough-F1, and FP-rate on hard negatives —
- * the metric that matters for "don't call speech/breath a cough"), saves data/codebooks/cough_gate.json,
- * and writes cough_harvest/cough_gate.csv (id + per-signal + pFused + verdict).
+ * When harvest_dsp.csv is present, compares the 4-content-signal fuser (v1) against the full 6-signal
+ * fuser (v2, adds the two ORTHOGONAL DSP signals: squiggle chirp + speech cues) and v2+speech-veto, on
+ * the SAME rows, plus a threshold sweep (the specificity/recall knob). Saves data/codebooks/cough_gate.json
+ * and writes cough_harvest/cough_gate.csv.
  *
- * Run: ./gradlew :desktop:coughGate           (defaults to <workspace>/cough_harvest)
- *      ./gradlew :desktop:coughGate -Dgate.harvest=G:\cough_harvest
+ * Run: ./gradlew :desktop:coughGate -Dgate.harvest=G:\cough_harvest
  */
 object CoughGateCli {
 
@@ -26,7 +26,15 @@ object CoughGateCli {
         val wavCall: Boolean, val headCall: Boolean,
         var pForest: Double = Double.NaN, var hallHit: Boolean = false, var nHall: Int = 0,
         var hasForest: Boolean = false, var hasHall: Boolean = false,
+        var sqR2: Double = 0.0, var sqCount: Int = 0, var pitch: Double = 0.0,
+        var flat: Double = 1.0, var syll: Double = 0.0, var hasDsp: Boolean = false,
     )
+
+    private val classes = listOf("not_cough", "cough")
+    private lateinit var ids: List<String>
+    private lateinit var ys: List<String>
+    private lateinit var sigs: List<CoughGate.Signals>
+    private lateinit var rowsById: Map<String, Row>
 
     private fun labelOf(srcLabel: String): String? = when {
         srcLabel.equals("cough", true) -> "cough"
@@ -42,8 +50,6 @@ object CoughGateCli {
         val harvest = File(System.getProperty("gate.harvest")?.takeIf { it.isNotBlank() }
             ?: File(repo, "cough_harvest").path)
         val compare = File(harvest, "harvest_compare.csv")
-        val forest = File(harvest, "harvest_forest.csv")
-        val hallmark = File(harvest, "harvest_hallmark.csv")
         if (!compare.isFile) { println("missing $compare"); return }
 
         // ---- join by id ----
@@ -59,84 +65,141 @@ object CoughGateCli {
                     headCall = c[6].equals("true", true))
             }
         }
-        if (forest.isFile) forest.useLines { seq ->
+        File(harvest, "harvest_forest.csv").takeIf { it.isFile }?.useLines { seq ->
             seq.drop(1).forEach { line ->
                 val c = line.split(','); val r = rows[c.getOrNull(0)]
                 if (r != null && c.size >= 3) { r.pForest = c[2].toDoubleOrNull() ?: Double.NaN; r.hasForest = true }
             }
         }
-        if (hallmark.isFile) hallmark.useLines { seq ->
+        File(harvest, "harvest_hallmark.csv").takeIf { it.isFile }?.useLines { seq ->
             seq.drop(1).forEach { line ->
                 val c = line.split(','); val r = rows[c.getOrNull(0)]
-                if (r != null && c.size >= 4) {
-                    r.hallHit = c[2].equals("true", true); r.nHall = c[3].toIntOrNull() ?: 0; r.hasHall = true
+                if (r != null && c.size >= 4) { r.hallHit = c[2].equals("true", true); r.nHall = c[3].toIntOrNull() ?: 0; r.hasHall = true }
+            }
+        }
+        File(harvest, "harvest_dsp.csv").takeIf { it.isFile }?.useLines { seq ->
+            seq.drop(1).forEach { line ->
+                val c = line.split(','); val r = rows[c.getOrNull(0)]
+                if (r != null && c.size >= 6) {
+                    r.sqR2 = c[1].toDoubleOrNull() ?: 0.0; r.sqCount = c[2].toIntOrNull() ?: 0
+                    r.pitch = c[3].toDoubleOrNull() ?: 0.0; r.flat = c[4].toDoubleOrNull() ?: 1.0
+                    r.syll = c[5].toDoubleOrNull() ?: 0.0; r.hasDsp = true
                 }
             }
         }
 
-        // ---- build labelled samples (need all three signals + a usable label) ----
-        val feats = CoughGate.FEATURES.take(5)                       // pHead,pWavelet,pForest,hallmarkHit,lnHallWin
-        val classes = listOf("not_cough", "cough")
-        val ids = ArrayList<String>(); val xs = ArrayList<DoubleArray>(); val ys = ArrayList<String>()
+        // ---- build labelled samples (need content signals + a usable label) ----
+        val idL = ArrayList<String>(); val yL = ArrayList<String>(); val sL = ArrayList<CoughGate.Signals>()
         var skipped = 0
         for ((id, r) in rows) {
             if (!r.hasForest || !r.hasHall) { skipped++; continue }
-            val lab = labelOf(r.srcLabel)
-            if (lab == null) { skipped++; continue }
-            val s = CoughGate.Signals(pHead = r.pHead, pWavelet = r.pWav, pForest = r.pForest,
-                hallmarkHit = r.hallHit, nHallWindows = r.nHall)
-            ids += id; xs += s.vector(feats); ys += lab
+            val lab = labelOf(r.srcLabel) ?: run { skipped++; null } ?: continue
+            idL += id; yL += lab
+            sL += CoughGate.Signals(pHead = r.pHead, pWavelet = r.pWav, pForest = r.pForest,
+                hallmarkHit = r.hallHit, nHallWindows = r.nHall,
+                squiggleMaxR2 = r.sqR2, squiggleCount = r.sqCount,
+                pitch = if (r.hasDsp) r.pitch else 0.0, flatness = if (r.hasDsp) r.flat else 1.0,
+                syllabic = if (r.hasDsp) r.syll else 0.0)
         }
+        ids = idL; ys = yL; sigs = sL; rowsById = rows
         val nPos = ys.count { it == "cough" }; val nNeg = ys.size - nPos
-        println("=== COUGH GATE — stacked fuser over ${feats} ===")
-        println("joined ${rows.size} segments · usable ${ys.size} (cough=$nPos, not_cough=$nNeg) · skipped $skipped")
+        val dspIdx = ids.indices.filter { rows[ids[it]]!!.hasDsp }
+        println("=== COUGH GATE ===")
+        println("joined ${rows.size} segments · usable ${ys.size} (cough=$nPos, not_cough=$nNeg) · " +
+            "with DSP ${dspIdx.size} · skipped $skipped")
         if (ys.size < 100 || nPos == 0 || nNeg == 0) { println("not enough labelled data to train"); return }
 
-        // ---- 5-fold eval of the fused gate + single-method baselines on the SAME folds ----
-        val samples = xs.indices.map { xs[it] to ys[it] }
-        val fused = Metrics(); val headB = Metrics(); val wavB = Metrics(); val consB = Metrics(); val hallB = Metrics()
-        for (k in 0 until 5) {
-            val trIdx = xs.indices.filter { it % 5 != k }
-            val teIdx = xs.indices.filter { it % 5 == k }
-            if (trIdx.isEmpty() || teIdx.isEmpty()) continue
-            val model = WholeClipClassifier.train(trIdx.map { samples[it] }, classes)
-            for (i in teIdx) {
-                val truth = ys[i] == "cough"
-                val (lab, p) = model.predict(xs[i])
-                fused.add(truth, lab == "cough")
-                val r = rows[ids[i]]!!
-                headB.add(truth, r.headCall)
-                wavB.add(truth, r.wavCall)
-                consB.add(truth, r.headCall && r.wavCall)         // 2-way agreement
-                hallB.add(truth, r.hallHit)
+        val v1 = CoughGate.FEATURES.take(5)                          // head,wavelet,forest,hallmark
+        val v2 = CoughGate.FEATURES                                  // + squiggle + speech cues
+        val hasDsp = dspIdx.size >= 100
+
+        println("\n-- all usable rows (${ys.size}) --")
+        println("method              acc    cough-F1  FP-hardneg  recall")
+        printMetric("FUSED v1 (content)", foldEval(ids.indices.toList(), v1, false))
+        printMetric("head alone", singleEval(ids.indices.toList()) { it.headCall })
+        printMetric("wavelet alone", singleEval(ids.indices.toList()) { it.wavCall })
+        printMetric("hallmark alone", singleEval(ids.indices.toList()) { it.hallHit })
+        printMetric("head∧wav consensus", singleEval(ids.indices.toList()) { it.headCall && it.wavCall })
+
+        if (hasDsp) {
+            println("\n-- DSP subset (${dspIdx.size}), apples-to-apples v1 vs v2 --")
+            println("method              acc    cough-F1  FP-hardneg  recall")
+            printMetric("FUSED v1 (content)", foldEval(dspIdx, v1, false))
+            printMetric("FUSED v2 (+sq+speech)", foldEval(dspIdx, v2, false))
+            printMetric("FUSED v2 + speechVeto", foldEval(dspIdx, v2, true))
+
+            // threshold sweep on pooled out-of-fold predictions for v2 → the specificity/recall knob
+            val preds = foldPredict(dspIdx, v2)
+            println("\n-- FUSED v2 threshold sweep (specificity knob) --")
+            println("thr    FP-hardneg  recall   precision")
+            for (t in listOf(0.5, 0.6, 0.7, 0.8, 0.9)) {
+                val m = Metrics(); for ((truth, p) in preds) m.add(truth, p >= t)
+                println("  %.2f   %5.1f%%     %5.1f%%   %5.1f%%".format(t, m.fpRate() * 100, m.recall() * 100, m.precision() * 100))
             }
         }
-        println("method            acc    cough-F1   FP-on-hard-neg   recall")
-        for ((name, m) in listOf("FUSED (stacked)" to fused, "head alone" to headB,
-                "wavelet alone" to wavB, "hallmark alone" to hallB, "head∧wav consensus" to consB))
-            println("  %-18s %5.1f%%   %5.3f       %5.1f%%          %5.1f%%"
-                .format(name, m.acc() * 100, m.f1(), m.fpRate() * 100, m.recall() * 100))
 
-        // ---- train final model on ALL data, save, and score every joined segment ----
-        val model = WholeClipClassifier.train(samples, classes)
+        // ---- train final model over the best available feature set, save, and score every joined seg ----
+        val feats = if (hasDsp) v2 else v1
+        val trainIdx = if (hasDsp) dspIdx else ids.indices.toList()
+        val model = WholeClipClassifier.train(trainIdx.map { sigs[it].vector(feats) to ys[it] }, classes)
         val outModel = File(Workspace.dir("codebooks"), "cough_gate.json")
         WholeClipClassifier.save(model, outModel)
         val outCsv = File(harvest, "cough_gate.csv")
         outCsv.bufferedWriter().use { w ->
-            w.write("id,pHead,pWavelet,pForest,hallmarkHit,nHallWin,srcLabel,pFused,verdict\n")
-            for (i in ids.indices) {
-                val r = rows[ids[i]]!!
-                val (lab, p) = model.predict(xs[i])
+            w.write("id,pHead,pWavelet,pForest,hallmarkHit,nHallWin,squiggleR2,squiggleN,pitch,flatness,syllabic,srcLabel,pFused,speechVeto,verdict\n")
+            for (i in trainIdx) {
+                val r = rows[ids[i]]!!; val s = sigs[i]
+                val (lab, p) = model.predict(s.vector(feats))
                 val pCough = if (lab == "cough") p else 1 - p
+                val veto = hasDsp && CoughGate.speechVeto(s)
+                val verdict = if (pCough >= 0.5 && !veto) "cough" else "not_cough"
                 w.write("${ids[i]},${fmt(r.pHead)},${fmt(r.pWav)},${fmt(r.pForest)},${r.hallHit},${r.nHall}," +
-                    "${r.srcLabel},${"%.3f".format(pCough)},${if (pCough >= 0.5) "cough" else "not_cough"}\n")
+                    "${"%.3f".format(r.sqR2)},${r.sqCount},${"%.3f".format(r.pitch)},${"%.3f".format(r.flat)},${"%.3f".format(r.syll)}," +
+                    "${r.srcLabel},${"%.3f".format(pCough)},$veto,$verdict\n")
             }
         }
-        println("saved fuser → $outModel")
-        println("wrote per-segment verdicts → $outCsv (${ids.size} rows)")
-        println("NOTE: v1 fuses head+wavelet+forest+hallmark. Next: add squiggle (300–2000Hz ridge) + " +
-            "speech cues (pitch/flatness/syllabic) per segment; wire CoughGate into a GUI button + raw-stream re-harvest.")
+        println("\nsaved fuser → $outModel  (features: ${feats.size}-dim ${if (hasDsp) "v2" else "v1"})")
+        println("wrote per-segment verdicts → $outCsv (${trainIdx.size} rows)")
+        if (!hasDsp) println("NOTE: run :desktop:harvestDsp first to add squiggle + speech cues (the v2 signals).")
     }
+
+    // ---- eval helpers over the shared sigs/ys/rowsById ----
+    private fun foldEval(idxs: List<Int>, features: List<String>, veto: Boolean): Metrics {
+        val m = Metrics()
+        for (k in 0 until 5) {
+            val tr = idxs.filterIndexed { j, _ -> j % 5 != k }; val te = idxs.filterIndexed { j, _ -> j % 5 == k }
+            if (tr.isEmpty() || te.isEmpty()) continue
+            val model = WholeClipClassifier.train(tr.map { sigs[it].vector(features) to ys[it] }, classes)
+            for (i in te) {
+                val (lab, _) = model.predict(sigs[i].vector(features))
+                var pred = lab == "cough"; if (veto && CoughGate.speechVeto(sigs[i])) pred = false
+                m.add(ys[i] == "cough", pred)
+            }
+        }
+        return m
+    }
+
+    private fun foldPredict(idxs: List<Int>, features: List<String>): List<Pair<Boolean, Double>> {
+        val out = ArrayList<Pair<Boolean, Double>>(idxs.size)
+        for (k in 0 until 5) {
+            val tr = idxs.filterIndexed { j, _ -> j % 5 != k }; val te = idxs.filterIndexed { j, _ -> j % 5 == k }
+            if (tr.isEmpty() || te.isEmpty()) continue
+            val model = WholeClipClassifier.train(tr.map { sigs[it].vector(features) to ys[it] }, classes)
+            for (i in te) {
+                val (lab, p) = model.predict(sigs[i].vector(features))
+                out += (ys[i] == "cough") to (if (lab == "cough") p else 1 - p)
+            }
+        }
+        return out
+    }
+
+    private fun singleEval(idxs: List<Int>, pred: (Row) -> Boolean): Metrics {
+        val m = Metrics(); for (i in idxs) m.add(ys[i] == "cough", pred(rowsById[ids[i]]!!)); return m
+    }
+
+    private fun printMetric(name: String, m: Metrics) =
+        println("  %-20s %5.1f%%   %5.3f     %5.1f%%     %5.1f%%"
+            .format(name, m.acc() * 100, m.f1(), m.fpRate() * 100, m.recall() * 100))
 
     private fun fmt(d: Double) = if (d.isNaN()) "" else "%.3f".format(d)
 

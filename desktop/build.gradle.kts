@@ -262,6 +262,18 @@ tasks.register<JavaExec>("coughGate") {
     maxHeapSize = "3g"
 }
 
+// Per-segment DSP features for the gate's two ORTHOGONAL signals (squiggle chirp + speech cues),
+// computed directly on each harvest segment WAV → cough_harvest/harvest_dsp.csv. All cores, no GPU.
+tasks.register<JavaExec>("harvestDsp") {
+    group = "application"
+    description = "Compute squiggle + speech-cue DSP features per harvest segment → harvest_dsp.csv."
+    mainClass.set("com.example.FFTT04M.desktop.HarvestDspCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("gate.harvest", System.getProperty("gate.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Headless CWT/FFT image generation over a folder (resumable, all cores, GPU CWT via jcufft).
 // e.g. -Dimage.dir=D:\AndroidProjects\cough_harvest\cough_found_in_other -Dimage.skip=_rejected_lowP
 tasks.register<JavaExec>("cwtImages") {
