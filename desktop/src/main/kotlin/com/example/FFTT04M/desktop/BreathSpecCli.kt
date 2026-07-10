@@ -178,10 +178,30 @@ object BreathSpecCli {
             report("round $round upweighted", curFused, y, breathRate)
         }
 
+        // ---- deeper lever: upweight hard negatives INSIDE the base HuBERT modality itself. The
+        // 3-4 feature meta-stack has too little capacity to move much (round 2 above gave zero further
+        // gain); the actual base classifier (768-dim HuBERT LR) has far more capacity to reshape its
+        // decision boundary around specific hard breaths. ----
+        var pFusedHubUp = curFused
+        if (hasHub) {
+            println("\n=== BASE-MODALITY UPWEIGHT: retrain HuBERT itself on hard-negative-weighted breath ===")
+            val nBreath = data.indices.count { !y[it] }
+            val hardBreath = data.indices.filter { !y[it] }.sortedByDescending { curFused[it] }
+                .take((nBreath * 0.25).toInt().coerceAtLeast(1)).toSet()
+            val hubWeights = DoubleArray(data.size) { if (it in hardBreath) 3.0 else 1.0 }
+            val pHubUp = oofMaskedWeighted(data.map { it.hub }, y, hubWeights)
+            m("HuBERT (hard-neg upweighted)", pHubUp, y, hubIdx)
+            report("HuBERT (hard-neg upweighted)", pHubUp, y, breathRate, hubIdx)
+            val stackHubUp = data.indices.map { i -> doubleArrayOf(pDsp[i], pHubUp[i], pMfcc[i]) }
+            pFusedHubUp = oof(stackHubUp, y)
+            m("FUSED (HuBERT upweighted)", pFusedHubUp, y)
+            report("FUSED (HuBERT upweighted)", pFusedHubUp, y, breathRate)
+        }
+
         // ---- end-to-end cascade: one-class cough library -> discriminative fused gate ----
         if (hasHub) {
             println("\n=== END-TO-END CASCADE: one-class cough library -> discriminative fused gate ===")
-            cascade(data, y, curFused, breathRate)
+            cascade(data, y, pFusedHubUp, breathRate)
         }
     }
 
@@ -218,6 +238,22 @@ object BreathSpecCli {
             val trW = DoubleArray(tr.size) { w[tr[it]] }
             val model = WholeClipClassifier.train(tr.map { x[it] to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
             for (i in te) { val (lab, p) = model.predict(x[i]); out[i] = if (lab == "cough") p else 1 - p }
+        }
+        return out
+    }
+
+    /** 5-fold OOF over a possibly-null feature set, WITH per-sample weights on the covered subset
+     *  (hard-negative upweighting applied directly to a base modality, not just the meta-stack). */
+    private fun oofMaskedWeighted(x: List<DoubleArray?>, y: List<Boolean>, w: DoubleArray): DoubleArray {
+        val out = DoubleArray(x.size) { 0.5 }
+        val idx = x.indices.filter { x[it] != null }
+        if (idx.size < 50) return out
+        for (k in 0 until 5) {
+            val trI = idx.filter { it % 5 != k }; val teI = idx.filter { it % 5 == k }
+            if (trI.isEmpty() || teI.isEmpty()) continue
+            val trW = DoubleArray(trI.size) { w[trI[it]] }
+            val model = WholeClipClassifier.train(trI.map { x[it]!! to if (y[it]) "cough" else "expiration" }, classes, sampleWeight = trW)
+            for (i in teI) { val (lab, p) = model.predict(x[i]!!); out[i] = if (lab == "cough") p else 1 - p }
         }
         return out
     }
