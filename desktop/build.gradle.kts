@@ -276,6 +276,18 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Test: anchor analysis on the INSPIRATION onset (shared by cough+breath) and classify the post-
+// inspiration window — controlling for the shared inspiratory phase. Coswara cough vs breath. -Deval.alldata=...
+tasks.register<JavaExec>("respiratoryPhase") {
+    group = "application"
+    description = "Inspiration-anchored cough-vs-breath test (control for the shared inspiratory phase)."
+    mainClass.set("com.example.FFTT04M.desktop.RespiratoryPhaseCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Concept test: does a ONE-CLASS cough library (cough-only codebook) reject non-coughs, and how does
 // rejection vary by negative type? Cached HuBERT, no GPU. -Deval.alldata=...
 tasks.register<JavaExec>("coughOneClass") {
