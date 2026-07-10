@@ -262,6 +262,20 @@ tasks.register<JavaExec>("coughGate") {
     maxHeapSize = "3g"
 }
 
+// Competitive cough/not-cough evaluation over ALLDATA under canonical CoughTruth (user's 5 conditions):
+// OR-pool each method's per-segment calls to clip level, report recall(POS-bag)/FP(hard-neg) per method
+// + per-source. No GPU. Usage: -Deval.alldata=D:\AndroidProjects\ALLDATA -Deval.harvest=D:\AndroidProjects\cough_harvest
+tasks.register<JavaExec>("coughEval") {
+    group = "application"
+    description = "Competitive cough/not-cough eval over ALLDATA (recall on positive bags, FP on hard negatives)."
+    mainClass.set("com.example.FFTT04M.desktop.CoughEvalCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Per-segment DSP features for the gate's two ORTHOGONAL signals (squiggle chirp + speech cues),
 // computed directly on each harvest segment WAV → cough_harvest/harvest_dsp.csv. All cores, no GPU.
 tasks.register<JavaExec>("harvestDsp") {
