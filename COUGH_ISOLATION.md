@@ -155,5 +155,11 @@ no candidate from short/quiet clips, so any seg-downstream method misses them; a
 gate is a CLIP-LEVEL stacked fuser over BOTH seg-OR content signals AND the whole-clip forest, tunable
 from INTERSECT-like (62%/2.6%) to UNION-like (89%/17%). See memory `cough_eval_framework`.
 
-- [ ] **Build the clip-level meta-fuser over both families** (recommended best gate).
+- [x] **Clip-level meta-fuser over both families** (`ClipGateCli` / `:desktop:clipGate`, commit
+      `4f76894`) — THE recommended gate. 13 features (whole-clip forest/squiggle/speech + seg-OR max
+      pHead/pWav/pFused/pForest/hallmark/#cand/sqR2), clean clip-level labels, softmax-LR, 5-fold over
+      75,744 clips. Strictly dominates: rec 77%/FP 5.1% · rec 83%/FP 7.1%/prec 94% (thr .6) · rec 88%/FP
+      10.3% (thr .5) — beats union (89%/17%) and both single families at every operating point. Fixes the
+      dataset_1sec blind spot (89.8% recall @.5). **Deploy at thr≈0.6.** Saved `cough_clipgate.json`.
 - [ ] Device-recording eval (condition 2) over device_ingest/p3 with manual hard labels.
+- [ ] Wire the clip-gate verdict into a GUI button + mobile AutoReject; gate during raw-stream segmentation.
