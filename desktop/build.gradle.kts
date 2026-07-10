@@ -276,6 +276,18 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Concept test: does a ONE-CLASS cough library (cough-only codebook) reject non-coughs, and how does
+// rejection vary by negative type? Cached HuBERT, no GPU. -Deval.alldata=...
+tasks.register<JavaExec>("coughOneClass") {
+    group = "application"
+    description = "One-class cough library: build cough-only codebook, score fit, report rejection by negative type."
+    mainClass.set("com.example.FFTT04M.desktop.CoughOneClassCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Hypothesis test: do temporal spectral-trajectory (cough-phase) features separate cough from breath
 // better than static features? Coswara matched cough vs breath, DSP only. -Deval.alldata=...
 tasks.register<JavaExec>("inspirationTest") {
