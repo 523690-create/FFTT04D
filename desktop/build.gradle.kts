@@ -276,6 +276,18 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Hypothesis test: do temporal spectral-trajectory (cough-phase) features separate cough from breath
+// better than static features? Coswara matched cough vs breath, DSP only. -Deval.alldata=...
+tasks.register<JavaExec>("inspirationTest") {
+    group = "application"
+    description = "Test SpectralDynamics (cough-phase trajectory) vs WholeClipFeatures on coswara cough-vs-breath."
+    mainClass.set("com.example.FFTT04M.desktop.InspirationTestCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Step 2: evaluate on the user's OWN device recordings (manual hard labels, condition 2). Whole-clip
 // forest+squiggle, no GPU — the in-domain test the ALLDATA head can't give. Usage: -Ddevice.dir=...
 tasks.register<JavaExec>("deviceEval") {
