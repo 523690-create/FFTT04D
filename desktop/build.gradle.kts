@@ -276,6 +276,19 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Step 2: evaluate on the user's OWN device recordings (manual hard labels, condition 2). Whole-clip
+// forest+squiggle, no GPU — the in-domain test the ALLDATA head can't give. Usage: -Ddevice.dir=...
+tasks.register<JavaExec>("deviceEval") {
+    group = "application"
+    description = "Evaluate whole-clip forest on the user's device recordings vs manual hard labels."
+    mainClass.set("com.example.FFTT04M.desktop.DeviceEvalCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("device.dir", System.getProperty("device.dir") ?: "")
+    systemProperty("device.manual", System.getProperty("device.manual") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Specialist cough-vs-{breath,speech} discriminator on coswara-matched HuBERT embeddings (cached, no GPU)
 // → cough_specialist.csv (OOF scores). Targets the residual breathing/speech false positives.
 tasks.register<JavaExec>("breathHead") {
