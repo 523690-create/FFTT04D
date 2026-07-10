@@ -276,6 +276,19 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Whole-clip (segmenter-independent) scorer over ALLDATA: forest P(cough) + squiggle + speech cues →
+// cough_wholeclip.csv, the parallel method family for coughEval. All cores, no GPU.
+tasks.register<JavaExec>("allDataScore") {
+    group = "application"
+    description = "Score every ALLDATA clip whole-clip (forest+squiggle+speech) → cough_wholeclip.csv."
+    mainClass.set("com.example.FFTT04M.desktop.AllDataScoreCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Per-segment DSP features for the gate's two ORTHOGONAL signals (squiggle chirp + speech cues),
 // computed directly on each harvest segment WAV → cough_harvest/harvest_dsp.csv. All cores, no GPU.
 tasks.register<JavaExec>("harvestDsp") {

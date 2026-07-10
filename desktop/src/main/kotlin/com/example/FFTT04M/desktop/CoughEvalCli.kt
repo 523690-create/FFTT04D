@@ -30,10 +30,12 @@ object CoughEvalCli {
         fun called(method: String) = calls[method] ?: false
     }
 
-    // display order; each is a per-segment→clip OR-pooled boolean call
+    // display order. seg-OR = per-segment→clip OR-pooled (downstream of the DSP segmenter);
+    // @wc = WHOLE-CLIP (segmenter-independent) from cough_wholeclip.csv.
     private val METHODS = listOf(
         "head", "wavelet", "consensus", "hallmark", "forest@seg",
-        "squiggleR2>=.6", "squiggleR2>=.8", "fuser>=.5", "fuser>=.7", "fuser>=.8")
+        "squiggleR2>=.6", "squiggleR2>=.8", "fuser>=.5", "fuser>=.7", "fuser>=.8",
+        "forest@wc>=.5", "forest@wc>=.7", "squiggle@wc>=.6")
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -93,6 +95,17 @@ object CoughEvalCli {
                     val p = c.getOrNull(pi)?.toDoubleOrNull() ?: return@forEach
                     clip.or("fuser>=.5", p >= 0.5); clip.or("fuser>=.7", p >= 0.7); clip.or("fuser>=.8", p >= 0.8)
                 }
+            }
+        }
+
+        // ---- whole-clip (segmenter-independent) methods, keyed directly by clip id ----
+        File(harvest, "cough_wholeclip.csv").takeIf { it.isFile }?.useLines { seq ->
+            seq.drop(1).forEach { line ->
+                val c = line.split(','); val clip = clips[c.getOrElse(0) { "" }] ?: return@forEach
+                val pForest = c.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                val sqR2 = c.getOrNull(2)?.toDoubleOrNull() ?: 0.0
+                clip.or("forest@wc>=.5", pForest >= 0.5); clip.or("forest@wc>=.7", pForest >= 0.7)
+                clip.or("squiggle@wc>=.6", sqR2 >= 0.6)
             }
         }
 
