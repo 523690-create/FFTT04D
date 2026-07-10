@@ -276,6 +276,19 @@ tasks.register<JavaExec>("coughEval") {
     maxHeapSize = "3g"
 }
 
+// Clip-level META-FUSER over both method families (seg-OR content signals + whole-clip forest) — the
+// recommended best cough/not-cough gate. Trains + evaluates on existing CSVs, no GPU.
+tasks.register<JavaExec>("clipGate") {
+    group = "application"
+    description = "Train + evaluate the clip-level meta-fuser over seg-OR + whole-clip signals."
+    mainClass.set("com.example.FFTT04M.desktop.ClipGateCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
+    maxHeapSize = "3g"
+}
+
 // Whole-clip (segmenter-independent) scorer over ALLDATA: forest P(cough) + squiggle + speech cues →
 // cough_wholeclip.csv, the parallel method family for coughEval. All cores, no GPU.
 tasks.register<JavaExec>("allDataScore") {
