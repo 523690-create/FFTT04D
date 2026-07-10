@@ -96,7 +96,8 @@ object SquiggleSweep {
                                     manifest.add(
                                         "$id,$ei,$startMs,$endMs,$durMs,$vMs,$vHz," +
                                         "${"%.6f".format(e.curvature)},${"%.3f".format(e.rSquared)}," +
-                                        "${e.frameCount},${"%.6f".format(e.meanEnergy)},${out.name}")
+                                        "${e.frameCount},${"%.6f".format(e.meanEnergy)},${out.name}," +
+                                        wav.absolutePath.replace(',', ';'))   // parent clip path (for atlas click-through)
                                     kept++
                                 }
                                 if (kept > 0) { clipsWith.incrementAndGet(); squiggles.addAndGet(kept) }
@@ -115,7 +116,7 @@ object SquiggleSweep {
 
         // Manifest is fully derived → rewrite it each run (rows sorted for stable diffs).
         File(outDir, "squiggles_manifest.csv").bufferedWriter().use { w ->
-            w.write("id,squiggleIdx,startMs,endMs,durMs,vertexMs,vertexHz,curvature,r2,frames,meanEnergy,file\n")
+            w.write("id,squiggleIdx,startMs,endMs,durMs,vertexMs,vertexHz,curvature,r2,frames,meanEnergy,file,parentPath\n")
             for (row in manifest.sorted()) { w.write(row); w.write("\n") }
         }
         return Summary(total, clipsWith.get(), squiggles.get(), noDetect.get(), failed.get(),

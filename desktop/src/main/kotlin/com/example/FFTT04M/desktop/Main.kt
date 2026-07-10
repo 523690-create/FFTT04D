@@ -180,6 +180,8 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Sweep a corpus for 300–1000 Hz ridge "squiggles" → G:\squiggles + own breakout window.
         squiggleButton = createButton("Squiggle Sweep ⇱") { onSquiggleSweep() }
         buttonPanel.add(squiggleButton)
+        // Open the whole G:\squiggles library any time (sort · category · min-R² · paging).
+        buttonPanel.add(createButton("Squiggle Atlas ⇱") { SquiggleAtlas.show(this@AnalyzerWindow, File("G:\\squiggles")) })
         // Cloud meta-analysis: measure your own (extras) recordings against ALLDATA clouds.
         buttonPanel.add(createButton("Cloud Match (extras)") { onCloudMatch() })
         leftPanel.add(buttonPanel, BorderLayout.NORTH)
