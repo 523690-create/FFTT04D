@@ -415,6 +415,21 @@ tasks.register<JavaExec>("cwtImages") {
     maxHeapSize = "3g"
 }
 
+// THE gating validation for the breath-specificity breakthrough: does linear->MLP unlock (coswara,
+// BreathSpecCli round 3) TRANSFER to real device audio, in-domain (no ALLDATA/coswara training)?
+// Computes/caches whole-clip HuBERT embeddings for the user's manually-labelled device clips (needs
+// desktop/native/hubert/hubert_base.onnx; CPU inference is fine for ~1-2k clips), 5-fold linear-vs-MLP.
+tasks.register<JavaExec>("deviceHubertEval") {
+    group = "application"
+    description = "In-domain linear-vs-MLP HuBERT comparison on the user's own labelled device recordings."
+    mainClass.set("com.example.FFTT04M.desktop.DeviceHubertEvalCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("device.dir", System.getProperty("device.dir") ?: "")
+    systemProperty("device.manual", System.getProperty("device.manual") ?: "")
+    maxHeapSize = "4g"
+}
+
 // Breath-specificity refinement: reframes the metric as breath-FP @ fixed 90% cough-recall -> false-
 // alarms/hour under the real breath base rate (not balanced accuracy), adds segment-HuBERT + MFCC-
 // dynamics modalities (marginal-gain ablation), hard-negative mining + upweighted retrain, and an
