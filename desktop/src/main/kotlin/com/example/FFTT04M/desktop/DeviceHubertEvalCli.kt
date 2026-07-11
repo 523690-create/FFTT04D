@@ -239,6 +239,21 @@ object DeviceHubertEvalCli {
                 return out
             }
             val pDsp = oofDsp(); report("DSP-only", pDsp)
+            // does the DSP modality ALSO benefit from MLP nonlinear capacity, or was that lever specific
+            // to the 768-dim learned HuBERT embedding? (round 4 only swapped HuBERT's head, DSP/MFCC were
+            // untested -- secondary next-step (c) from memory cough-detection-architecture.)
+            fun oofDspMlp(): DoubleArray {
+                val out = DoubleArray(x.size) { 0.5 }
+                for (k in 0 until 5) {
+                    val trI = dspIdx.filter { fold(ids[it]) != k }; val teI = dspIdx.filter { fold(ids[it]) == k }
+                    if (trI.isEmpty() || teI.isEmpty()) continue
+                    val model = Mlp.train(trI.map { dspMap[ids[it]]!! to if (y[it]) "cough" else "not_cough" }, classes)
+                    for (i in teI) { val (lab, p) = model.predict(dspMap[ids[i]]!!); out[i] = if (lab == "cough") p else 1 - p }
+                }
+                return out
+            }
+            val pDspMlp = oofDspMlp(); report("DSP-only (MLP)", pDspMlp)
+
             val stack = labelled.indices.map { i -> doubleArrayOf(pMlp[i], pDsp[i]) }
             val pFused = DoubleArray(x.size)
             for (k in 0 until 5) {
@@ -248,6 +263,16 @@ object DeviceHubertEvalCli {
                 for (i in te) { val (lab, p) = model.predict(stack[i]); pFused[i] = if (lab == "cough") p else 1 - p }
             }
             report("FUSED (HuBERT-MLP+DSP)", pFused)
+
+            val stackMlp = labelled.indices.map { i -> doubleArrayOf(pMlp[i], pDspMlp[i]) }
+            val pFusedMlp = DoubleArray(x.size)
+            for (k in 0 until 5) {
+                val tr = dspIdx.filter { fold(ids[it]) != k }; val te = dspIdx.filter { fold(ids[it]) == k }
+                if (tr.isEmpty() || te.isEmpty()) continue
+                val model = WholeClipClassifier.train(tr.map { stackMlp[it] to if (y[it]) "cough" else "not_cough" }, classes)
+                for (i in te) { val (lab, p) = model.predict(stackMlp[i]); pFusedMlp[i] = if (lab == "cough") p else 1 - p }
+            }
+            report("FUSED (HuBERT-MLP+DSP-MLP)", pFusedMlp)
         }
     }
 
