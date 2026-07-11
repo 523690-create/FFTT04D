@@ -236,6 +236,23 @@ object BreathSpecCli {
             println("\n=== END-TO-END CASCADE: one-class cough library -> discriminative fused gate ===")
             cascade(data, y, pFusedBest, breathRate)
         }
+
+        // ---- persist the winning HuBERT-MLP model, trained on ALL coswara data (not just OOF folds),
+        // hard-neg upweighted -- so DeviceHubertEvalCli's transfer-learning experiment (coswara model as a
+        // warm-start init for device fine-tuning) doesn't need to re-run this cached-but-still-nontrivial
+        // pass every time. ----
+        if (hasHub) {
+            println("\n=== SAVING final full-data HuBERT-MLP model (for device transfer-learning) ===")
+            val nBreathF = data.indices.count { !y[it] }
+            val hardBreathF = data.indices.filter { !y[it] }.sortedByDescending { pFusedBest[it] }
+                .take((nBreathF * 0.25).toInt().coerceAtLeast(1)).toSet()
+            val finalWeights = DoubleArray(hubIdx.size) { if (hubIdx[it] in hardBreathF) 3.0 else 1.0 }
+            val finalSamples = hubIdx.map { data[it].hub!! to (if (y[it]) "cough" else "expiration") }
+            val finalModel = Mlp.train(finalSamples, classes, sampleWeight = finalWeights)
+            val outFile = File(Workspace.dir("codebooks"), "breath_mlp_coswara.json")
+            Mlp.save(finalModel, outFile)
+            println("  saved -> $outFile (trained on ${finalSamples.size} coswara clips)")
+        }
     }
 
     /** Deterministic id-hash fold (same clip -> same fold across every oof() call and every run,

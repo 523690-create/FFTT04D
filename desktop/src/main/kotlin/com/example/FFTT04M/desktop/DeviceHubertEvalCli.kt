@@ -175,6 +175,20 @@ object DeviceHubertEvalCli {
             }
             return out
         }
+        // TRANSFER LEARNING: warm-start each device fold's MLP from the coswara-trained model (saved by
+        // :desktop:breathSpec) instead of random init. Tests whether the public-dataset-learned HuBERT
+        // decision boundary is a useful starting point for the data-scarce (1,899 clip) in-domain problem,
+        // per the round-4 "data scarcity, not algorithm ceiling" diagnosis in memory cough-detection-architecture.
+        fun oofMlpTransfer(init: Mlp.Model): DoubleArray {
+            val out = DoubleArray(x.size)
+            for (k in 0 until 5) {
+                val tr = x.indices.filter { fold(ids[it]) != k }; val te = x.indices.filter { fold(ids[it]) == k }
+                if (tr.isEmpty() || te.isEmpty()) continue
+                val model = Mlp.train(tr.map { x[it] to if (y[it]) "cough" else "not_cough" }, classes, initFrom = init)
+                for (i in te) { val (lab, p) = model.predict(x[i]); out[i] = if (lab == "cough") p else 1 - p }
+            }
+            return out
+        }
 
         fun report(name: String, p: DoubleArray) {
             var tp = 0; var fn = 0; var fp = 0; var tn = 0
@@ -201,6 +215,13 @@ object DeviceHubertEvalCli {
         println("\n=== 5-fold in-domain comparison (id-hash folds) ===")
         val pLinear = oofLinear(); report("LINEAR", pLinear)
         val pMlp = oofMlp(); report("MLP", pMlp)
+        val coswaraModelFile = File(dir, "breath_mlp_coswara.json")
+        val coswaraModel = if (coswaraModelFile.isFile) Mlp.load(coswaraModelFile) else null
+        if (coswaraModel != null) {
+            val pMlpT = oofMlpTransfer(coswaraModel); report("MLP (transfer-init)", pMlpT)
+        } else {
+            println("  (no coswara MLP at $coswaraModelFile -- run :desktop:breathSpec first for the transfer-learning comparison)")
+        }
 
         // fusion test: does adding cheap physics-based DSP (no learned/pretrained domain gap) help
         // in-domain, the way it did on coswara? Only over clips where DSP extraction succeeded.

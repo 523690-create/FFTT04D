@@ -35,10 +35,16 @@ object Mlp {
         }
     }
 
-    /** [sampleWeight] (optional, per-sample, same order as [samples]) — hard-negative upweighting. */
+    /** [sampleWeight] (optional, per-sample, same order as [samples]) — hard-negative upweighting.
+     *  [initFrom] (optional) — warm-start weights from an already-trained [Model] (e.g. a coswara-trained
+     *  model as a transfer-learning initialization for device fine-tuning) instead of random init. Only
+     *  applied when its hidden/input/output dims match this call's; falls back to random init otherwise.
+     *  The normalizer (mean/std) is always re-fit on THIS call's samples, since the two domains'
+     *  raw-feature distributions differ even when the learned weights transfer. */
     fun train(
         samples: List<Pair<DoubleArray, String>>, classes: List<String>,
         hidden: Int = 32, iters: Int = 300, sampleWeight: DoubleArray? = null,
+        initFrom: Model? = null,
     ): Model {
         val d = samples.first().first.size
         val mean = DoubleArray(d); val std = DoubleArray(d)
@@ -51,8 +57,11 @@ object Mlp {
         val nc = classes.size
         val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val rnd = java.util.Random(42)
-        val w1 = Array(hidden) { DoubleArray(d) { rnd.nextGaussian() * sqrt(2.0 / d) } }; val b1 = DoubleArray(hidden)
-        val w2 = Array(nc) { DoubleArray(hidden) { rnd.nextGaussian() * sqrt(2.0 / hidden) } }; val b2 = DoubleArray(nc)
+        val canWarmStart = initFrom != null && initFrom.w1.size == hidden && initFrom.w1[0].size == d && initFrom.w2.size == nc
+        val w1 = if (canWarmStart) Array(hidden) { initFrom!!.w1[it].copyOf() } else Array(hidden) { DoubleArray(d) { rnd.nextGaussian() * sqrt(2.0 / d) } }
+        val b1 = if (canWarmStart) initFrom!!.b1.copyOf() else DoubleArray(hidden)
+        val w2 = if (canWarmStart) Array(nc) { initFrom!!.w2[it].copyOf() } else Array(nc) { DoubleArray(hidden) { rnd.nextGaussian() * sqrt(2.0 / hidden) } }
+        val b2 = if (canWarmStart) initFrom!!.b2.copyOf() else DoubleArray(nc)
         val freq = IntArray(nc); for (y in ys) if (y in 0 until nc) freq[y]++
         val cw = DoubleArray(nc) { if (freq[it] > 0) xs.size.toDouble() / (nc * freq[it]) else 0.0 }
         val m = xs.size.toDouble(); val lr = 0.1; val l2 = 1e-4
