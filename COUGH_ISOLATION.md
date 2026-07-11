@@ -253,4 +253,24 @@ on clean speech) may represent this domain less discriminatively. `breath` remai
 category in-domain too (37.5% FP w/ MLP). Real next priorities: fuse cheap physics-based DSP features
 (no pretrained-domain gap, unlike HuBERT) with the in-domain score; grow the labelled device set; consider
 using the coswara-trained MLP as a feature extractor / fine-tuning start point rather than training
-device-only from scratch. Full writeup: memory `cough_detection_architecture`.
+device-only from scratch.
+
+### Round 4b: DSP fusion in-domain + session conclusion
+
+```
+  IN-DOMAIN (device)              @90% recall:  breath-FP
+    DSP-only                                        40.0%
+    HuBERT-MLP alone                                37.2%
+    FUSED (HuBERT-MLP + DSP)                        33.3%   ← best in-domain so far
+```
+DSP fusion gives a real further win (37.2%→33.3%) but the gap to target remains huge. `breath` (38-42%)
+and, notably, `voice` (30-57% — much harder than coswara's controlled vowel/counting) are the hardest
+device-negative categories.
+
+**SESSION CONCLUSION:** pushed the coswara ceiling from 44→9 alarms/hour (target met) via metric
+reframing + the linear→MLP nonlinear-capacity fix. That fix transfers in DIRECTION to real device audio
+but not in MAGNITUDE (33.3% best in-domain vs 1.0% on coswara) — very likely DATA SCARCITY (1,899 device
+clips vs coswara's 10,716), not an algorithm ceiling. **Highest-leverage next step: collect more labelled
+device data** (especially more `breath`/`voice` negatives) — the algorithm toolkit (linear→MLP, DSP fusion,
+hard-negative mining, cascade) is now validated on both domains; what's missing in-domain is training
+signal. Full writeup: memory `cough_detection_architecture`.
