@@ -3,19 +3,28 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13 (latest session appended at top: 2026-07-11).
 
-## SESSION 2026-07-11 — breath-specificity round 5: transfer-learning experiment (autonomous resume)
+## SESSION 2026-07-11 — breath-specificity round 5: transfer-learning + DSP-MLP, BOTH NULL (autonomous resume)
 Full detail in memory `cough-detection-architecture` round 5. Round 4 found the coswara-benchmark
 linear->MLP breakthrough (44->9 alarms/hr) does NOT transfer in magnitude to real device audio (33.3%
 best in-domain FP vs 1.0% coswara) and diagnosed it as data scarcity (1,899 device clips vs 10,716
-coswara). This session wired the round-4 secondary next-step: use the coswara-trained MLP as a
-transfer-learning init for device fine-tuning rather than training device-only from scratch.
-`Mlp.kt` gained `initFrom: Model?` warm-start; `BreathSpecCli` now saves one final full-data coswara MLP to
-`data/codebooks/breath_mlp_coswara.json`; `DeviceHubertEvalCli` loads it and reports an "MLP
-(transfer-init)" comparison. Commit `91ff977`, build green (jar 'l'), pushed. `:desktop:breathSpec` then
-`:desktop:deviceHubertEval` were launched at end of session using already-cached embeddings (no fresh GPU
-pass needed) — **read their output / update memory with the transfer-init breath-FP number before doing
-new work**; if it beats the 37.2% from-scratch device-MLP baseline, transfer learning is a real lever; if
-not, "collect more labelled device data" remains the only path per round 4's conclusion.
+coswara). This session tried round 4's two remaining secondary next-steps:
+- **Transfer learning** (commit `91ff977`): `Mlp.kt` gained `initFrom: Model?` warm-start; `BreathSpecCli`
+  saves one final full-data coswara MLP to `data/codebooks/breath_mlp_coswara.json`; `DeviceHubertEvalCli`
+  warm-starts device folds from it. **NULL: 37.4% FP (transfer-init) vs 37.2% (from-scratch) — a wash.**
+- **DSP nonlinearity** (commit `6563e93`): added DSP-only(MLP) and FUSED(HuBERT-MLP+DSP-MLP) variants.
+  **NULL: fused-with-DSP-MLP 33.8% vs fused-with-linear-DSP 33.3% — no compounding gain.**
+- **Real bugfix found+fixed** (commit `958f6c5`): `deviceHubertEval`'s gradle task always passed
+  `-Ddevice.dir=""` when unset, silently defeating the CLI's own `p3`/`device_ingest` fallback and making
+  the FIRST re-run of this session report "0 labelled clips" with no error. Fixed with `.takeIf{isNotBlank()}`.
+- All 4 commits green (jars 'l'/'m'(via breathSpec)/'o'/'p'/'q'/'r' across the session), all pushed to
+  `port_windows`.
+
+**CONCLUSION: the algorithmic toolkit (hard-neg mining, cascading, linear->MLP, transfer-learning,
+DSP-nonlinearity) is now exhausted at the 33.3% in-domain breath-FP floor. Desktop algorithm work on this
+line is DEPRIORITIZED until the labelled device set grows past 1,899 clips.** Next real lever: get the
+FFTT04M Ground Truth Review tooling (blue_sky `fb6285e`/`5b05870`, built but still NOT device-tested) onto
+an actual phone and used to collect more labelled breath/voice/cough data — see `mobile-capture-transfer`
+memory. That is a mobile/device-testing task, not something further desktop CLI work can unlock.
 
 ## SESSION 2026-07-10 — cough-isolation stacked gate resumed (autonomous scheduled-task run)
 
