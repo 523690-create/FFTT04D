@@ -1,7 +1,21 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-10).
+Date: 2026-06-13 (latest session appended at top: 2026-07-11).
+
+## SESSION 2026-07-11 — breath-specificity round 5: transfer-learning experiment (autonomous resume)
+Full detail in memory `cough-detection-architecture` round 5. Round 4 found the coswara-benchmark
+linear->MLP breakthrough (44->9 alarms/hr) does NOT transfer in magnitude to real device audio (33.3%
+best in-domain FP vs 1.0% coswara) and diagnosed it as data scarcity (1,899 device clips vs 10,716
+coswara). This session wired the round-4 secondary next-step: use the coswara-trained MLP as a
+transfer-learning init for device fine-tuning rather than training device-only from scratch.
+`Mlp.kt` gained `initFrom: Model?` warm-start; `BreathSpecCli` now saves one final full-data coswara MLP to
+`data/codebooks/breath_mlp_coswara.json`; `DeviceHubertEvalCli` loads it and reports an "MLP
+(transfer-init)" comparison. Commit `91ff977`, build green (jar 'l'), pushed. `:desktop:breathSpec` then
+`:desktop:deviceHubertEval` were launched at end of session using already-cached embeddings (no fresh GPU
+pass needed) — **read their output / update memory with the transfer-init breath-FP number before doing
+new work**; if it beats the 37.2% from-scratch device-MLP baseline, transfer learning is a real lever; if
+not, "collect more labelled device data" remains the only path per round 4's conclusion.
 
 ## SESSION 2026-07-10 — cough-isolation stacked gate resumed (autonomous scheduled-task run)
 

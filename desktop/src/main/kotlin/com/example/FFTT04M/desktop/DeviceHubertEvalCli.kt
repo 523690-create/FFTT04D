@@ -54,7 +54,7 @@ object DeviceHubertEvalCli {
     @JvmStatic
     fun main(args: Array<String>) {
         val repo = Workspace.repoRoot ?: File(".")
-        val dirs = (System.getProperty("device.dir")?.split(File.pathSeparator)?.map { File(it) }
+        val dirs = (System.getProperty("device.dir")?.takeIf { it.isNotBlank() }?.split(File.pathSeparator)?.map { File(it) }
             ?: listOf(File(repo, "p3"), File(repo, "device_ingest"))).filter { it.isDirectory }
         val mcFile = File(System.getProperty("device.manual")?.takeIf { it.isNotBlank() } ?: Workspace.file("manual_comments.json").path)
         if (!mcFile.isFile) { println("missing manual_comments.json at $mcFile"); return }
