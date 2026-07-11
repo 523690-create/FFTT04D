@@ -1,5 +1,8 @@
 package com.example.FFTT04M.desktop
 
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
+import java.io.File
 import kotlin.math.exp
 import kotlin.math.sqrt
 
@@ -13,7 +16,7 @@ import kotlin.math.sqrt
 object Mlp {
 
     class Model(
-        private val mean: DoubleArray, private val std: DoubleArray,
+        val mean: DoubleArray, val std: DoubleArray,
         val w1: Array<DoubleArray>, val b1: DoubleArray, val w2: Array<DoubleArray>, val b2: DoubleArray,
         val classes: List<String>,
     ) {
@@ -89,4 +92,24 @@ object Mlp {
         } finally { pool.shutdown() }
         return Model(mean, std, w1, b1, w2, b2, classes)
     }
+
+    /** Serialize a trained [Model] (mirrors [WholeClipClassifier.save]) so a winning MLP (e.g. the
+     *  breath-specificity HuBERT-MLP) doesn't need retraining from scratch every run. */
+    fun save(model: Model, out: File) {
+        out.writeText(GsonBuilder().create().toJson(mapOf(
+            "classes" to model.classes, "mean" to model.mean, "std" to model.std,
+            "w1" to model.w1, "b1" to model.b1, "w2" to model.w2, "b2" to model.b2)))
+    }
+
+    fun load(f: File): Model? = try {
+        val o = JsonParser.parseString(f.readText()).asJsonObject
+        Model(
+            o.getAsJsonArray("mean").map { it.asDouble }.toDoubleArray(),
+            o.getAsJsonArray("std").map { it.asDouble }.toDoubleArray(),
+            o.getAsJsonArray("w1").map { row -> row.asJsonArray.map { it.asDouble }.toDoubleArray() }.toTypedArray(),
+            o.getAsJsonArray("b1").map { it.asDouble }.toDoubleArray(),
+            o.getAsJsonArray("w2").map { row -> row.asJsonArray.map { it.asDouble }.toDoubleArray() }.toTypedArray(),
+            o.getAsJsonArray("b2").map { it.asDouble }.toDoubleArray(),
+            o.getAsJsonArray("classes").map { it.asString })
+    } catch (e: Exception) { System.err.println("mlp load: ${e.message}"); null }
 }
