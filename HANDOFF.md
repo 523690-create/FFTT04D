@@ -1,7 +1,30 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-11).
+Date: 2026-06-13 (latest session appended at top: 2026-07-12).
+
+## SESSION 2026-07-12 — autonomous resume-paused-work audit: nothing stranded, no new work started
+Ran the standing "resume paused work" scheduled task. Checked all three repos for the failure modes it
+exists to catch: `git status -sb` on FFTT04D/M/L all showed **working tree clean, up to date with
+origin** (no local unpushed commits on port_windows/blue_sky/main) — nothing was stranded by a crash or
+resource exhaustion this time, so no push was needed. `tasklist` showed **zero running java.exe** — no
+concurrent-build lock risk (see `scheduled-task-concurrency-lesson` memory), so it was also safe to build
+if there had been something to build.
+Re-checked the two open items in `phoneme_atlas_player_todo.md`:
+- **Segment-edit retraining validation** — still blocked. `data/codebooks/phoneme_segment_edits.json`
+  doesn't exist on disk at all (not even `{}`), confirming zero real Tier-B edits exist yet to retrain
+  against. This needs the user to add edits via the running desktop app first; nothing to do here without
+  fabricating data.
+- **Vertex-window precision** — on inspection this isn't actually a fixable bug: decode windows are
+  180ms/90ms-hop (50% overlap), so `autoDetectSquiggles`'s nearest-window-center heuristic
+  (`PhonemePlayer.kt` ~line 262) is already the principled choice given that granularity — there's no
+  better-defined "correct" window for a vertex time that falls in the overlap of two windows. Left as
+  documented (occasional off-by-one-window, acceptable), not touched.
+Per `cough-detection-architecture` memory, the main research line (breath-FP reduction) is explicitly
+DEPRIORITIZED until the labelled device set grows past 1,899 clips — the only real next lever is the
+user actually using the (already device-tested, per `mobile-capture-transfer`) Ground Truth Review
+tooling on their phone, which no autonomous desktop session can do. Concluded there was no concrete,
+non-speculative desktop task to pick up this run rather than manufacture busywork.
 
 ## SESSION 2026-07-11 — breath-specificity round 5: transfer-learning + DSP-MLP, BOTH NULL (autonomous resume)
 Full detail in memory `cough-detection-architecture` round 5. Round 4 found the coswara-benchmark
