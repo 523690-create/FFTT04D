@@ -476,7 +476,12 @@ object PhonemeCodebookCli {
         s = s.trim().removePrefix("manual:").trim().lowercase()
         if (s.isBlank()) return null
         return when {
-            s == "snore" || s.contains("snor") -> "snoring"
+            // Breathing and snoring are conflated into one respiratory class: physiologically snoring IS
+            // breathing (turbulent airflow + soft-tissue vibration during respiration), and for the
+            // cough-vs-not gate both are non-cough. Merging gives breath a home class so it stops
+            // scattering into cough classes (the coswara test had ~480 breaths landing in croup). Kept
+            // under the existing "snoring" label/letter S for continuity.
+            s == "snore" || s.contains("snor") || s.contains("breath") -> "snoring"
             // bronchitis + the user's variants/typos that mean it ("evin p", "quad cough")
             s.contains("bronchitis") || s.contains("brinchitis") || s.contains("evin") || s.contains("quad") -> "bronchitis"
             s.startsWith("dry hack") -> "dry hacking"

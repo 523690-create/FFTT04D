@@ -434,6 +434,18 @@ tasks.register<JavaExec>("deviceHubertEval") {
 // alarms/hour under the real breath base rate (not balanced accuracy), adds segment-HuBERT + MFCC-
 // dynamics modalities (marginal-gain ablation), hard-negative mining + upweighted retrain, and an
 // end-to-end one-class-library -> discriminative-gate cascade. Cached embeddings only, no GPU.
+// Train the on-device cough/not-cough VOTING head in-domain on the user's labelled device clips: fuses
+// forestP + HuBERT-head P + DSP speech/breath cues into one calibrated P(cough). Saves cough_vote.json.
+tasks.register<JavaExec>("deviceCoughGate") {
+    group = "application"
+    description = "Train the in-domain cough-vote fuser (forest + HuBERT head + DSP cues) → cough_vote.json."
+    mainClass.set("com.example.FFTT04M.desktop.DeviceCoughGateCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("vote.mlp", System.getProperty("vote.mlp") ?: "")
+    maxHeapSize = "4g"
+}
+
 tasks.register<JavaExec>("breathSpec") {
     group = "application"
     description = "Breath-FP@90%recall -> alarms/hour; seg-HuBERT+MFCC ablation; hard-neg upweight; one-class cascade."
