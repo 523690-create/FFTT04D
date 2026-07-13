@@ -1,7 +1,16 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-12).
+Date: 2026-06-13 (latest session appended at top: 2026-07-13).
+
+## SESSION 2026-07-13 — autonomous resume-paused-work: nothing stranded on FFTT04D; picked up a mobile item
+All three repos (D/M/L) clean and pushed at session start — no crash/resource-exhaustion fallout to
+resume. No device connected, no concurrent build process. The desktop research line remains DEPRIORITIZED
+per the 2026-07-12 conclusion (unchanged: `phoneme_segment_edits.json` still doesn't exist on disk, no new
+labelled device data). Rather than manufacture desktop busywork, picked up a small, well-scoped, non-device
+-testing-gated follow-up from FFTT04M instead: exposed `AutoReject.VOTE_REJECT_THRESHOLD` as a gallery
+Tools-spinner setting (blue_sky `045bac8`/`60f7286`). Full detail in FFTT04M's own HANDOFF.md and memory
+`on-device-cough-vote`. FFTT04D itself: no code changes this run.
 
 ## SESSION 2026-07-12 — autonomous resume-paused-work audit: nothing stranded, no new work started
 Ran the standing "resume paused work" scheduled task. Checked all three repos for the failure modes it
