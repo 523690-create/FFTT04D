@@ -3,6 +3,24 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13 (latest session appended at top: 2026-07-13).
 
+## SESSION 2026-07-14 — autonomous resume-paused-work: segment-edit retrain validation DONE (null result); found+fixed a stale "blocked" conclusion
+All three repos (D/M/L) clean/pushed at session start, no device connected, no concurrent build. The prior
+two sessions (2026-07-12/13) had concluded the "segment-edit retraining validation" follow-up (see
+`phoneme_atlas_player_todo.md`) was blocked because `phoneme_segment_edits.json` "doesn't exist on disk" —
+**that was wrong**: the real path (`Workspace.repoRoot`-resolved, one level OUT of this repo at
+`D:\AndroidProjects\data\codebooks\phoneme_segment_edits.json`) has had real content since 2026-07-10
+11:28 (one clip, 12 window overrides). Also found the `-Dsegedit.weight` CLI flag was never wired through
+`desktop/build.gradle.kts`'s `phonemeCodebookCli` task (always silently used the hardcoded default 8) —
+fixed with a one-line `systemProperty` passthrough, commit `813fb93`, pushed.
+Backed up `data/codebooks/*.json` to `data/_backup_pre_segedit_validate_20260714/`, then ran the
+documented production rebuild recipe (`-Dhubert.feat -Dcodebook.k=256 -Dpurify.mixed -Dcodebook.only
+-PuseOnnxGpu`) twice, varying only `-Dsegedit.weight`: **weight=1 (no boost) → classifier CV 81% (1361
+clips); weight=8 (shipped default) → classifier CV 80%.** NULL result — within k-means run-to-run noise,
+not a real regression; expected given only 1 of 1361 test clips carries an edit right now. Feature
+confirmed working (applies without crashing/dominating), just not yet measurable at n=1 — revisit once
+more Tier-B edits accumulate. Full detail + numbers in memory `phoneme-atlas-player-todo`. Final on-disk
+codebook state = the weight=8 (default) run's output, matching normal production rebuild behavior.
+
 ## SESSION 2026-07-13 — autonomous resume-paused-work: nothing stranded on FFTT04D; picked up a mobile item
 All three repos (D/M/L) clean and pushed at session start — no crash/resource-exhaustion fallout to
 resume. No device connected, no concurrent build process. The desktop research line remains DEPRIORITIZED
