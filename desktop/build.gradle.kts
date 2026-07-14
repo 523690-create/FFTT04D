@@ -86,6 +86,7 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     systemProperty("codebook.k", System.getProperty("codebook.k") ?: "")   // -Dcodebook.k=256 → 256 phonemes
     systemProperty("purify.mixed", System.getProperty("purify.mixed") ?: "")   // -Dpurify.mixed=true → route bg windows out of cough-tag clips
     systemProperty("codebook.only", System.getProperty("codebook.only") ?: "")   // -Dcodebook.only=true → build codebook, skip decode-all
+    systemProperty("segedit.weight", System.getProperty("segedit.weight") ?: "")   // -Dsegedit.weight=N → Tier-B exemplar duplicate-weight (default 8)
     // HARD heap cap: a monster clip's O(T^2) HuBERT attention OOMs this forked JVM instead of the machine.
     maxHeapSize = "3g"
 }
