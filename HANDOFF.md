@@ -1,7 +1,51 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-13).
+Date: 2026-06-13 (latest session appended at top: 2026-07-16).
+
+## SESSION 2026-07-16 — autonomous resume-paused-work: found+landed the 2026-07-15 session's stranded commit (5th consecutive no-new-code audit)
+The 2026-07-15 session's HANDOFF.md edit (below) was never committed — it was sitting as an uncommitted
+working-tree change, i.e. exactly the "crash/resource-exhaustion mid-session" case this task exists to
+resume. Verified it was still accurate before landing it: `git status -sb` on all three repos matched the
+commits it names exactly (FFTT04D/port_windows `1fb4f9b`, FFTT04M/blue_sky `60f7286`, FFTT04L/main
+`942d9c7`, all clean/pushed), `tasklist` showed zero java.exe, `adb devices` was empty (no phone connected,
+so still no new Ground Truth Review data since 2026-07-12/14). Committed it as-is (docs-only, no code
+changed) rather than rewrite, then re-ran the same follow-up sweep myself independently before appending
+this note — same result: `on-device-cough-vote` (a)/(b) still explicitly gated on field-validation/data
+that hasn't happened, (d) still an explicit user-preference question, `phoneme-atlas-player-todo` has
+nothing open besides "wait for more segment edits to accumulate", FFTT04L untouched since 2026-06-17 with
+no HANDOFF gap. **This is now 5 consecutive sessions (07-12 through 07-16) reaching the identical
+conclusion: the only remaining lever on the cough-detection research line is the user collecting more
+labelled device data via the already-built, already device-tested Ground Truth Review tooling — no
+autonomous session can manufacture that. Future scheduled runs should keep checking for a connected device
+/ new data rather than re-deriving this conclusion from scratch each time**; if 07-17 onward again finds
+zero new data and zero stranded work, a terser one-line log entry is enough — no need to re-justify at
+length.
+
+## SESSION 2026-07-15 — autonomous resume-paused-work audit: nothing stranded, no new work started (4th consecutive no-op)
+Ran the standing "resume paused work" scheduled task. All three repos unchanged since the 2026-07-14
+session: `git status -sb` on FFTT04D/port_windows (`1fb4f9b`), FFTT04M/blue_sky (`60f7286`), FFTT04L/main
+(`942d9c7`) all clean, fully pushed, zero commits ahead/behind origin. `tasklist` showed zero java.exe
+(no concurrent-build risk). `adb devices` empty — no phone connected, so nothing new was collected via
+Ground Truth Review since the last run either.
+Re-checked every open follow-up across the tracked memories/docs — all are blocked on the same things the
+2026-07-12/13/14 sessions already identified, and none of that has changed:
+- `phoneme-atlas-player-todo`: segment-edit retraining validation is DONE (null result, 2026-07-14);
+  vertex-window precision was already assessed as not a real bug (2026-07-12) — nothing left to do here.
+- `on-device-cough-vote` follow-up (a) (DSP-only vote in the hot real-time capture-time gate): still
+  explicitly gated on AutoReject being "field-validated" — no evidence of extended real-world use since
+  the one-time Pixel 10 device test on 2026-07-12, so left untouched rather than touch the hot path on a
+  guess.
+- follow-up (b) (in-domain codebook cough-fraction as a 4th vote): still an "expensive" research task with
+  no new labelled data to make it worthwhile right now.
+- follow-up (d) (merge Breath/Snore display buckets on mobile): still explicitly conditional on the user's
+  own preference — not something an autonomous session should decide unilaterally.
+- FFTT04L (main) hasn't been touched since 2026-06-17; its HANDOFF.md is not stale relative to it (no gap).
+**Conclusion (same as the last two runs): the only real remaining lever on the main cough-detection
+research line is the user actually using the (already device-tested) Ground Truth Review tooling on their
+phone to grow the labelled device dataset past its current size — see `cough-detection-architecture` /
+`mobile-capture-transfer` memories. No autonomous desktop or mobile session can manufacture that data.
+Nothing changed this run; no commits.
 
 ## SESSION 2026-07-14 — autonomous resume-paused-work: segment-edit retrain validation DONE (null result); found+fixed a stale "blocked" conclusion
 All three repos (D/M/L) clean/pushed at session start, no device connected, no concurrent build. The prior
