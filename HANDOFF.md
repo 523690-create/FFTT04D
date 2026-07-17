@@ -1,7 +1,17 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-07-16).
+Date: 2026-06-13 (latest session appended at top: 2026-07-17).
+
+## SESSION 2026-07-17 — autonomous resume-paused-work: no-op (6th consecutive) — all repos clean/pushed, no device connected
+Same result as 07-12 through 07-16: D/M/L all clean + fully pushed (D=`aafaa2d`, M=`60f7286`, L=`942d9c7`),
+zero java.exe, `adb devices` empty (still no new Ground Truth Review data). Re-checked every open follow-up
+across memories/COUGH_ISOLATION.md — all remain gated on either (a) the user collecting more labelled
+device data, or (b) explicit user preference (mobile Breath/Snore bucket merge), same as documented
+2026-07-12/16. `COUGH_ISOLATION.md`'s two remaining unchecked boxes ("wire CoughGate into a GUI button",
+"user-domain override") are the OLD ALLDATA-trained fuser path, superseded by the in-domain `CoughVote`
+already shipped to mobile ([[on-device-cough-vote]]) — not picked up as busywork on a deprioritized path.
+No commits this run. Per the 07-16 note, future no-op runs should stay this terse unless something changes.
 
 ## SESSION 2026-07-16 — autonomous resume-paused-work: found+landed the 2026-07-15 session's stranded commit (5th consecutive no-new-code audit)
 The 2026-07-15 session's HANDOFF.md edit (below) was never committed — it was sitting as an uncommitted
