@@ -1,7 +1,15 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-09-17).
+Date: 2026-06-13 (latest session appended at top: 2026-09-20).
+
+## SESSION 2026-09-20 — autonomous resume-paused-work: no-op (18th consecutive) — all repos clean/pushed, no device connected
+No HANDOFF entries for 09-18/09-19 (same skip-when-unchanged pattern). Today: D=`2927328`, M=`60f7286`,
+L=`942d9c7`, all clean/up-to-date with origin (fetched), no stashes, zero java.exe, `adb devices` empty,
+`phoneme_segment_edits.json` still unchanged since 2026-07-10 (238 bytes, now 72 days stale),
+`device_ingest/` still 827 files (newest 07-08 mtime), `data/usb_import/` untouched since 06-18. Same
+conclusion as the last 17 audits — no stranded work, no commits besides this entry, nothing actionable
+without new device data (see [[phoneme-atlas-player-todo]] / [[on-device-cough-vote]] gating).
 
 ## SESSION 2026-09-17 — autonomous resume-paused-work: no-op (17th consecutive) — all repos clean/pushed, no device connected
 D=`12f36e0`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin (fetched), no stashes, zero
