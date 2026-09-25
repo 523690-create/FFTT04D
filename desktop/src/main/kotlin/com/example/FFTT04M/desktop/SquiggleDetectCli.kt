@@ -37,6 +37,7 @@ object SquiggleDetectCli {
             .filter { it.isFile && it.extension.equals("wav", true) }.associateBy { it.nameWithoutExtension }
 
         println("=== SQUIGGLE-DETECT over ${ids.size} clip(s) ===")
+        var total = 0; var changed = 0
         val detector = MultiRidgeExtractor()
         for (id in ids) {
             val wav = wavById[id]
@@ -56,16 +57,30 @@ object SquiggleDetectCli {
                 val idxs = wins.indices.filter { wins[it].second > msLo && wins[it].first < msHi }
                 if (idxs.isEmpty()) continue
                 val wFrom = idxs.first(); val wTo = idxs.last()
-                val vertexWin = idxs.minByOrNull { w -> kotlin.math.abs((wins[w].first + wins[w].second) / 2 - vMs) } ?: wFrom
-                val codes = idxs.map { word.getOrElse(it) { "?" } }
-                val vertexCode = word.getOrElse(vertexWin) { "?" }
+                fun codeAt(w: Int) = word.getOrElse(w) { VertexWindow.UNASSIGNED }
+                val vertexWin = VertexWindow.pick(wins, idxs, vMs, ::codeAt) { w ->
+                    VertexWindow.rms(pcm, SR, wins[w].first, wins[w].second)
+                }
+                val oldWin = VertexWindow.pickNearestCentre(wins, idxs, vMs)   // pre-fix geometry-only pick
+                val codes = idxs.map { codeAt(it) }
                 val uniform = codes.toSet().size <= 1
+                // Flag every event where the fix changes the outcome, so the effect is measured, not assumed.
+                val delta = when {
+                    vertexWin < 0 -> "  <<< SKIP (all-'?' span; old would have stamped '?')"
+                    vertexWin != oldWin -> "  <<< CHANGED (was win=$oldWin code=${codeAt(oldWin)})"
+                    else -> ""
+                }
+                if (vertexWin != oldWin || vertexWin < 0) changed++
+                val vertexCode = if (vertexWin < 0) "-" else codeAt(vertexWin)
                 println(String.format(
-                    "  #%-2d t=%4d-%4dms (%3dms)  vertex=%4dms %5.0fHz  win %d-%d -> [%s]  vertexWin=%d code=%s%s",
+                    "  #%-2d t=%4d-%4dms (%3dms)  vertex=%4dms %5.0fHz  win %d-%d -> [%s]  vertexWin=%d code=%s%s%s",
                     i + 1, msLo, msHi, msHi - msLo, vMs, ev.vertexFreqHz, wFrom, wTo,
-                    codes.joinToString(" "), vertexWin, vertexCode, if (uniform) "  (already uniform)" else "",
+                    codes.joinToString(" "), vertexWin, vertexCode,
+                    if (uniform) "  (already uniform)" else "", delta,
                 ))
+                total++
             }
         }
+        println("\n=== vertex-window pick: $changed of $total event(s) differ from the old nearest-centre rule ===")
     }
 }
