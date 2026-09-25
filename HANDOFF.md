@@ -1,7 +1,45 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-09-20).
+Date: 2026-06-13 (latest session appended at top: 2026-09-25).
+
+## SESSION 2026-09-25 — autonomous resume-paused-work: vertex-window precision CLOSED + a `"?"`-stamping bug found
+First non-no-op run since 07-16 (the prior 18 were audits). State on arrival was the same as always:
+D=`1f7de69`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin (fetched), no stashes, zero
+java.exe, `adb devices` empty, `phoneme_segment_edits.json` unchanged since 2026-07-10 (238 bytes, 77
+days stale), `device_ingest/` still 827 files. **But "no device data" only gates the field-validation
+items — it never gated the `vertex-window precision` follow-up in [[phoneme-atlas-player-todo]], which is
+pure desktop code with an existing headless harness. 18 audits in a row called that no-op; it wasn't.**
+
+Commit `1a8a59f` (pushed, jar letter 'C' / build index 236):
+- New `VertexWindow.kt` — the vertex→decode-window mapping, previously an inline one-liner **duplicated**
+  in `PhonemePlayer.autoDetectSquiggles` and `SquiggleDetectCli` (so the "verification harness" was free
+  to drift from what the GUI actually did; it now can't).
+- **The documented precision issue, fixed**: windows are 180 ms on a 90 ms hop (50% overlap), so a vertex
+  normally sits inside TWO windows with centres 90 ms apart, and nearest-centre was deciding on margins as
+  thin as **6 ms** (real case: vertex 1302 ms, centres 1260/1350) — far below the precision of a `-b/2a`
+  fit over 10 ms ridge frames accepted at R² ≥ 0.2. Now: restrict to windows that actually CONTAIN the
+  vertex, rank by centring, break near-ties (30 ms ≈ 3 ridge frames) on **loudness** — the same peak-RMS
+  assumption the manual span-relabel default always used. Tie-break is confined to the containing pool; in
+  the fallback pool the nearest candidate can be 100+ ms away, where loudest-wins picks on no evidence.
+- **The bigger defect found while measuring it**: `"?"` is the codebook's REJECT marker
+  (`PhonemeCodebookCli` — no centroid within the cluster radius), not a phoneme; downstream
+  dominant-letter inference filters it straight back out. Nearest-centre would select a `"?"` window and
+  `setRange()` then overwrote **every real code in the chirp** with it. Since segment edits feed codebook
+  retraining via `-Dsegedit.weight`, that was poisoning the retrain input, not just the display.
+- **Measured, not asserted** (`:desktop:squiggleDetect` now prints old-vs-new per event + a summary
+  count). Over 35 decoded clips / 673 detected events: **303 unchanged, 212 changed away from a `"?"`
+  stamp (31% of all events), 34 real→real refinements, 124 all-`"?"` spans declined** (all already
+  uniform, so no GUI behaviour change on those). Invariant checked: the new pick is never `"?"`.
+  All 6 changes on the 3 documented repro clips were hand-audited individually.
+- Mid-review self-correction worth keeping: the first cut also applied the loudness tie-break in the
+  fallback pool, which turned a 127-vs-143 ms centre distance into a "tie". That was wrong for the stated
+  reason (the 30 ms band is justified by fit jitter near the 90 ms decision boundary, nothing else) and
+  was tightened before commit.
+
+**Nothing else changed** — no codebook rebuild was run (that mutates `data/codebooks/*.json`, outside git),
+so `phoneme_segment_edits.json` and all decodes are untouched. Re-measuring the `segedit.weight` before/after
+still waits on more Tier-B edits, and the device-data items are still gated on the user.
 
 ## SESSION 2026-09-20 — autonomous resume-paused-work: no-op (18th consecutive) — all repos clean/pushed, no device connected
 No HANDOFF entries for 09-18/09-19 (same skip-when-unchanged pattern). Today: D=`2927328`, M=`60f7286`,
