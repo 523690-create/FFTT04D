@@ -80,6 +80,25 @@ global CV number" (what [[phoneme-atlas-player-todo]] records) — **zero exempl
   auto-label AND (b) the override's letter equals that clip's own class letter. Edits on unlabelled
   harvested sub-clips do nothing. Re-measuring `segedit.weight` needs edits that satisfy both.
 
+### Third unit: `-Dauto.win=N` — spend the auto fragment budget on many clips (measured TRADE, default OFF)
+The "only 14 breathing clips trained" finding above has an obvious fix: take N evenly-strided windows per
+AUTO clip instead of all of them (manual clips untouched; the original window index is preserved so Tier-B
+overrides still line up). At N=20 the diversity goes exactly where intended — auto clips **119 → 351**,
+breathing clips **14 → 101** — for slightly fewer total fragments (22,772 → 21,394). But on the holdout it
+is a re-balance, not a win:
+```
+  head            acc          cough-recall   breath-reject   prec        (off → auto.win=20)
+  inferredLetter  67.0 → 63.6%  45.8 → 32.9%   88.4 → 94.6%   79.9 → 86.2%
+  classLabel      59.2 → 64.4%  56.8 → 39.5%   61.7 → 89.4%   59.7 → 78.9%
+  wholeClipLabel  54.5 → 60.4%  63.2 → 63.4%   45.8 → 57.5%
+  ensemble OR     56.4 → 65.2%  83.8 → 78.1%   28.9 → 52.2%   ← the one clear gain
+```
+Specificity climbs on every head and cough recall falls just as hard; best-single-head accuracy regresses.
+Side effects: the small ESC-50 **sneeze** class thins 1,977 → 775 fragments (all auto classes get
+subsampled, and sneeze had few clips), whole-clip CV 54 → 48%. **Default 0 = off**, because the mobile
+design wants a high-recall grabber with specificity as a tunable post-filter — trading 13pp of recall
+inside the codebook is the wrong place to spend it. Live codebook was rebuilt with the knob OFF.
+
 ### Measurement-quality note (applies to every CV number in this file)
 Five identical rebuilds of the canonical recipe this session gave **classifier CV 79 / 80 / 81 / 75 / 80%**
 while **dominant-letter held at 81–82%**. So the histogram-classifier CV swings ~6pp run to run (k-means

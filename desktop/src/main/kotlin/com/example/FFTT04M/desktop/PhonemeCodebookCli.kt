@@ -46,6 +46,20 @@ object PhonemeCodebookCli {
         return out
     }
     private const val AUTO_FRAG_CAP = 2000     // cap fragments per AUTO label (≈ largest manual class; manual is never capped)
+    /** -Dauto.win=N — take only N evenly-strided windows from each AUTO-labelled clip (manual clips are
+     *  never subsampled; they are the vetted data). AUTO_FRAG_CAP is a FRAGMENT budget, so by default a
+     *  few long clips spend all of it: coswara breathing runs ~140 windows per clip, and 14 of them eat
+     *  the whole respiratory budget. N=20 spends the same budget on ~100 clips (measured: auto clips
+     *  119 → 351, breathing clips 14 → 101), i.e. far more speakers/sessions per class.
+     *
+     *  DEFAULT OFF (0 = no subsampling), because it is a trade, not a win — measured on the participant-
+     *  level coswara holdout (data/_coswara_holdout_20260929/RESULTS.md): breath-reject rises a lot
+     *  (dominant-letter 88.4 → 94.6%, histogram 61.7 → 89.4%) but cough RECALL falls just as hard
+     *  (45.8 → 32.9%, 56.8 → 39.5%), best-single-head accuracy regresses 67.0 → 63.6%, the small ESC-50
+     *  sneeze class thins from 1977 to 775 fragments, and whole-clip CV drops 54 → 48%. Ensemble-OR
+     *  accuracy does improve (56.4 → 65.2%), so it is worth having as a knob — the mobile design wants a
+     *  high-recall grabber, which is why it is not the default. */
+    private val AUTO_WIN_PER_CLIP = System.getProperty("auto.win")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
     /** -Dexclude.ids=<file> — one clip id per line, never used for TRAINING. Needed for an honest
      *  cross-domain test: public-dataset clips are auto-labelled from their filenames, so a held-out
      *  eval sample would otherwise be free to leak into the codebook it is measuring. */
@@ -144,9 +158,17 @@ object PhonemeCodebookCli {
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
                 if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) continue   // skip degenerate/monster (see decode loop)
                 val frags = framesFor(pcm, SR)                // same fixed 180/90 grid as PhonemeSegmentEdits' windowIdx
-                val clipVecs = clipFeatures(pcm, SR, frags)   // DSP(13) or HuBERT(768) per window
+                val clipVecsAll = clipFeatures(pcm, SR, frags)   // DSP(13) or HuBERT(768) per window
+                // AUTO clips contribute an evenly-strided subsample (see AUTO_WIN_PER_CLIP); `winIdx` keeps
+                // the ORIGINAL window index so a Tier-B override still lines up with the player's windowIdx.
+                val winIdx = if (manual == null && AUTO_WIN_PER_CLIP > 0 && clipVecsAll.size > AUTO_WIN_PER_CLIP) {
+                    val stride = clipVecsAll.size.toDouble() / AUTO_WIN_PER_CLIP
+                    (0 until AUTO_WIN_PER_CLIP).map { (it * stride).toInt() }.distinct()
+                } else clipVecsAll.indices.toList()
+                val clipVecs = winIdx.map { clipVecsAll[it] }
                 val edits = segmentEdits[id]
-                for ((i, v) in clipVecs.withIndex()) {
+                for ((j, v) in clipVecs.withIndex()) {
+                    val i = winIdx[j]
                     labelled.add(FV(label, v))
                     // A Tier-B override that agrees with this clip's own class (same letter) is a
                     // human-confirmed exemplar of a specific phoneme within it — duplicate-weight it so
