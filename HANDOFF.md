@@ -51,6 +51,43 @@ vs the 07-14 baseline's 80 / 81 / 52% (inside the documented k-means variance).
   participants' breath. Next experiment: spread the same budget over many more clips (per-auto-clip
   window cap) — cheap, same harness.
 
+### Second find, same session: the segment-edit weighting was BOTH inert and booby-trapped
+Chased down *why* the 2026-07-14 `segedit.weight` A/B came out null. It was not "too few edits to move a
+global CV number" (what [[phoneme-atlas-player-todo]] records) — **zero exemplars were ever applied**:
+- The only entry in `phoneme_segment_edits.json` is
+  `coswara__0HIgO2Eh…__cough-heavy__…__cough0_1470-3035ms` — a harvested sub-clip with no manual comment,
+  and `AutoLabel` gives coswara *cough* recordings no label, so `trainLabel` returns null and the clip is
+  **not in the training set at all** (`grep -c` over the new `p3_train_ids.txt`: 0 of 1337).
+  Therefore `segEditExemplars == 0` in every rebuild the feature has ever had, including both sides of the
+  07-14 A/B. The 81% vs 80% gap it reported was pure run-to-run variance with the flag provably inert —
+  reproduced here: weight=8 → 80%, weight=1 → 81%, with the exemplar count printed as 0 both times.
+- **And the code path it would have taken was broken.** `repeat(segEditWeight - 1) { labelled.add(FV(label, v)) }`
+  added N entries sharing ONE `DoubleArray`, and step 2's `znorm` is **in place** over every entry of
+  `labelled` — so a weighted exemplar was z-scored N times. Measured with a synthetic eligible exemplar
+  (6 windows on a training `voice` clip, weight 8), then restored:
+```
+  shared array (old):  z-norm check: max|z| = 11,054,878.2   fragments with max|z|>25: 48   ← 6 windows x 8 copies
+  v.copyOf() (fixed):  z-norm check: max|z| = 7.0            fragments with max|z|>25: 0
+```
+  A "human-confirmed exemplar" became a vector ~1.5 million sigma out, which k-means hands its own
+  phoneme(s). CV barely moved (6 of 22,814 fragments), so this would never have shown up as a number —
+  it would just have quietly degraded the codebook the moment the user added the edits the TODO asks for.
+- Fixed (`v.copyOf()`), plus two guards so neither failure can be silent again: a **z-norm sanity line**
+  (`max|z|` + count over 25) printed every build, and a **WARNING** when edited clips are not training
+  clips or when no override matches its clip's class letter. The production rebuild now prints
+  `WARNING 1 of 1 edited clip(s) are NOT training clips`, which is the true state of this repo.
+- **Actionable for the user:** a Tier-B edit only trains when (a) its clip has a manual comment or an
+  auto-label AND (b) the override's letter equals that clip's own class letter. Edits on unlabelled
+  harvested sub-clips do nothing. Re-measuring `segedit.weight` needs edits that satisfy both.
+
+### Measurement-quality note (applies to every CV number in this file)
+Five identical rebuilds of the canonical recipe this session gave **classifier CV 79 / 80 / 81 / 75 / 80%**
+while **dominant-letter held at 81–82%**. So the histogram-classifier CV swings ~6pp run to run (k-means
+init → different purify routing → different classifier); it is a weak instrument and a 1–2pp difference in
+it means nothing. Prefer dominant-letter, or the held-out coswara eval, for any A/B. The live codebook is
+the last of those runs (CV 80%, dominant-letter 82%, 256 phonemes); the 75% draw was re-run once for the
+production artifact, and both numbers are recorded here rather than the better one being presented alone.
+
 **Codebook state:** `data/codebooks/p3_*.json` were REBUILT (backup:
 `data/_backup_pre_breathclass_20260929/`). The live desktop codebook now contains breath in class S and
 permanently excludes the 5,003 holdout clips from training — keep passing `-Dexclude.ids` on future

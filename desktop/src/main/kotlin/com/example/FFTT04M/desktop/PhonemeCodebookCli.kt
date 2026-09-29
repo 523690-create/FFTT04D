@@ -133,7 +133,7 @@ object PhonemeCodebookCli {
             val perClip = ArrayList<Pair<String, List<DoubleArray>>>()   // (label, fragment vecs) per clip → classifier training
             val perClipWhole = ArrayList<Pair<DoubleArray, String>>()    // (14-dim whole-clip feature, label) → whole-clip classifier
             val autoFrags = HashMap<String, Int>()
-            var usedClips = 0; var autoClips = 0; var segEditExemplars = 0
+            var usedClips = 0; var autoClips = 0; var segEditExemplars = 0; var segEditSeen = 0
             val trainedIds = ArrayList<Pair<String, String>>()   // (id, label) actually used → <tag>_train_ids.txt
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
                 if (id in excludeIds) continue
@@ -155,8 +155,12 @@ object PhonemeCodebookCli {
                     val override = edits?.get(i)
                     if (override != null && override.takeWhile { it.isLetter() } == letterFor(label)) {
                         segEditExemplars++
-                        repeat(segEditWeight - 1) { labelled.add(FV(label, v)) }
+                        // `v.copyOf()`, NOT `v`: step 2's znorm is IN PLACE and walks every entry of
+                        // `labelled`, so N entries sharing one array would be z-scored N times — the
+                        // exemplar silently becomes a wild outlier and k-means hands it its own phoneme.
+                        repeat(segEditWeight - 1) { labelled.add(FV(label, v.copyOf())) }
                     }
+                    if (override != null) segEditSeen++
                 }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
                 perClipWhole.add(wholeClipFeat(pcm, frags) to label)   // 14-dim whole-clip feature (always DSP)
@@ -169,6 +173,17 @@ object PhonemeCodebookCli {
                 for ((tid, tlabel) in trainedIds) w.println(tid + "\t" + tlabel)
             }
             if (excludeIds.isNotEmpty()) println("exclude.ids: ${excludeIds.size} id(s) held out of training")
+            // A Tier-B edit only influences the codebook when its clip is a TRAINING clip (has a manual
+            // comment or a filename auto-label) AND the override's letter matches that clip's own class.
+            // Silence here used to hide the fact that every edit was being ignored, so say it out loud.
+            if (segmentEdits.isNotEmpty()) {
+                val trainedSet = trainedIds.mapTo(HashSet()) { it.first }
+                val untrained = segmentEdits.keys.count { it !in trainedSet }
+                if (untrained > 0) println("segment edits: WARNING $untrained of ${segmentEdits.size} edited clip(s) " +
+                    "are NOT training clips (no manual comment / no auto-label) — their overrides cannot affect the codebook")
+                if (segEditExemplars == 0 && segEditSeen > 0) println("segment edits: WARNING $segEditSeen override(s) " +
+                    "landed on training clips but none matched their clip's own class letter — no exemplar weighting applied")
+            }
             println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}" +
                 (if (segEditExemplars > 0) "  (incl. $segEditExemplars segment-edit exemplar(s) × $segEditWeight)" else ""))
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
@@ -181,6 +196,15 @@ object PhonemeCodebookCli {
             for (f in labelled) for (i in 0 until dim) { val d = f.vec[i] - m[i]; s[i] += d * d }
             for (i in 0 until dim) s[i] = sqrt(s[i] / labelled.size).coerceAtLeast(1e-9)
             labelled.forEach { znorm(it.vec, m, s) }
+            // Sanity statistic on the z-scored inputs: a correctly normalised fragment sits within a
+            // few sigma, so a large max|z| means some vector was normalised more than once (in-place
+            // znorm over a list that shares array references) — silent, and it poisons k-means.
+            run {
+                var maxAbs = 0.0; var wild = 0
+                for (f in labelled) { var mx = 0.0; for (x in f.vec) { val a = kotlin.math.abs(x); if (a > mx) mx = a }
+                    if (mx > maxAbs) maxAbs = mx; if (mx > 25.0) wild++ }
+                println("z-norm check: max|z|=${"%.1f".format(maxAbs)}  fragments with max|z|>25: $wild")
+            }
 
             // ---- 3. k-means → codebook ----
             // Per-label √-proportional allocation: phonemes ∝ √(fragment count) so an over-represented
