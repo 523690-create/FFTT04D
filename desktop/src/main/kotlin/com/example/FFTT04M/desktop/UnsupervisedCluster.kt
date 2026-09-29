@@ -709,7 +709,7 @@ object UnsupervisedCluster {
         s = s.trim().removePrefix("manual:").trim().lowercase()
         if (s.isBlank()) return null
         return when {
-            s == "snore" || s.contains("snor") -> "snoring"
+            s == "snore" || s.contains("snor") || s.contains("breath") -> "snoring"
             s.contains("bronchitis") || s.contains("brinchitis") || s.contains("evin") || s.contains("quad") -> "bronchitis"
             s.startsWith("dry hack") -> "dry hacking"
             s.startsWith("dry") -> "dry"

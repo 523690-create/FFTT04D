@@ -3,6 +3,59 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13 (latest session appended at top: 2026-09-25).
 
+## SESSION 2026-09-29 — autonomous resume-paused-work: the coswara BREATHING class, measured (cross-domain Pareto win)
+State on arrival: D=`d9dc076`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin, no stashes,
+zero java.exe, nothing stranded. Picked up the lever `data/_pull_stage_20260712/RESULTS.md` ends on —
+**"Next lever: add a real breathing class"** — which is pure desktop work and was never device-gated.
+
+**The gap.** `cleanLabel` has merged breath↔snoring since `59073a7` (2026-07-12), but `AutoLabel.forId`
+returned **null** for `coswara__…__breathing-*`, so coswara's **5,488 breathing clips had no label at all**
+and contributed nothing to the codebook. The merge had no breath supply to merge. Fixed: AutoLabel maps
+coswara `breathing-*` and ESC-50 `breathing` → `breathing`, and `trainLabel` now runs the filename
+auto-label through the SAME `cleanLabel` as a manual comment (→ the merged respiratory class `snoring`/`S`)
+instead of bypassing canonicalization. Also fixed the two copies of `cleanLabel` in `PhonemeFftCli` and
+`UnsupervisedCluster` whose comments claim to mirror `PhonemeCodebookCli`'s but had drifted (no breath
+clause) — same duplication trap as the pre-`1a8a59f` vertex-window one-liner.
+
+**New measurement infrastructure** (needed, because auto-labelling coswara makes any coswara eval sample
+leak-prone): `-Dexclude.ids=<file>` holds listed clip ids out of TRAINING only (with the gradle
+`systemProperty` passthrough — the `813fb93` lesson), and every build now writes
+`data/codebooks/<tag>_train_ids.txt` (id⇥label) so any downstream eval can prove leakage = 0.
+
+**Held-out sample** `data/_coswara_holdout_20260929/` — 5,003 clips (2,501 cough + 2,502 breathing) from
+the first 1,251 sorted coswara uids having both, held out **by participant**; `wav/` is hardlinks into
+ALLDATA (no copy); `eval_holdout.py` + `RESULTS.md` live there. Rebuild the wav dir with:
+`python -c "import io,os;[os.link('ALLDATA/'+i+'.wav','data/_coswara_holdout_20260929/wav/'+i+'.wav') for i in [l.strip() for l in io.open('data/_coswara_holdout_20260929/holdout_ids.txt')] if i]"` (from `D:\AndroidProjects`).
+
+**RESULT — same 4,930 test clips, same recipe, only the codebook differs, leakage 0:**
+```
+  head                          acc     cough-recall  breath-reject  cough-prec
+  inferredLetter  BEFORE       62.2%       40.1%          84.5%        72.4%
+  inferredLetter  AFTER        67.0%       45.8%          88.4%        79.9%   ← all four improve
+  classLabel      before/after 57.8→59.2%  42.7→56.8%     73.0→61.7%   61.3→59.7%
+  wholeClipLabel  before/after 55.0→54.5%  62.4→63.2%     47.6→45.8%   54.4→53.9%
+```
+Held-out breathing clips whose dominant phoneme is the respiratory letter S: **712 → 1,227**. The BEFORE
+row reproduces 2026-07-12's numbers on a differently-drawn sample (62.2 vs 62.1%), so the baseline is
+independently confirmed. **In-domain cost: none** — rebuild CV 79% / dominant-letter 81% / whole-clip 54%
+vs the 07-14 baseline's 80 / 81 / 52% (inside the documented k-means variance).
+
+**Still wrong — carry forward:**
+- The histogram head got WORSE at rejecting breath (73.0 → 61.7%) and its breathing→**croup** confusion
+  grew 414 → 728 clips. The dominant-letter head sends ZERO breathing clips to croup in either run, so
+  this is the histogram classifier mapping breath-flavoured phoneme bags onto croup — not the codebook
+  putting breath in a cough cluster.
+- **Only 14 breathing clips actually trained.** `AUTO_FRAG_CAP = 2000` is a per-auto-label *fragment*
+  budget and breathing clips are long (~140 windows each), so 14 clips ate the whole respiratory budget
+  and displaced ~24 shorter ESC-50 clips (auto clips 143 → 119). The whole gain above comes from 14
+  participants' breath. Next experiment: spread the same budget over many more clips (per-auto-clip
+  window cap) — cheap, same harness.
+
+**Codebook state:** `data/codebooks/p3_*.json` were REBUILT (backup:
+`data/_backup_pre_breathclass_20260929/`). The live desktop codebook now contains breath in class S and
+permanently excludes the 5,003 holdout clips from training — keep passing `-Dexclude.ids` on future
+rebuilds so that eval stays honest. Restart the desktop app to pick the new codebook up. fatJar rebuilt, jar letter **'J'** (build index 243).
+
 ## SESSION 2026-09-25 — autonomous resume-paused-work: vertex-window precision CLOSED + a `"?"`-stamping bug found
 First non-no-op run since 07-16 (the prior 18 were audits). State on arrival was the same as always:
 D=`1f7de69`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin (fetched), no stashes, zero

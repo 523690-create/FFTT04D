@@ -12,6 +12,7 @@ package com.example.FFTT04M.desktop
  *   - `train__…`                          → speech   (chopped-up old-time radio — all speech)
  *   - `urban8k__…`                        → noise    (UrbanSound8K — all environmental noise)
  *   - `coswara__…__vowel-*|counting-*__…` → speech   (spoken vowels / counting recordings)
+ *   - `coswara__…__breathing-*__…`        → breathing (deep/shallow breathing recordings)
  *
  * Manual comments always win over an auto-label (see PhonemeCodebookCli / RecordingsGrid).
  */
@@ -26,11 +27,17 @@ object AutoLabel {
             src == "urban8k" -> if (rec == "street_music" || rec == "siren" || rec == "car_horn") "voice" else "noise"
             src == "train" -> "voice"                              // old-time radio
             src == "coswara" && ("vowel" in rec || "counting" in rec) -> "voice"
+            // Coswara's breathing-deep / breathing-shallow recordings. The codebook conflates
+            // breathing with snoring into one respiratory class (PhonemeCodebookCli.cleanLabel),
+            // which is where this canonicalizes to — so these thousands of clips finally give that
+            // class real breath exemplars instead of scattering into the cough classes.
+            src == "coswara" && "breathing" in rec -> "breathing"
             src == "esc50" -> when (rec) {
                 "sneezing" -> "sneeze"                             // boosts the tiny SN class
                 "snoring" -> "snoring"
+                "breathing" -> "breathing"                         // same respiratory class as snoring
                 "crying_baby", "siren", "car_horn" -> "voice"
-                else -> null                                      // coughing/breathing/laughing/noise left out
+                else -> null                                      // coughing/laughing/noise left out
             }
             else -> null
         }

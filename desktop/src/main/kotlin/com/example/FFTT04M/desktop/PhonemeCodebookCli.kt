@@ -46,6 +46,14 @@ object PhonemeCodebookCli {
         return out
     }
     private const val AUTO_FRAG_CAP = 2000     // cap fragments per AUTO label (≈ largest manual class; manual is never capped)
+    /** -Dexclude.ids=<file> — one clip id per line, never used for TRAINING. Needed for an honest
+     *  cross-domain test: public-dataset clips are auto-labelled from their filenames, so a held-out
+     *  eval sample would otherwise be free to leak into the codebook it is measuring. */
+    private val excludeIds: Set<String> by lazy {
+        val f = System.getProperty("exclude.ids")?.let { File(it) } ?: return@lazy emptySet()
+        if (!f.isFile) { System.err.println("exclude.ids: no such file ${f.path}"); return@lazy emptySet() }
+        f.readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    }
     private const val RADIUS_PCTL = 0.75       // intra-cluster distance percentile for a phoneme's radius (the "?" gate); lower = stricter
 
     private val letterMap = linkedMapOf(
@@ -126,7 +134,9 @@ object PhonemeCodebookCli {
             val perClipWhole = ArrayList<Pair<DoubleArray, String>>()    // (14-dim whole-clip feature, label) → whole-clip classifier
             val autoFrags = HashMap<String, Int>()
             var usedClips = 0; var autoClips = 0; var segEditExemplars = 0
+            val trainedIds = ArrayList<Pair<String, String>>()   // (id, label) actually used → <tag>_train_ids.txt
             for (id in buildFragsById.keys.sortedBy { it.hashCode() }) {
+                if (id in excludeIds) continue
                 val manual = labels[id]
                 val label = trainLabel(id, manual) ?: continue
                 if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
@@ -151,8 +161,14 @@ object PhonemeCodebookCli {
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
                 perClipWhole.add(wholeClipFeat(pcm, frags) to label)   // 14-dim whole-clip feature (always DSP)
                 if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
+                trainedIds.add(id to label)
                 usedClips++
             }
+            // The exact training set, for leakage checks by any downstream eval.
+            File(outDir, "${tag}_train_ids.txt").printWriter().use { w ->
+                for ((tid, tlabel) in trainedIds) w.println(tid + "\t" + tlabel)
+            }
+            if (excludeIds.isNotEmpty()) println("exclude.ids: ${excludeIds.size} id(s) held out of training")
             println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}" +
                 (if (segEditExemplars > 0) "  (incl. $segEditExemplars segment-edit exemplar(s) × $segEditWeight)" else ""))
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
@@ -528,7 +544,10 @@ object PhonemeCodebookCli {
             manual != null -> manual
             decodeFeedback[id] == true -> confirmedLabels[id]
             decodeFeedback[id] == false -> return null   // user said this auto-decode is wrong → don't train on it
-            else -> AutoLabel.forId(id)
+            // Auto-labels go through the SAME canonicalizer as manual comments, so a filename-derived
+            // "breathing" lands in the merged respiratory class ("snoring") instead of minting a
+            // second, competing class. The existing auto labels are already canonical (no-op for them).
+            else -> cleanLabel(AutoLabel.forId(id))
         }
         return bronchitisByDate(id, base)
     }

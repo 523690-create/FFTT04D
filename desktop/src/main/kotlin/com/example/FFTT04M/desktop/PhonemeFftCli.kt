@@ -233,7 +233,7 @@ object PhonemeFftCli {
         val am = s.indexOf("auto-match", ignoreCase = true); if (am >= 0) s = s.substring(0, am)
         s = s.trim().removePrefix("manual:").trim().lowercase(); if (s.isBlank()) return null
         return when {
-            s == "snore" || s.contains("snor") -> "snoring"
+            s == "snore" || s.contains("snor") || s.contains("breath") -> "snoring"
             s.contains("bronchitis") || s.contains("brinchitis") || s.contains("evin") || s.contains("quad") -> "bronchitis"
             s.startsWith("dry hack") -> "dry hacking"
             s.startsWith("dry") -> "dry"
