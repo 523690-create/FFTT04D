@@ -1,7 +1,56 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-09-25).
+Date: 2026-06-13 (latest session appended at top: 2026-09-30).
+
+## SESSION 2026-09-30 — autonomous resume-paused-work: the dominant-letter rule was the bottleneck, not the codebook (`coughScore`)
+State on arrival: D=`b8e2949`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin, zero java.exe,
+`adb devices` empty, nothing stranded. No codebook rebuild this session — `data/codebooks/p3_*.json` and
+`phoneme_segment_edits.json` are untouched.
+
+**Finding.** Yesterday's holdout table scored one operating point per head: the dominant letter. Re-scoring
+the SAME decodes with a continuous score shows that rule is what caps recall. A real cough recording is
+mostly not-cough windows (held-out coswara cough clips decode as `?` 34.7%, DH 17.1%, **V 14.6%, SN 10.2%**),
+so "most common letter" discards clips whose coughs are outnumbered.
+
+`coughScore = (cough − respiratory S − λ·other not-cough) / all windows`, cough when > 0:
+```
+  rule (live codebook)        coswara holdout acc/recall/breath-reject   device manual acc/recall/reject
+  dominant letter (09-29)        67.0 / 45.8 / 88.4 %                      88.1 / 69.6 / 96.0 %
+  λ = 0                          82.8 / 92.8 / 72.7 %                      77.3 / 89.6 / 72.2 %
+  λ = 0.4  (shipped default)     81.4 / 78.2 / 84.6 %                      87.6 / 83.1 / 89.5 %
+  λ = 1                          68.0 / 44.7 / 91.4 %                      88.4 / 66.7 / 97.3 %
+```
+Coswara = 4,930 clips / 1,239 held-out participants (AUC 0.929 at λ=0, 0.921 on the participant half not
+used for any threshold). Device = 792 manually-labelled p3 clips. λ=0 is the best cough-vs-breath rule but
+calls 39% of device noise and 33% of device voice "cough"; λ=0.4 holds in both domains.
+
+**Shipped:** every decode record now carries `coughScore` (additive field; `-Dcough.lambda=X`, default 0.4,
+with the gradle passthrough). Verified: the Kotlin field on a fresh p3 decode gives acc 87.8 / recall 83.1 /
+reject 89.7 %, matching the Python sweep. Nothing CONSUMES the field yet — the grid still shows
+`inferredLetter`. fatJar rebuilt, jar letter **'X'** (build index 257).
+
+**Yesterday's `auto.win=20` "trade", re-read:** same-AUC codebooks (live 0.929 vs 0.917 at λ=0). The
+recall collapse in that table was mostly the dominant-letter rule, not the codebook. Default stays off.
+
+**Limits:** λ was picked on these same two sets; the device clips trained the codebook (optimistic);
+coswara negatives are breathing only, so out-of-domain speech/music is unmeasured; GPU HuBERT decodes of
+identical inputs differ by ~0.2pp.
+
+**Found in passing, NOT fixed:** `DecodeStore` (RecordingsGrid.kt) and `confirmedLabels`
+(PhonemeCodebookCli.kt) both glob every `*_decoded.json` in `data/codebooks/`. The three
+`coswara_*_20260929_decoded.json` files left there yesterday (plus `coswara_test_decoded.json`) therefore
+override the grid's decode for ~5k coswara clips with whichever file lists last. This session's decodes
+were moved to `data/_indomain_check_20260930/` to avoid adding to that. Also `p3_decoded.json` /
+`ALLDATA_decoded.json` / `p3_phoneme_fft` date from 07-07/07-08 and predate several codebook rebuilds, so
+grid tooltip codes no longer correspond to the live codebook's phoneme numbering — a full decode-all +
+`phonemeFft` would refresh them (heavy; not run).
+
+**Open next (none device-gated):** (1) make the grid/any consumer use `coughScore` instead of the dominant
+letter; (2) mirror the rule into the mobile decode (M app) — it is three counters per word; (3) validate λ
+on a third set with speech negatives; (4) the `*_decoded.json` glob hazard above.
+Artifacts: `data/_indomain_check_20260930/` (RESULTS.md, `lambda_sweep.py`, both p3 decodes) and
+`data/_coswara_holdout_20260929/roc_holdout.py`.
 
 ## SESSION 2026-09-29 — autonomous resume-paused-work: the coswara BREATHING class, measured (cross-domain Pareto win)
 State on arrival: D=`d9dc076`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin, no stashes,
