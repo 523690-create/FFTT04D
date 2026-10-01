@@ -1,7 +1,32 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-09-30).
+Date: 2026-06-13 (latest session appended at top: 2026-10-01).
+
+## SESSION 2026-10-01 — autonomous resume-paused-work: coughScore consumed (grid + M app), decode-glob hazard fixed, λ checked on speech
+State on arrival: D=`3a4eef8`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date, zero java.exe. Worked the four
+non-device-gated follow-ups from 09-30. No codebook rebuild; `p3_*.json` and `phoneme_segment_edits.json` untouched.
+
+1. **Grid uses coughScore** (D `36c1c48`, jar **'Y'**, build index 258). Rule moved to shared `CoughScore.kt`
+   (CLI behaviour identical). The grid computes it at READ time from the decode word with Tier-B edits overlaid,
+   against the live codebook's letter→class map — the production decodes (07-07) predate the field. Valid on that
+   stale `p3_decoded.json`: 568 manual clips @λ=0.4 → acc 87.9 / recall 87.3 / reject 88.2 %. Tooltip shows
+   `cough score +0.23 → cough`; new **Show: Likely cough (unlabeled)** filter = unlabelled clips scoring > 0.
+2. **M app mirror** (M `019a8ba`, APK `FFTT04M_20261001_021554.apk`). `Decoded.coughScore`, persisted in `.phon`,
+   shown in the gallery. **Display-only** — AutoReject/CoughVote unchanged, since λ was never validated on the
+   (June) mobile codebook + Spectral-Flux fractionation. Old `.phon` files show it after re-decode. Not device-tested.
+3. **λ on speech negatives** — held-out participants' counting/vowel clips: λ=0.4 rejects **94.9 %** of speech
+   (dominant letter 96.9 %), λ=0 only 61.7 %. Default 0.4 confirmed. Vowels weakest (91.2 %). Detail + table:
+   `data/_coswara_holdout_20260929/RESULTS.md` (2026-10-01 section), `speech_lambda.py`.
+4. **Decode glob hazard fixed.** The four experimental coswara decodes moved out of `data/codebooks/` (to
+   `data/_coswara_holdout_20260929/decodes/` and `data/_pull_stage_20260712/`; `eval_coswara.py` path updated).
+   `DecodeStore` + `confirmedLabels` now load oldest-first (newest wins on overlap, was unspecified) and
+   DecodeStore logs overlaps. **Decode-only CLI runs still write `<tag>_decoded.json` into `data/codebooks/` —
+   move them out right after the run** (done for this session's `speechho_20261001`).
+
+**Open next:** validate coughScore on DEVICE `.phon` decodes before letting AutoReject use it (needs device pull);
+refresh the stale 07-07 `p3_decoded.json`/`ALLDATA_decoded.json` with a full decode-all (heavy); out-of-domain
+speech/music negatives still unmeasured.
 
 ## SESSION 2026-09-30 — autonomous resume-paused-work: the dominant-letter rule was the bottleneck, not the codebook (`coughScore`)
 State on arrival: D=`b8e2949`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date with origin, zero java.exe,
