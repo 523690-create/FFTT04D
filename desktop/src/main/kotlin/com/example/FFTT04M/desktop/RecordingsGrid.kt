@@ -68,21 +68,38 @@ object DecodeStore {
     fun reload() { cache = null }
     fun get(id: String): Dec? = map()[id]
 
+    /** Continuous cough score of a clip's decode, Tier-B edits overlaid, scored against the live codebook's
+     *  letter → class map (computed here, not read from the file: the production decodes predate the field). */
+    fun coughScore(id: String): Double? {
+        val dec = get(id) ?: return null
+        val letters = PhonemeLegend.coughLetters() ?: return null
+        return CoughScore.score(PhonemeSegmentEdits.overlay(id, dec.word), letters)
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun load(): Map<String, Dec> {
         val out = HashMap<String, Dec>()
         val gson = Gson()
-        Workspace.dir("codebooks").listFiles { f -> f.name.endsWith("_decoded.json") }?.forEach { f ->
+        // Every *_decoded.json here is loaded, so ANY decode left in this dir overrides the grid for the
+        // clips it lists — keep experimental decodes elsewhere. Oldest first, so on overlap the newest wins
+        // deterministically (listFiles order is unspecified).
+        val files = Workspace.dir("codebooks").listFiles { f -> f.name.endsWith("_decoded.json") }
+            ?.sortedWith(compareBy({ it.lastModified() }, { it.name })) ?: emptyList()
+        var overlaps = 0
+        files.forEach { f ->
             try {
                 val data: Map<String, Map<String, Any>> = gson.fromJson(f.readText(),
                     object : TypeToken<Map<String, Map<String, Any>>>() {}.type) ?: emptyMap()
                 for ((id, v) in data) {
                     val letter = v["inferredLetter"] as? String ?: continue
                     val word = (v["word"] as? List<*>)?.map { it.toString() } ?: emptyList()
+                    if (out.containsKey(id)) overlaps++
                     out[id] = Dec(letter, word, v["classLabel"] as? String, (v["classProb"] as? Number)?.toDouble())
                 }
             } catch (e: Exception) { System.err.println("decode load ${f.name}: ${e.message}") }
         }
+        if (overlaps > 0) System.err.println("DecodeStore: $overlaps clip(s) decoded in more than one of " +
+            "${files.map { it.name }} — newest file wins")
         return out
     }
 }
@@ -107,7 +124,10 @@ object PhonemeLegend {
     @Volatile private var labelCache: Map<String, String>? = null
     fun labelFor(letter: String): String? =
         (labelCache ?: rows().associate { it.letter to it.label }.also { labelCache = it })[letter]
-    fun reload() { labelCache = null }
+    @Volatile private var coughCache: CoughScore.Letters? = null
+    fun coughLetters(): CoughScore.Letters? = coughCache ?: rows().takeIf { it.isNotEmpty() }
+        ?.let { rs -> CoughScore.Letters.of(rs.map { it.letter to it.label }) }?.also { coughCache = it }
+    fun reload() { labelCache = null; coughCache = null }
 }
 
 /** Human verdict on an auto-decode: id → true (correct) / false (error). data/codebooks/decode_feedback.json */
@@ -395,7 +415,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
     private val sorter = javax.swing.table.TableRowSorter(model)
     private val searchField = JTextField(14)
     private val searchScope = JComboBox(arrayOf("in: All", "in: Filename", "in: Auto", "in: Manual"))
-    private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates", "Show: Low-confidence"))
+    private val showCombo = JComboBox(arrayOf("Show: All", "Show: Checked", "Show: Has comment", "Show: Duplicates", "Show: Low-confidence", "Show: Likely cough (unlabeled)"))
     private val countLabel = JLabel(" ")
     @Volatile private var dupIds: Set<String> = emptySet()
     @Volatile private var dupGroups: List<List<Row>> = emptyList()
@@ -481,6 +501,10 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                     4 -> {                                                    // Low-confidence (unlabeled, classifier unsure)
                         val cp = DecodeStore.get(row.rec.id)?.classProb
                         if (cp == null || cp >= 0.5 || ManualComments.get(row.rec.id) != null) return false
+                    }
+                    5 -> {                                                    // Likely cough: cough score > 0, not yet labelled
+                        val cs = DecodeStore.coughScore(row.rec.id)
+                        if (cs == null || cs <= 0.0 || ManualComments.get(row.rec.id) != null) return false
                     }
                 }
                 return q.isEmpty() || matches(searchable(row.rec, searchScope.selectedIndex), q)
@@ -683,6 +707,11 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                 dec.classProb?.let { cp ->                              // classifier confidence — low = good to label
                     val col = if (cp < 0.5) "#f70" else "#7a7"
                     append("<span style='color:$col'> · conf ").append((cp * 100).toInt()).append("%</span>")
+                }
+                DecodeStore.coughScore(rec.id)?.let { cs ->             // > 0 ⇒ cough (see CoughScore)
+                    val col = if (cs > 0) "#fa7" else "#5cf"
+                    append("<br><span style='color:$col'>cough score ").append("%+.2f".format(cs))
+                        .append(if (cs > 0) " → cough" else " → not cough").append("</span>")
                 }
             }
             append("</html>")

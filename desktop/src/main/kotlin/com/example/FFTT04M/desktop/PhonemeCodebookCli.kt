@@ -341,11 +341,9 @@ object PhonemeCodebookCli {
 
         if (CODEBOOK_ONLY) { println("codebook-only: skipped decode-all + self-check"); return }
 
-        // Letters for the continuous cough score (see coughScore). Null-scored for a single-alphabet
+        // Letters for the continuous cough score (see CoughScore). Null-scored for a single-alphabet
         // codebook, whose units carry no class.
-        val respLetters = phonemes.filter { it.label == RESPIRATORY_LABEL }.mapTo(HashSet()) { it.letter }
-        val otherNotCoughLetters = phonemes.filter { it.label in NOT_COUGH_LABELS && it.label != RESPIRATORY_LABEL }
-            .mapTo(HashSet()) { it.letter }
+        val coughLetters = CoughScore.Letters.of(phonemes.map { it.letter to it.label })
         val classedCodebook = phonemes.any { it.label.isNotEmpty() }
 
         // ---- 4. decode EVERY clip (parallel across all cores — the heavy step, esp. on ALLDATA) ----
@@ -378,7 +376,7 @@ object PhonemeCodebookCli {
                         val hist = word.groupingBy { it }.eachCount()
                         val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
-                        val coughScore = if (classedCodebook) coughScore(word, respLetters, otherNotCoughLetters) else null
+                        val coughScore = if (classedCodebook) CoughScore.score(word, coughLetters) else null
                         val cls = clsModel?.predict(word)
                         val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
                         decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
@@ -407,35 +405,6 @@ object PhonemeCodebookCli {
         if (labelledDec > 0)
             println("self-check (decode of labelled clips): ${correct}/${labelledDec} match their own label " +
                 "(${(100.0 * correct / labelledDec).roundToInt()}%)")
-    }
-
-    private const val RESPIRATORY_LABEL = "snoring"   // the merged breath/snore class (see cleanLabel)
-    private val NOT_COUGH_LABELS = setOf("noise", "voice", "speech", "snoring", "sneeze", "music", "breathing")
-    /** -Dcough.lambda=X — weight of the OTHER not-cough windows (noise/voice/sneeze) in [coughScore]. */
-    private val COUGH_LAMBDA = System.getProperty("cough.lambda")?.toDoubleOrNull() ?: 0.4
-
-    /** Continuous cough-vs-not score for a decoded word; call it cough when > 0 (raise the threshold
-     *  for specificity):  (cough windows − respiratory windows − λ·other not-cough windows) / all windows.
-     *
-     *  Why not the dominant letter: a real cough recording is mostly NOT cough windows (gaps, voiced
-     *  tails decoded as voice/sneeze), so "which letter is most common" throws away clips whose coughs
-     *  are outnumbered — it scores 45.8% recall on the participant-level coswara holdout. Respiratory
-     *  windows are the evidence AGAINST (weight 1); other not-cough windows are weak evidence against
-     *  (λ), because they occur inside genuine cough clips too. Measured at threshold 0, λ sweep in
-     *  data/_indomain_check_20260930/ (λ=1 ≈ the dominant-letter behaviour, λ=0 leaks device noise/voice):
-     *    λ=0.4   coswara holdout acc 81.4% / recall 78.2% / breath-reject 84.6%   (dominant letter 67.0 / 45.8 / 88.4)
-     *            device manual   acc 87.6% / recall 83.1% / not-cough-reject 89.5% (dominant letter 88.1 / 69.6 / 96.0)
-     *  λ was chosen on those same two sets and the device clips trained the codebook — treat it as a
-     *  sensible default, not a validated constant. */
-    private fun coughScore(word: List<String>, respLetters: Set<String>, otherNotCoughLetters: Set<String>): Double? {
-        if (word.isEmpty()) return null
-        var cough = 0; var resp = 0; var other = 0
-        for (code in word) {
-            if (code == "?") continue
-            val letter = code.takeWhile { it.isLetter() }
-            when (letter) { in respLetters -> resp++; in otherNotCoughLetters -> other++; else -> cough++ }
-        }
-        return (cough - resp - COUGH_LAMBDA * other) / word.size
     }
 
     data class Phoneme(val code: String, val letter: String, val label: String,
@@ -609,7 +578,9 @@ object PhonemeCodebookCli {
         val ids = decodeFeedback.filterValues { it }.keys
         if (ids.isEmpty()) return@lazy emptyMap()
         val out = HashMap<String, String>()
-        Workspace.dir("codebooks").listFiles { x -> x.name.endsWith("_decoded.json") }?.forEach { df ->
+        // Oldest first so the newest decode wins on overlap (same rule as DecodeStore).
+        Workspace.dir("codebooks").listFiles { x -> x.name.endsWith("_decoded.json") }
+            ?.sortedWith(compareBy({ it.lastModified() }, { it.name }))?.forEach { df ->
             try {
                 @Suppress("UNCHECKED_CAST")
                 val data = com.google.gson.Gson().fromJson(df.readText(), Map::class.java) as Map<String, Map<String, Any?>>
