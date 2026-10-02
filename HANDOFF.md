@@ -1,7 +1,29 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-01).
+Date: 2026-06-13 (latest session appended at top: 2026-10-02).
+
+## SESSION 2026-10-02 — autonomous resume-paused-work: p3 decode refreshed; confirmed-label relabelling bug fixed
+State on arrival: D=`8316f76`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+
+1. **Bug (fixed, D `4d415c4`, jar 'a', build index 260):** `confirmedLabels` turned a "decode correct" verdict
+   into the `classLabel` of whichever `*_decoded.json` was NEWEST at rebuild time, not the class the user saw.
+   Refreshing p3 would have flipped 2 of the 3 confirmed device clips voice→croup as training labels (the
+   7 confirmations total; coughvid ones likewise were silently re-resolved when ALLDATA was redecoded 07-07).
+   `DecodeFeedback` now also writes `data/codebooks/decode_feedback_labels.json` (id → class at confirm time);
+   `confirmedLabels` prefers it, glob = fallback. The 7 existing confirmations were frozen to their
+   pre-refresh labels (5× voice, dry hacking, sneeze).
+2. **`p3_decoded.json` refreshed** — replaced the 07-07 file with `_indomain_check_20260930/p3score_20260930_decoded.json`
+   (same 10,088 ids, live 09-29 codebook, carries `coughScore`; no id overlap with ALLDATA/harvest). 40% of
+   dominant letters / 45% of class labels change → grid tooltips now match the live codebook numbering for p3.
+3. **`p3_phoneme_fft` atlas** — old dir+json moved to backup, `:desktop:phonemeFft -PuseOnnxGpu` regenerated: 253/256
+   phonemes covered (32,810 class-matched clips, 39 min on CUDA). The gradle run bumped the build index to 261
+   ('b') without producing a jar — the shipped jar is still 'a'.
+Backup of everything replaced: `data/_backup_pre_p3refresh_20261002/` (old p3_decoded.json, decode_feedback.json,
+p3_phoneme_fft/ + .json). A running desktop app must be restarted to see the new decode/atlas.
+
+**Open next:** `ALLDATA_decoded.json` (76k clips, 07-07) still stale — needs a heavy decode-only run, then MOVE the
+output name into place deliberately; device `.phon` coughScore validation (needs device); music negatives unmeasured.
 
 ## SESSION 2026-10-01 — autonomous resume-paused-work: coughScore consumed (grid + M app), decode-glob hazard fixed, λ checked on speech
 State on arrival: D=`3a4eef8`, M=`60f7286`, L=`942d9c7`, all clean/up-to-date, zero java.exe. Worked the four
