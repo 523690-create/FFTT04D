@@ -577,6 +577,15 @@ object PhonemeCodebookCli {
     private val confirmedLabels: Map<String, String> by lazy {
         val ids = decodeFeedback.filterValues { it }.keys
         if (ids.isEmpty()) return@lazy emptyMap()
+        // The label snapshotted when the user confirmed wins; the decode glob is only a fallback for
+        // confirmations made before the snapshot existed (a refreshed decode would otherwise relabel them).
+        val frozen: Map<String, String> = File(Workspace.dir("codebooks"), "decode_feedback_labels.json").let { f ->
+            if (!f.isFile) emptyMap() else try {
+                @Suppress("UNCHECKED_CAST")
+                (com.google.gson.Gson().fromJson(f.readText(), Map::class.java) as Map<String, Any?>)
+                    .mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
+            } catch (e: Exception) { System.err.println("decode_feedback_labels load: ${e.message}"); emptyMap() }
+        }
         val out = HashMap<String, String>()
         // Oldest first so the newest decode wins on overlap (same rule as DecodeStore).
         Workspace.dir("codebooks").listFiles { x -> x.name.endsWith("_decoded.json") }
@@ -587,6 +596,7 @@ object PhonemeCodebookCli {
                 for ((id, v) in data) if (id in ids) (v["classLabel"] as? String)?.let { out[id] = it }
             } catch (_: Exception) {}
         }
+        for ((id, cls) in frozen) if (id in ids) out[id] = cls
         out
     }
 

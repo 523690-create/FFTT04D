@@ -139,13 +139,28 @@ object DecodeFeedback {
             ?: mutableMapOf() else mutableMapOf()
     } catch (e: Exception) { mutableMapOf() }
 
+    // The class the user actually SAW when confirming (decode_feedback_labels.json). Without it a confirmation
+    // resolves to whatever the newest *_decoded.json says at rebuild time, so refreshing a decode silently
+    // relabels the user's confirmed clips (2 of 3 confirmed p3 clips would have flipped voice → croup).
+    private val labelFile = File(Workspace.dir("codebooks"), "decode_feedback_labels.json")
+    private val labels: MutableMap<String, String> = try {
+        if (labelFile.isFile) gson.fromJson(labelFile.readText(), object : TypeToken<MutableMap<String, String>>() {}.type)
+            ?: mutableMapOf() else mutableMapOf()
+    } catch (e: Exception) { mutableMapOf() }
+
     @Synchronized fun get(id: String): Boolean? = map[id]
     @Synchronized fun setAll(ids: Collection<String>, correct: Boolean) {
-        for (id in ids) map[id] = correct
+        for (id in ids) {
+            map[id] = correct
+            val cls = if (correct) DecodeStore.get(id)?.classLabel else null
+            if (cls != null) labels[id] = cls else labels.remove(id)
+        }
         save()
     }
-    @Synchronized fun clear(id: String) { if (map.remove(id) != null) save() }
-    private fun save() = try { file.writeText(gson.toJson(map)) } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
+    @Synchronized fun clear(id: String) { labels.remove(id); if (map.remove(id) != null) save() }
+    private fun save() = try {
+        file.writeText(gson.toJson(map)); labelFile.writeText(gson.toJson(labels))
+    } catch (e: Exception) { System.err.println("decode_feedback save: ${e.message}") }
 }
 
 /**
