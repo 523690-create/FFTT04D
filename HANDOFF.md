@@ -1,7 +1,30 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-02).
+Date: 2026-06-13 (latest session appended at top: 2026-10-03).
+
+## SESSION 2026-10-03 — autonomous resume-paused-work: ALLDATA redecoded (live codebook); music/speech/impulse negatives measured
+State on arrival: D=`60cb090`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+No code change, no codebook rebuild (`p3_*.json`, `phoneme_segment_edits.json` untouched).
+
+1. **`ALLDATA_decoded.json` refreshed** — decode-only with the live `p3_phonemes.json`:
+   `:desktop:phonemeCodebookCli -Dhubert.feat=true -PuseOnnxGpu --args="D:/AndroidProjects/ALLDATA
+   D:/AndroidProjects/data/fractionation/ALLDATA/Spectral_Flux_Onset_segments.jsonl alldata_20261003
+   D:/AndroidProjects/data/codebooks/p3_phonemes.json"` (33 min CUDA, 75,705/76,132 decoded, 427 skipped
+   degenerate → 414 ids from the 07-07 file now have no decode). Output moved out of `data/codebooks/`, then
+   copied over `ALLDATA_decoded.json`. No id overlap with p3/harvest decodes; the 7 confirmed feedback clips
+   are covered by `decode_feedback_labels.json`, so no training label moves. The gradle run bumped the build
+   index to 262 ('c') without a jar; the shipped jar is still 'a'. Restart a running desktop app to see it.
+2. **coughScore per negative category** (`negatives_by_category.py`, training ids excluded), λ=0.4 false-alarm
+   rate: **urban8k street_music 0.3 %, old-time-radio speech 0.4 %** (the "music/out-of-domain speech" item is
+   now measured), steady urban noise ≤6 %, coswara breathing 10.7 %, **impulsive sounds are the weak spot**:
+   gun_shot 42 %, dog bark 27 %, esc50 knock/can-opening/rooster/dog 40–45 %. Recall on ALLDATA: coswara
+   cough 70.0 %, coughvid 56.0 % (the 07-07 codebook gave 82/68 but probably trained on more of these clips).
+Everything (backup of the old decode, log, script, old/new tables, RESULTS.md): `data/_backup_pre_alldata_refresh_20261003/`.
+
+**Open next:** an impulsive-noise negative class (gun_shot/dog_bark/knock) in the next codebook rebuild, then
+re-run the table + coswara holdout; device `.phon` coughScore validation (needs device); `harvest_decoded.json`
+(175k, 07-07) is also stale numbering if anyone uses its tooltips.
 
 ## SESSION 2026-10-02 — autonomous resume-paused-work: p3 decode refreshed; confirmed-label relabelling bug fixed
 State on arrival: D=`8316f76`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
