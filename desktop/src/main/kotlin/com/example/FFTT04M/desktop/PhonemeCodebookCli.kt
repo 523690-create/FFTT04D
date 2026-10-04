@@ -60,6 +60,18 @@ object PhonemeCodebookCli {
      *  accuracy does improve (56.4 → 65.2%), so it is worth having as a knob — the mobile design wants a
      *  high-recall grabber, which is why it is not the default. */
     private val AUTO_WIN_PER_CLIP = System.getProperty("auto.win")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    /** -Dimpulse.cap=N — give IMPULSIVE auto clips (AutoLabel.IMPULSIVE: gun shots, barks, knocks…) their
+     *  OWN N-fragment budget inside their class instead of competing for the class's AUTO_FRAG_CAP. Without
+     *  it the hash-ordered noise budget is spent almost entirely on steady urban noise (live codebook: 9 of
+     *  56 noise clips impulsive), and impulsive sounds are the codebook's worst false alarms.
+     *
+     *  DEFAULT 0 = OFF, and then ESC-50 impulsive clips are not trained at all (the pre-2026-10-04 set).
+     *  Measured NEGATIVE (data/_impulse_negatives_20261004/RESULTS.md, source-level holdout): a cough's
+     *  explosive phase shares HuBERT phonemes with knocks/barks/shots, so the new noise phonemes eat cough
+     *  windows (held-out coswara cough windows decoded N: 3.9 → 9.3 %). Impulse false alarms fall at thr 0
+     *  (32 → 18 %) only because cough recall falls with them (78 → 61 %); at EQUAL recall every negative
+     *  set gets worse (impulse FA 30 → 36 % at N=500, 38 % at N=2000). Kept as a knob for the record. */
+    private val IMPULSE_CAP = System.getProperty("impulse.cap")?.toIntOrNull()?.coerceAtLeast(0) ?: 0
     /** -Dexclude.ids=<file> — one clip id per line, never used for TRAINING. Needed for an honest
      *  cross-domain test: public-dataset clips are auto-labelled from their filenames, so a held-out
      *  eval sample would otherwise be free to leak into the codebook it is measuring. */
@@ -153,7 +165,10 @@ object PhonemeCodebookCli {
                 if (id in excludeIds) continue
                 val manual = labels[id]
                 val label = trainLabel(id, manual) ?: continue
-                if (manual == null && (autoFrags[label] ?: 0) >= AUTO_FRAG_CAP) continue
+                if (manual == null && IMPULSE_CAP == 0 && id.startsWith("esc50__") && AutoLabel.isImpulsive(id)) continue
+                val impulse = manual == null && IMPULSE_CAP > 0 && AutoLabel.isImpulsive(id)
+                val budgetKey = if (impulse) "$label/impulse" else label
+                if (manual == null && (autoFrags[budgetKey] ?: 0) >= (if (impulse) IMPULSE_CAP else AUTO_FRAG_CAP)) continue
                 val wav = buildWavById[id] ?: continue
                 val pcm = AudioDecoder.decode(wav)?.also { rmsNormalize(it) } ?: continue
                 if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) continue   // skip degenerate/monster (see decode loop)
@@ -186,7 +201,7 @@ object PhonemeCodebookCli {
                 }
                 if (clipVecs.isNotEmpty()) perClip.add(label to clipVecs)   // same vec refs → z-normed in step 2
                 perClipWhole.add(wholeClipFeat(pcm, frags) to label)   // 14-dim whole-clip feature (always DSP)
-                if (manual == null) { autoFrags[label] = autoFrags.getOrDefault(label, 0) + clipVecs.size; autoClips++ }
+                if (manual == null) { autoFrags[budgetKey] = autoFrags.getOrDefault(budgetKey, 0) + clipVecs.size; autoClips++ }
                 trainedIds.add(id to label)
                 usedClips++
             }
@@ -208,6 +223,8 @@ object PhonemeCodebookCli {
             }
             println("labelled clips used=$usedClips (manual=${usedClips - autoClips}, auto=$autoClips)  fragments=${labelled.size}" +
                 (if (segEditExemplars > 0) "  (incl. $segEditExemplars segment-edit exemplar(s) × $segEditWeight)" else ""))
+            println("auto fragment budgets: " + autoFrags.toSortedMap().entries.joinToString { "${it.key}=${it.value}" } +
+                (if (IMPULSE_CAP > 0) "  (impulse.cap=$IMPULSE_CAP)" else ""))
             if (labelled.size < K) { println("Too few labelled fragments (${labelled.size}) — label more clips first."); return }
 
             // ---- 2. z-normalize ----

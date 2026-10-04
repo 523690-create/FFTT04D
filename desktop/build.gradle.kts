@@ -88,6 +88,7 @@ tasks.register<JavaExec>("phonemeCodebookCli") {
     systemProperty("codebook.only", System.getProperty("codebook.only") ?: "")   // -Dcodebook.only=true → build codebook, skip decode-all
     systemProperty("segedit.weight", System.getProperty("segedit.weight") ?: "")   // -Dsegedit.weight=N → Tier-B exemplar duplicate-weight (default 8)
     systemProperty("auto.win", System.getProperty("auto.win") ?: "")   // -Dauto.win=N → windows taken per AUTO-labelled clip
+    systemProperty("impulse.cap", System.getProperty("impulse.cap") ?: "")   // -Dimpulse.cap=N → own fragment budget for impulsive auto clips
     systemProperty("exclude.ids", System.getProperty("exclude.ids") ?: "")   // -Dexclude.ids=<file> → clip ids held out of TRAINING
     systemProperty("cough.lambda", System.getProperty("cough.lambda") ?: "")   // -Dcough.lambda=X → other-not-cough weight in coughScore (default 0.4)
     // HARD heap cap: a monster clip's O(T^2) HuBERT attention OOMs this forked JVM instead of the machine.

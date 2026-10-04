@@ -1,7 +1,29 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-03).
+Date: 2026-06-13 (latest session appended at top: 2026-10-04).
+
+## SESSION 2026-10-04 — autonomous resume-paused-work: impulsive-noise negatives in the codebook — measured NEGATIVE
+State on arrival: D=`c085488`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+Picked up the 10-03 "open next": impulsive negatives in the next codebook rebuild.
+
+- New `AutoLabel.IMPULSIVE` (urban8k gun_shot/dog_bark + 12 ESC-50 categories → `noise`, `isImpulsive(id)`) and
+  `-Dimpulse.cap=N` (own fragment budget for impulsive auto clips, gradle passthrough added).
+- Source-level holdout (932 impulsive clips by urban8k fsID / ESC-50 srcID) + coswara holdout → `exclude_all.txt`.
+  Three tagged rebuilds (ctrl0 / imp500 / imp2000, ~3 min each on CUDA) + 4-set decodes (~8 min each).
+- **Result: negative, monotonic in the budget.** imp2000 halves impulse FA at thr 0 (32→18 %) but coswara cough
+  recall falls 78→61 %; at EQUAL recall impulse FA gets WORSE (30 ctrl → 36 / 38 %), speech FA 6→13/23 %.
+  Cough windows decoded `N` 3.9→9.3 %: a cough's explosive phase shares HuBERT phonemes with knocks/shots.
+  Control ≈ live codebook, so it is the budget, not variance.
+- Shipped default OFF; with it off ESC-50 impulsive clips are skipped, so the default rebuild trains on the exact
+  pre-10-04 set. Other AutoLabel consumers (atlas exemplars, UnsupervisedCluster eval) now see ESC-50 impulsive
+  clips as `noise` — accurate, display/eval only. jar **'s'** (build index 278).
+- LIVE codebook (`p3_*.json`), decodes and `phoneme_segment_edits.json` untouched; no backup needed.
+Everything: `data/_impulse_negatives_20261004/` (RESULTS.md, make_holdout.py, ab_eval.py, decode_sets.sh, cb/, dec/).
+
+**Open next:** impulsive rejection should be a post-codebook whole-clip discriminator (single burst vs cough's
+burst + voiced tail), not codebook classes; device `.phon` coughScore validation (needs device);
+`harvest_decoded.json` (07-07) stale.
 
 ## SESSION 2026-10-03 — autonomous resume-paused-work: ALLDATA redecoded (live codebook); music/speech/impulse negatives measured
 State on arrival: D=`60cb090`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.

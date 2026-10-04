@@ -13,10 +13,28 @@ package com.example.FFTT04M.desktop
  *   - `urban8k__…`                        → noise    (UrbanSound8K — all environmental noise)
  *   - `coswara__…__vowel-*|counting-*__…` → speech   (spoken vowels / counting recordings)
  *   - `coswara__…__breathing-*__…`        → breathing (deep/shallow breathing recordings)
+ *   - `esc50__…__<impulsive>__…`          → noise    (knocks, barks, clicks — see IMPULSIVE)
  *
  * Manual comments always win over an auto-label (see PhonemeCodebookCli / RecordingsGrid).
  */
 object AutoLabel {
+    /** Short, percussive non-cough sounds — the categories the live codebook most often calls "cough"
+     *  (2026-10-03 per-category table: gun_shot 42 %, door_wood_knock 45 %, can_opening 42 %, dog/rooster
+     *  40 %, at λ=0.4). An onset burst followed by a decay looks like a cough's explosive phase.
+     *  Shared by urban8k (`gun_shot`, `dog_bark`) and ESC-50; all of them are the `noise` class. */
+    val IMPULSIVE = setOf(
+        "gun_shot", "dog_bark",                                                       // urban8k
+        "dog", "door_wood_knock", "can_opening", "rooster", "glass_breaking", "fireworks",
+        "clock_tick", "mouse_click", "water_drops", "footsteps", "clapping", "drinking_sipping",
+    )
+
+    /** True for an urban8k/ESC-50 clip in an IMPULSIVE category (see PhonemeCodebookCli's impulse budget). */
+    fun isImpulsive(id: String): Boolean {
+        val f = id.split("__")
+        val src = f.getOrNull(0)?.lowercase()
+        return (src == "urban8k" || src == "esc50") && f.getOrNull(2)?.lowercase() in IMPULSIVE
+    }
+
     fun forId(id: String): String? {
         val f = id.split("__")
         val src = f.getOrNull(0)?.lowercase() ?: return null
@@ -37,6 +55,7 @@ object AutoLabel {
                 "snoring" -> "snoring"
                 "breathing" -> "breathing"                         // same respiratory class as snoring
                 "crying_baby", "siren", "car_horn" -> "voice"
+                in IMPULSIVE -> "noise"
                 else -> null                                      // coughing/laughing/noise left out
             }
             else -> null
