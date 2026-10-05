@@ -62,7 +62,8 @@ object ManualComments {
 
 /** Phoneme-codebook decode results (the `_decoded.json` files under data/codebooks) — id → letter + word. */
 object DecodeStore {
-    data class Dec(val letter: String, val word: List<String>, val classLabel: String?, val classProb: Double?)
+    data class Dec(val letter: String, val word: List<String>, val classLabel: String?, val classProb: Double?,
+                   val impulseP: Double? = null)
     @Volatile private var cache: Map<String, Dec>? = null
     private fun map(): Map<String, Dec> = cache ?: load().also { cache = it }
     fun reload() { cache = null }
@@ -74,6 +75,16 @@ object DecodeStore {
         val dec = get(id) ?: return null
         val letters = PhonemeLegend.coughLetters() ?: return null
         return CoughScore.score(PhonemeSegmentEdits.overlay(id, dec.word), letters)
+    }
+
+    /** [ImpulseVeto] P(cough rather than impulsive noise): the decode record's own value when it has one,
+     *  else the sidecar scored from the cached clip embeddings. Null = never scored (then never vetoed). */
+    fun impulseP(id: String): Double? = get(id)?.impulseP ?: ImpulseVeto.Scores.get(id)
+
+    /** The grid's cough call: cough score > 0 and not vetoed as an impulsive sound. */
+    fun likelyCough(id: String): Boolean {
+        val cs = coughScore(id) ?: return false
+        return cs > 0.0 && !ImpulseVeto.vetoed(impulseP(id))
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -94,7 +105,8 @@ object DecodeStore {
                     val letter = v["inferredLetter"] as? String ?: continue
                     val word = (v["word"] as? List<*>)?.map { it.toString() } ?: emptyList()
                     if (out.containsKey(id)) overlaps++
-                    out[id] = Dec(letter, word, v["classLabel"] as? String, (v["classProb"] as? Number)?.toDouble())
+                    out[id] = Dec(letter, word, v["classLabel"] as? String, (v["classProb"] as? Number)?.toDouble(),
+                        (v["impulseP"] as? Number)?.toDouble())
                 }
             } catch (e: Exception) { System.err.println("decode load ${f.name}: ${e.message}") }
         }
@@ -517,9 +529,8 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                         val cp = DecodeStore.get(row.rec.id)?.classProb
                         if (cp == null || cp >= 0.5 || ManualComments.get(row.rec.id) != null) return false
                     }
-                    5 -> {                                                    // Likely cough: cough score > 0, not yet labelled
-                        val cs = DecodeStore.coughScore(row.rec.id)
-                        if (cs == null || cs <= 0.0 || ManualComments.get(row.rec.id) != null) return false
+                    5 -> {                                                    // Likely cough: cough score > 0, not impulsive noise, not yet labelled
+                        if (!DecodeStore.likelyCough(row.rec.id) || ManualComments.get(row.rec.id) != null) return false
                     }
                 }
                 return q.isEmpty() || matches(searchable(row.rec, searchScope.selectedIndex), q)
@@ -568,7 +579,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         DecodeFeedback.setAll(targets.map { it.id }, correct); model.fireTableDataChanged()
     }
 
-    private fun reloadDecodes() { DecodeStore.reload(); PhonemeLegend.reload(); model.fireTableDataChanged() }
+    private fun reloadDecodes() { DecodeStore.reload(); PhonemeLegend.reload(); ImpulseVeto.Scores.reload(); model.fireTableDataChanged() }
 
     private fun updateCount() {
         countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"
@@ -724,9 +735,12 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                     append("<span style='color:$col'> · conf ").append((cp * 100).toInt()).append("%</span>")
                 }
                 DecodeStore.coughScore(rec.id)?.let { cs ->             // > 0 ⇒ cough (see CoughScore)
-                    val col = if (cs > 0) "#fa7" else "#5cf"
+                    val ip = DecodeStore.impulseP(rec.id)                // ImpulseVeto: may only REMOVE a cough call
+                    val veto = cs > 0 && ImpulseVeto.vetoed(ip)
+                    val col = if (cs > 0 && !veto) "#fa7" else "#5cf"
                     append("<br><span style='color:$col'>cough score ").append("%+.2f".format(cs))
-                        .append(if (cs > 0) " → cough" else " → not cough").append("</span>")
+                        .append(when { veto -> " → impulsive noise, not cough (veto p %.2f)".format(ip)
+                                       cs > 0 -> " → cough"; else -> " → not cough" }).append("</span>")
                 }
             }
             append("</html>")

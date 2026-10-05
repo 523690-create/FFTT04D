@@ -368,6 +368,9 @@ object PhonemeCodebookCli {
         val cores = if (USE_HUBERT) 3 else Runtime.getRuntime().availableProcessors().coerceAtLeast(1)   // cap GPU concurrency for HuBERT
         val pool = java.util.concurrent.Executors.newFixedThreadPool(cores)
         val total = wavById.size
+        // Impulse veto (ImpulseVeto): scored from the SAME HuBERT pass, so it is free here. HuBERT mode only.
+        val vetoModel = if (USE_HUBERT) ImpulseVeto.model else null
+        if (vetoModel != null) println("impulse veto model present → writing impulseP per clip")
         val done = java.util.concurrent.atomic.AtomicInteger()
         val skippedDegenerate = java.util.concurrent.atomic.AtomicInteger()
         val step = (total / 50).coerceAtLeast(1)   // ~2 % progress ticks (visible in the headless log)
@@ -384,12 +387,14 @@ object PhonemeCodebookCli {
                         if (USE_HUBERT && (pcm.size < SR / 10 || pcm.size > SR * 45)) { skippedDegenerate.incrementAndGet(); return@submit }
                         val frags = framesFor(pcm, SR)
                         val word = ArrayList<String>()
-                        for (v in clipFeatures(pcm, SR, frags)) {
+                        val clipMean = arrayOfNulls<DoubleArray>(1)
+                        for (v in clipFeatures(pcm, SR, frags, if (vetoModel != null) clipMean else null)) {
                             znorm(v, mean, std)
                             var best: Phoneme? = null; var bestD = Double.MAX_VALUE
                             for (p in phonemes) { val d = dist(v, p.centroid); if (d < bestD) { bestD = d; best = p } }
                             word.add(if (best != null && bestD <= best.radius) best.code else "?")
                         }
+                        val impulseP = clipMean[0]?.let { vetoModel?.pCough(it) }   // < ImpulseVeto.TAU ⇒ impulsive noise, not a cough
                         val hist = word.groupingBy { it }.eachCount()
                         val inferred = word.filter { it != "?" }.map { it.takeWhile { c -> c.isLetter() } }
                             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: "?"
@@ -397,7 +402,7 @@ object PhonemeCodebookCli {
                         val cls = clsModel?.predict(word)
                         val wc = wcModel?.predict(wholeClipFeat(pcm, frags))
                         decoded[id] = mapOf("manualLabel" to labels[id], "autoLabel" to AutoLabel.forId(id),
-                            "inferredLetter" to inferred, "coughScore" to coughScore, "classLabel" to cls?.first, "classProb" to cls?.second,
+                            "inferredLetter" to inferred, "coughScore" to coughScore, "impulseP" to impulseP, "classLabel" to cls?.first, "classProb" to cls?.second,
                             "wholeClipLabel" to wc?.first, "wholeClipProb" to wc?.second,
                             "word" to word, "histogram" to hist)
                     } finally {
@@ -468,11 +473,18 @@ object PhonemeCodebookCli {
 
     /** Per-window feature vectors for a clip. DSP mode: fragVec per window (13-dim, short windows
      *  dropped). HuBERT mode: one HuBERT pass → mean-pool the frames in each window (768-dim). */
-    private fun clipFeatures(pcm: FloatArray, sr: Int, frags: List<Pair<Int, Int>>): List<DoubleArray> {
+    private fun clipFeatures(pcm: FloatArray, sr: Int, frags: List<Pair<Int, Int>>,
+                             clipMean: Array<DoubleArray?>? = null): List<DoubleArray> {
         if (USE_HUBERT) {
             val emb = HubertKMeansUnits.frameEmbeddings(pcm, sr)
             if (emb != null && emb.isNotEmpty()) {
                 val t = emb.size; val h = emb[0].size
+                if (clipMean != null) {          // mean over ALL frames = the clipemb_*.bin cache's definition
+                    val m = DoubleArray(h)
+                    for (ef in emb) for (j in 0 until h) m[j] += ef[j]
+                    for (j in 0 until h) m[j] /= t
+                    clipMean[0] = m
+                }
                 val durMs = (pcm.size.toLong() * 1000 / sr).toInt().coerceAtLeast(1)
                 val msPerFrame = durMs.toDouble() / t
                 return frags.map { (sMs, eMs) ->

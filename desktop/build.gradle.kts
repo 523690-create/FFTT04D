@@ -367,6 +367,23 @@ tasks.register<JavaExec>("breathHead") {
     maxHeapSize = "4g"
 }
 
+// Impulse veto: cough-vs-impulsive-noise head on cached HuBERT clip embeddings (no GPU) ->
+// data/codebooks/impulse_veto.json + impulse_veto_scores.json; -Dveto.eval=<dir> keeps data/codebooks untouched.
+tasks.register<JavaExec>("impulseVeto") {
+    group = "application"
+    description = "Train the whole-clip impulse veto (coughs vs gun shots/barks/knocks) on cached HuBERT embeddings."
+    mainClass.set("com.example.FFTT04M.desktop.ImpulseVetoCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("veto.eval", System.getProperty("veto.eval") ?: "")       // -Dveto.eval=<dir> -> experiment output dir
+    systemProperty("exclude.ids", System.getProperty("exclude.ids") ?: "")   // -Dexclude.ids=<file> -> ids (and their groups) held out
+    systemProperty("impulse.tau", System.getProperty("impulse.tau") ?: "")   // -Dimpulse.tau=X -> veto threshold (default 0.1)
+    systemProperty("veto.devmass", System.getProperty("veto.devmass") ?: "") // -Dveto.devmass=X -> device coughs share of training mass (default 0.05)
+    systemProperty("veto.lodo", System.getProperty("veto.lodo") ?: "")       // -Dveto.lodo=true -> device folds by serial (unseen phone), not serial+day
+    systemProperty("veto.l2", System.getProperty("veto.l2") ?: "")           // -Dveto.l2=X -> L2 strength of the head
+    maxHeapSize = "4g"
+}
+
 // Clip-level META-FUSER over both method families (seg-OR content signals + whole-clip forest) — the
 // recommended best cough/not-cough gate. Trains + evaluates on existing CSVs, no GPU.
 tasks.register<JavaExec>("clipGate") {
