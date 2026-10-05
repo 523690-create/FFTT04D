@@ -33,15 +33,6 @@ object ImpulseVetoCli {
     private val L2 = System.getProperty("veto.l2")?.toDoubleOrNull() ?: 1e-2
     private val DAY = Regex("20\\d{6}")
 
-    /** manual_comments.json also holds machine-written "auto-match (top 3): …" text (which names coswara /
-     *  ESC-50 categories, "cough" included) — only what the USER typed before it is a label. */
-    private fun manualLabel(raw: String?): String? {
-        var s = raw?.trim() ?: return null
-        val am = s.indexOf("auto-match", ignoreCase = true)
-        if (am >= 0) s = s.substring(0, am)
-        return s.trim().removePrefix("manual:").trim().ifEmpty { null }
-    }
-
     /** true = cough, false = impulsive noise, null = not a training clip for this specialist. */
     private fun truthOf(id: String): Boolean? {
         val f = id.split("__")
@@ -111,7 +102,7 @@ object ImpulseVetoCli {
         val nAllData = samples.size
         for ((id, x) in dev) {
             if (id in all || id in excluded) continue
-            if (CoughTruth.fromManual(manualLabel(manual[id])) != CoughTruth.Truth.POS) continue
+            if (CoughTruth.fromManual(manual[id]) != CoughTruth.Truth.POS) continue      // user text only (CoughTruth.userText)
             val day = if (LODO) "" else "/" + (DAY.find(id)?.value ?: "")
             samples.add(S(id, x, true, "device/" + (serial[id] ?: "unknown") + day, true))
         }
@@ -154,7 +145,7 @@ object ImpulseVetoCli {
         for (id in dev.keys) {
             if (id in all) continue
             val how = if (origin[id] != "oof") "[HELD OUT]" else if (LODO) "[leave-device-out]" else "[leave-day-out]"
-            when (CoughTruth.fromManual(manualLabel(manual[id]))) {
+            when (CoughTruth.fromManual(manual[id])) {
                 CoughTruth.Truth.POS -> { add("device cough $how", id); add("device cough $how  ${serial[id] ?: "unknown"}", id) }
                 CoughTruth.Truth.NEG -> add("device not-cough [never trained on]", id)
                 else -> add("device unlabelled [never trained on]", id)

@@ -29,10 +29,25 @@ object CoughTruth {
         "speech", "voice", "talk", "sing", "music", "vowel", "counting",
         "snore", "snoring", "noise", "breath", "sniff", "throat clear", "silence")
 
+    /**
+     * What the USER typed. `manual_comments.json` also carries machine-written "auto-match (top 3): …" dumps
+     * (imported from the M app's `.txt` sidecars), which name coswara / ESC-50 categories — "cough-shallow",
+     * "breathing-deep", "street_music" — and are NOT labels. Until 2026-10-05 [fromManual] keyword-matched the
+     * whole string, so of the 2,711 device clips the device evals treated as hand-labelled (1,231 cough /
+     * 1,480 not) only 1,354 (392 / 962) carried a user label; the rest were the matcher's guess.
+     */
+    fun userText(comment: String?): String {
+        var s = comment?.trim() ?: return ""
+        val am = s.indexOf("auto-match", ignoreCase = true)
+        if (am >= 0) s = s.substring(0, am)
+        return s.trim().removePrefix("manual:").trim()
+    }
+
     /** Device recordings (condition 2): a manual comment is a HARD label. Cough word ⇒ POS (a cough is
-     *  present); an explicit non-cough word with no cough word ⇒ NEG; otherwise unusable ⇒ SKIP. */
+     *  present); an explicit non-cough word with no cough word ⇒ NEG; otherwise unusable ⇒ SKIP.
+     *  Only the user's own text counts (see [userText]). */
     fun fromManual(comment: String?): Truth {
-        val c = comment?.lowercase()?.trim().orEmpty()
+        val c = userText(comment).lowercase()
         if (c.isEmpty()) return Truth.SKIP
         if (COUGH_WORDS.any { it in c }) return Truth.POS
         if (NOTCOUGH_WORDS.any { it in c }) return Truth.NEG

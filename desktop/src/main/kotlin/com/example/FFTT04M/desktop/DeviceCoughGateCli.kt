@@ -42,7 +42,14 @@ object DeviceCoughGateCli {
     private val CUE_IDX = intArrayOf(11, 6, 12, 9, 0)  // pitch_strength, flatness, syllabic_mod, hf_ratio, crest
     private val FEATURE_NAMES = listOf("forestP", "headP", "pitch_strength", "flatness", "syllabic_mod", "hf_ratio", "crest")
 
-    private fun fold(id: String) = ((id.hashCode() % 5) + 5) % 5
+    /** -Dvote.groupday=true: fold by recording DAY (the yyyymmdd in the id) so one session never straddles
+     *  train/test — the id-hash folds put consecutive captures of the same bout on both sides. */
+    private val GROUP_DAY = System.getProperty("vote.groupday")?.toBoolean() == true
+    private val DAY = Regex("20[0-9]{6}")
+    private fun fold(id: String): Int {
+        val k = if (GROUP_DAY) DAY.find(id)?.value ?: id else id
+        return ((k.hashCode() % 5) + 5) % 5
+    }
 
     private fun loadCache(f: File): HashMap<String, DoubleArray> {
         val m = HashMap<String, DoubleArray>()
@@ -105,7 +112,7 @@ object DeviceCoughGateCli {
                 if (!seen.add(id)) return@forEach
                 val lab = manual[id] ?: return@forEach
                 val t = CoughTruth.fromManual(lab)
-                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, id, t == CoughTruth.Truth.POS, lab.lowercase().trim()))
+                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, id, t == CoughTruth.Truth.POS, CoughTruth.userText(lab).lowercase()))
             }
         }
         val nPos = items.count { it.pos }; val nNeg = items.size - nPos
@@ -252,12 +259,15 @@ object DeviceCoughGateCli {
         if (head != null) { val pOod = single { it.headP ?: 0.5 }; report("cough_head (ALLDATA/OOD)", pOod) }
         report("in-domain HuBERT-MLP", devHeadOOF)
 
-        println("\n=== fused votes (5-fold id-hash CV) ===")
+        println("\n=== fused votes (5-fold ${if (GROUP_DAY) "day-grouped" else "id-hash"} CV) ===")
         val pLR = oofLR { vec(rows[it], it, true) }; report("VOTE LR (all signals)", pLR)
         val pMLP = oofMLP { vec(rows[it], it, true) }; report("VOTE MLP (all signals)", pMLP)
         val pLRnoHead = oofLR { vec(rows[it], it, false) }; report("VOTE LR (DSP-only)", pLRnoHead)
 
         fpByLabel("VOTE LR", pLR)
+        // -Dvote.nosave=true: measure only. The two models below are what the M app bundles — do not replace
+        // them from an unattended run.
+        if (System.getProperty("vote.nosave")?.toBoolean() == true) { println("\n(vote.nosave — models NOT written)"); return }
 
         // --- save the deployable in-domain HuBERT head (768->2 MLP, trained on ALL device clips) so the
         // phone runs the SAME strong in-domain method it feeds into the vote. Bundle alongside cough_vote. ---

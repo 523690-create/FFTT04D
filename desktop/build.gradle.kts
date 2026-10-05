@@ -465,6 +465,8 @@ tasks.register<JavaExec>("deviceCoughGate") {
     classpath = sourceSets["main"].runtimeClasspath
     systemProperty("java.awt.headless", "true")
     systemProperty("vote.mlp", System.getProperty("vote.mlp") ?: "")
+    systemProperty("vote.nosave", System.getProperty("vote.nosave") ?: "")   // -Dvote.nosave=true -> evaluate only, write no model
+    systemProperty("vote.groupday", System.getProperty("vote.groupday") ?: "") // -Dvote.groupday=true -> CV folds by recording day
     maxHeapSize = "4g"
 }
 
