@@ -1,7 +1,44 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-04).
+Date: 2026-06-13 (latest session appended at top: 2026-10-05).
+
+## SESSION 2026-10-05 — autonomous resume-paused-work: impulse veto shipped; device "manual" labels were half machine text
+State on arrival: D=`d0ffed9`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+Picked up the 10-04 "open next" (post-codebook whole-clip impulse discriminator). Two results.
+
+1. **`ImpulseVeto` (D `c0ab15b`).** Logistic head on the mean-pooled HuBERT clip embedding, a SPECIALIST (coughs vs
+   impulsive clips only); it may only REMOVE a cough call: `coughScore > 0 AND pCough >= tau` (0.1, `-Dimpulse.tau`).
+   Grouped out-of-fold (participant / source recording / device-day), coughScore alone → with veto (tau 0.1 / 0.2):
+   **impulse FA 32.3 → 7.1 / 3.1 %** (gun_shot 47.7 → 9.7 / 3.7), coswara recall 78.2 → 77.9 / 77.7, coughvid
+   56.2 → 56.1, **device recall 82.1 → 79.7 / 78.3**, device not-cough FA 10.4 → 8.4. Breath/speech FA unchanged.
+   - Trainer `:desktop:impulseVeto` (cached `clipemb_*.bin`, no GPU, ~15 s) → `data/codebooks/impulse_veto.json`
+     + `impulse_veto_scores.json` (both NEW files, written this session; delete them to switch the veto off).
+     `-Dveto.eval=<dir> -Dexclude.ids=<file>` = experiments that leave `data/codebooks` alone.
+   - `PhonemeCodebookCli` (HuBERT mode) writes `impulseP` per decode record from the same HuBERT pass (parity with
+     the cache: max diff 0.0013 over 932 clips). Grid: tooltip shows the veto, "Likely cough (unlabeled)" excludes
+     vetoed clips (7,434 unlabelled p3 clips: 30.2 → 28.5 % listed). Existing decodes use the sidecar scores.
+   - Dead ends, both recorded in the `ImpulseVeto` header: envelope-shape features learn the RECORDING FORMAT
+     (in-dataset impulse FA 32 → 6 %, but 98 % of device coughs vetoed); and my first optimiser (fixed GD step 1.0)
+     saturated the head at 0/1 — holdout AUC still 0.97, device clips a coin flip. Step is now 1/L (power iteration).
+2. **Label pollution (D `eb1dd3e`) — the bigger finding.** `manual_comments.json` also holds the M app's
+   machine-written `auto-match (top 3): …` text, and `CoughTruth.fromManual` keyword-matched the whole string. Of the
+   **2,711** device clips `DeviceEvalCli` / `DeviceHubertEvalCli` / `DeviceCoughGateCli` treated as hand-labelled,
+   only **1,354** (392 cough / 962 not) carry text the user typed. `fromManual` now reads user text only
+   (`CoughTruth.userText`). Re-measured `:desktop:deviceCoughGate -Dvote.nosave=true`, FP @ 90 % recall:
+   in-domain HuBERT-MLP **33.2 → 3.4 %** (5.7 % with `-Dvote.groupday=true` day-grouped folds), VOTE LR
+   **32.2 → 4.1 %** (5.2 %). **The "33 % in-domain FP floor / only more labelled data helps" conclusion of the
+   07-10…07-12 sessions was label noise.** The codebook was never affected (`cleanLabel` already stripped the dumps).
+
+jar **'N'** (build index 299). LIVE codebook (`p3_*.json`), decodes, `phoneme_segment_edits.json`,
+`cough_vote.json`, `device_cough_head.json` untouched (md5-checked). Everything: `data/_impulse_veto_20261005/RESULTS.md`.
+
+**Open next (needs the user + a phone):** the M app still bundles `device_cough_head.json` / `cough_vote.json`
+trained 07-12 on the polluted labels. Retrain = plain `:desktop:deviceCoughGate` (it OVERWRITES those two files in
+`data/codebooks/` — back them up first), copy to `FFTT04M/app/src/main/assets/`, rebuild, device-test AutoReject.
+Also open: re-run `:desktop:deviceHubertEval` / `deviceEval` on clean labels (their recorded numbers are polluted
+too); impulse veto on the M app (only if device impulsive false alarms turn out to matter); `harvest_decoded.json`
+(07-07) stale. `data/_impulse_veto_20261005/` has stale output dirs listed at the end of its RESULTS.md — delete.
 
 ## SESSION 2026-10-04 — autonomous resume-paused-work: impulsive-noise negatives in the codebook — measured NEGATIVE
 State on arrival: D=`c085488`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
