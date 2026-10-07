@@ -265,6 +265,21 @@ object DeviceCoughGateCli {
         val pLRnoHead = oofLR { vec(rows[it], it, false) }; report("VOTE LR (DSP-only)", pLRnoHead)
 
         fpByLabel("VOTE LR", pLR)
+        // Reject-threshold sweep in the M app's terms: AutoReject drops a clip when vote P(cough) < t
+        // (AutoReject.DEFAULT_VOTE_REJECT_THRESHOLD / the Gallery "Reject sensitivity" presets). For each t:
+        // coughs LOST = user coughs with P < t, not-cough REJECTED = non-coughs with P < t. OOF scores, so
+        // the numbers transfer to the shipped model only approximately (which trains on all clips).
+        fun sweep(name: String, p: DoubleArray) {
+            println("  reject-threshold sweep ($name, OOF):  t  → coughs lost / not-cough rejected")
+            val pos = rows.indices.filter { y[it] }; val neg = rows.indices.filter { !y[it] }
+            for (t in doubleArrayOf(0.05, 0.10, 0.15, 0.20, 0.26, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60)) {
+                val lost = pos.count { p[it] < t }.toDouble() / pos.size.coerceAtLeast(1)
+                val rej = neg.count { p[it] < t }.toDouble() / neg.size.coerceAtLeast(1)
+                println("    %.2f → %5.1f%% lost / %5.1f%% rejected".format(t, lost * 100, rej * 100))
+            }
+        }
+        sweep("VOTE LR", pLR)
+        sweep("VOTE LR DSP-only", pLRnoHead)
         // -Dvote.nosave=true: measure only. The two models below are what the M app bundles — do not replace
         // them from an unattended run.
         if (System.getProperty("vote.nosave")?.toBoolean() == true) { println("\n(vote.nosave — models NOT written)"); return }
