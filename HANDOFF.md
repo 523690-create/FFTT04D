@@ -1,7 +1,41 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-05).
+Date: 2026-06-13 (latest session appended at top: 2026-10-07).
+
+## SESSION 2026-10-07 — autonomous resume-paused-work: CoughVote models retrained on clean labels + deployed to M (untested); device evals re-run
+State on arrival: D=`33a593d`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+Picked up the 10-05 "open next". Everything except the phone test needed no device, so it was done.
+
+1. **Retrain + deploy (M `1e65392`, APK `FFTT04M_20261007_021435.apk`, letter 'd').** Backed up
+   `data/codebooks/{cough_vote,device_cough_head}.json` (+md5) to `data/_backup_pre_vote_retrain_20261007/`, then plain
+   `:desktop:deviceCoughGate -Dvote.groupday=true` on the 1,354 user-labelled clips (392 / 962). Day-grouped OOF
+   @90 % recall: VOTE LR FP **5.2 %** (was 32.2 on the polluted set), in-domain head 5.7 %, DSP-only fallback 51.2 %.
+   New `headMean` 0.292 (was 0.462). Copied byte-identical into `FFTT04M/app/src/main/assets/`. Hit the documented
+   stale-incremental-cache gotcha (`rm -rf app/build/kotlin` fixed it).
+   - **New in the trainer (D `2a83c91`): reject-threshold sweep** in AutoReject's terms (drop when P(cough) < t):
+     0.10 → 3.6 % coughs lost / 56 % non-coughs rejected, **0.20 (default) → 6.6 / 87.5**, 0.26 → 8.4 / 92,
+     0.35 → 9.7 / 94.5; 90 %-recall point ≈ 0.37. Gallery "Reject sensitivity" preset labels now carry these
+     numbers (the old "0.26 ≈ 90 %-recall point" claim was the polluted model's). Default unchanged at 0.20.
+   - **NOT device-tested.** Install the APK, confirm both assets load (`diagnose()` shows `vote P(cough)` and, with
+     the HuBERT model downloaded, a `head` term), watch rejected/ for a day. Revert = copy the backup files back into
+     `data/codebooks/` and `app/src/main/assets/`.
+2. **`deviceHubertEval` / `deviceEval` re-run on clean labels (D `4bd339c`).** Both CLIs double-counted the 227 clips
+   present in both `p3/` and `device_ingest/` (1,581 rows for 1,354 clips — the trainer already de-duplicated), and
+   `deviceEval` treated the gradle task's blank `device.dir` passthrough as a directory and found NO clips (same bug
+   class as `958f6c5`, fixed in the other CLI then, not this one). Fixed both + per-label keys now use user text.
+   Clean, id-hash folds, FP @90 % recall: LINEAR 5.9 (was 54.7), MLP 3.4 (37.2), **transfer-init 2.7** (37.4 — now a
+   real small gain, not a wash), DSP-only 27.7 (40.0), FUSED HuBERT+DSP 2.6 (33.3). Whole-clip forest alone: FP 100 %
+   at thr 0.5, 80.7 % at 0.7 — the capture gate is useless in-domain, which is why the vote exists.
+3. Stale 10-05 output dirs moved to `data/_impulse_veto_20261005/_stale/` (RESULTS.md there updated).
+
+jar **'V'** (build index 307). LIVE codebook (`p3_*.json`), decodes, `phoneme_segment_edits.json`, `impulse_veto*.json`
+untouched. Everything: `data/_vote_retrain_20261007/RESULTS.md`.
+
+**Open next:** device test of the retrained vote (needs the user + a phone; see 1); impulse veto on the M app only if
+device impulsive false alarms matter; `harvest_decoded.json` (07-07) stale; capture-time gate
+(`CoughClassifier.isCough`) is still forest-only — the DSP-only vote (FP 51 %) would beat it (62 %) even without
+HuBERT, but it is the real-time hot path, so do it after AutoReject is field-validated.
 
 ## SESSION 2026-10-05 — autonomous resume-paused-work: impulse veto shipped; device "manual" labels were half machine text
 State on arrival: D=`d0ffed9`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
