@@ -66,11 +66,15 @@ object DeviceHubertEvalCli {
 
         data class Item(val wav: File, val id: String, val truth: CoughTruth.Truth, val label: String)
         val items = ArrayList<Item>()
+        val seen = HashSet<String>()   // the same clip sits in both p3/ and device_ingest/ — count it once (as the trainer does;
+                                       // before 2026-10-07 the 227 duplicates were double-weighted: 1,581 rows for 1,354 clips)
         for (d in dirs) d.walkTopDown().forEach { f ->
             if (f.isFile && f.extension.equals("wav", true)) {
+                if (!seen.add(f.nameWithoutExtension)) return@forEach
                 val lab = manual[f.nameWithoutExtension] ?: return@forEach
                 val t = CoughTruth.fromManual(lab)
-                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, f.nameWithoutExtension, t, lab.lowercase().trim()))
+                // per-label breakdown keys off what the USER typed, not the auto-matcher's appended text
+                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, f.nameWithoutExtension, t, CoughTruth.userText(lab).lowercase().trim()))
             }
         }
         val nPos = items.count { it.truth == CoughTruth.Truth.POS }; val nNeg = items.size - nPos

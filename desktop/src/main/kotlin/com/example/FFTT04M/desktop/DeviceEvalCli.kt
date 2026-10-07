@@ -24,7 +24,9 @@ object DeviceEvalCli {
     @JvmStatic
     fun main(args: Array<String>) {
         val repo = Workspace.repoRoot ?: File(".")
-        val dirs = (System.getProperty("device.dir")?.split(File.pathSeparator)?.map { File(it) }
+        // The gradle task forwards -Ddevice.dir as "" when unset; a blank must fall through to the defaults
+        // (it used to become File("") -> no dirs -> "insufficient labelled device data").
+        val dirs = (System.getProperty("device.dir")?.takeIf { it.isNotBlank() }?.split(File.pathSeparator)?.map { File(it) }
             ?: listOf(File(repo, "p3"), File(repo, "device_ingest"))).filter { it.isDirectory }
         val mcFile = File(System.getProperty("device.manual")?.takeIf { it.isNotBlank() } ?: Workspace.file("manual_comments.json").path)
         if (!mcFile.isFile) { println("missing manual_comments.json at $mcFile"); return }
@@ -41,11 +43,14 @@ object DeviceEvalCli {
         // labelled device clips (id → truth + label), matched by wav basename
         data class Item(val wav: File, val truth: CoughTruth.Truth, val label: String)
         val items = ArrayList<Item>()
+        val seen = HashSet<String>()   // the same clip sits in both p3/ and device_ingest/ — count it once (as the trainer does)
         for (d in dirs) d.walkTopDown().forEach { f ->
             if (f.isFile && f.extension.equals("wav", true)) {
+                if (!seen.add(f.nameWithoutExtension)) return@forEach
                 val lab = manual[f.nameWithoutExtension] ?: return@forEach
                 val t = CoughTruth.fromManual(lab)
-                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, t, lab.lowercase().trim()))
+                // per-label breakdown keys off what the USER typed, not the auto-matcher's appended text
+                if (t != CoughTruth.Truth.SKIP) items.add(Item(f, t, CoughTruth.userText(lab).lowercase().trim()))
             }
         }
         val nPos = items.count { it.truth == CoughTruth.Truth.POS }; val nNeg = items.size - nPos
