@@ -1,7 +1,23 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-07).
+Date: 2026-06-13 (latest session appended at top: 2026-10-08).
+
+## SESSION 2026-10-08 — autonomous resume-paused-work: harvest_decoded.json refreshed with the live codebook
+State on arrival: D=`4d48e47`, M=`1e65392`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+Phone test of the retrained vote still blocked (no device). Took the only non-device open item: the stale 07-07
+`harvest_decoded.json` (pre-09-29 numbering, no `coughScore`/`impulseP`).
+
+- Decode-only over `cough_harvest/` with live `p3_phonemes.json` + HuBERT/CUDA (24 min, 175,483/175,483, 0 skipped),
+  installed over `data/codebooks/harvest_decoded.json`. Live codebook md5-unchanged; 0 of 15 feedback ids are harvest
+  ids, so no training label moves. Restart a running desktop app to see it. Build index 308 ('W'), no jar.
+- coughScore>0: cough_confirmed 40.3 %, cough_found_in_other 11.0 %, cough_unknown 20.8 % (impulse veto removes
+  <1.5 pp each). Buckets separate, but recall on "confirmed" harvest sub-clips is low vs whole clips (70–78 %) —
+  short segments decode mostly N/V. Open question, not chased.
+Everything (old file = revert, log, compare.py/.txt, RESULTS.md): `data/_backup_pre_harvest_refresh_20261008/`.
+
+**Open next:** device test of the retrained vote (user + phone); capture-time gate after AutoReject is field-validated;
+optional: why short harvest sub-clips under-score (coughScore on sub-clips vs their parent clips).
 
 ## SESSION 2026-10-07 — autonomous resume-paused-work: CoughVote models retrained on clean labels + deployed to M (untested); device evals re-run
 State on arrival: D=`33a593d`, M=`019a8ba`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
