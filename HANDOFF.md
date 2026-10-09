@@ -1,7 +1,20 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-08).
+Date: 2026-06-13 (latest session appended at top: 2026-10-09).
+
+## SESSION 2026-10-09 — autonomous resume-paused-work: why harvest sub-clips under-score (answered, read-only)
+State on arrival: D=`fc0a4c1`, M=`1e65392`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
+Took the 10-08 open question. Paired every harvest segment with the same span cut from its parent's
+`ALLDATA_decoded.json` word (175,111/175,483 parents found). coughScore>0, cough_confirmed: decoded alone 40.3 % →
+span-from-parent **53.2 %** → whole parent 61.4 %; found_in_other: 11.0 → **7.5** → 6.8 %. So the isolated decode
+(HuBERT with no surrounding audio) costs about −16 pp on 4–7-window segments and adds false positives. Short spans
+are also genuinely N/V-heavy even with context (46 % at 4–7 windows vs 62 % at 16+). `?` windows are not the cause.
+**If the harvest is ever used:** score segments by slicing the parent decode, or pad with about 1 s of context before
+HuBERT. Never use `harvest_decoded.json` per-segment coughScore as a label. No code change (nothing consumes it).
+Script/output/RESULTS.md: `data/_harvest_subclip_check_20261009/`.
+
+**Open next:** device test of the retrained vote (user + phone); capture-time gate after AutoReject is field-validated.
 
 ## SESSION 2026-10-08 — autonomous resume-paused-work: harvest_decoded.json refreshed with the live codebook
 State on arrival: D=`4d48e47`, M=`1e65392`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
