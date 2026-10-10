@@ -3,6 +3,16 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13 (latest session appended at top: 2026-10-09).
 
+## SESSION 2026-10-10 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device)
+State on arrival: D=`b892231`, M=`1e65392`, L=`942d9c7`, all clean and in sync with origin (nothing to push), zero java.exe,
+`adb devices` empty (no phone). No build run, no codebook/JSON touched.
+Re-read every STILL OPEN item: the phone test of the retrained vote needs the user + a phone; capture-time gate (a)
+waits for AutoReject field validation; impulse veto on M is conditional on device false alarms; the 4th-vote
+codebook fraction (b) is an expensive out-of-fold research item the user has not asked for; segment-edit retrain
+validation needs Tier-B edits that satisfy (a)+(b) in the 2026-10-08 note. None is autonomously completable.
+
+**Open next (unchanged):** device test of the retrained vote (user + phone); then decide whether (a) or (b) is wanted.
+
 ## SESSION 2026-10-09 — autonomous resume-paused-work: why harvest sub-clips under-score (answered, read-only)
 State on arrival: D=`fc0a4c1`, M=`1e65392`, L=`942d9c7`, all clean/up-to-date, zero java.exe, `adb devices` empty.
 Took the 10-08 open question. Paired every harvest segment with the same span cut from its parent's
