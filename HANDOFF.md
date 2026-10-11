@@ -1,7 +1,17 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-09).
+Date: 2026-06-13 (latest session appended at top: 2026-10-11).
+
+## SESSION 2026-10-11 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
+State on arrival: D=`5f19f0e`, M=`1e65392`, L=`942d9c7`, all clean with no unpushed commits (`git status -sb` shows no ahead marker),
+`adb devices` empty (no phone). No build run, no codebook/JSON touched. Re-read every STILL OPEN item; none is autonomously
+completable: phone test of the retrained vote (user + phone); capture-time gate (waits on AutoReject field validation); segment-edit
+retrain validation (needs Tier-B edits meeting (a)+(b)); harvest under-scoring already answered 10-09 with no consumer to change;
+mobile GroundTruthBucket breathing/snoring display merge (user preference, deliberately not decided unilaterally).
+
+**Open next (unchanged):** device test of the retrained vote (user + phone); then decide whether the capture-time gate or the
+mobile display merge is wanted.
 
 ## SESSION 2026-10-10 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device)
 State on arrival: D=`b892231`, M=`1e65392`, L=`942d9c7`, all clean and in sync with origin (nothing to push), zero java.exe,
