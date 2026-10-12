@@ -1,7 +1,16 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-11).
+Date: 2026-06-13 (latest session appended at top: 2026-10-12).
+
+## SESSION 2026-10-12 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
+State on arrival: D=`port_windows` 9f2befb, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
+`adb devices` empty (no phone), no java/gradle running. `phoneme_segment_edits.json` unchanged since 07-10 11:28. `device_ingest/` is
+at `D:\AndroidProjects\device_ingest` (not `data/`), still 827 files, newest 07-12. No build run, no codebook/JSON touched.
+Re-read the STILL OPEN list: phone test of the retrained vote (user + phone), capture-time gate (waits on AutoReject field validation),
+segment-edit retrain validation (needs Tier-B edits), mobile breathing/snoring display merge (user preference). None autonomously completable.
+
+**Open next (unchanged):** device test of the retrained vote (user + phone); then decide whether the capture-time gate or the display merge is wanted.
 
 ## SESSION 2026-10-11 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
 State on arrival: D=`5f19f0e`, M=`1e65392`, L=`942d9c7`, all clean with no unpushed commits (`git status -sb` shows no ahead marker),
