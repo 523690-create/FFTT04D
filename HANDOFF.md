@@ -3,6 +3,14 @@
 Read this first. It captures desktop-specific context that isn't obvious from the code.
 Date: 2026-06-13 (latest session appended at top: 2026-10-12).
 
+## SESSION 2026-10-13 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
+State on arrival: D=`port_windows` 7cf4257, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
+`adb devices` empty (no phone). `device_ingest/` still 827 files. No build run, no codebook/JSON touched. Re-read the STILL OPEN
+list; the same four items remain and none is autonomously completable (phone test of the retrained vote; capture-time gate; segment-edit
+retrain validation needing Tier-B edits meeting (a)+(b); mobile breathing/snoring display merge, a user preference).
+
+**Open next (unchanged):** device test of the retrained vote (user + phone); then decide whether the capture-time gate or the display merge is wanted.
+
 ## SESSION 2026-10-12 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
 State on arrival: D=`port_windows` 9f2befb, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
 `adb devices` empty (no phone), no java/gradle running. `phoneme_segment_edits.json` unchanged since 07-10 11:28. `device_ingest/` is
