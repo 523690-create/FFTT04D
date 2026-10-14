@@ -1,7 +1,14 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-12).
+Date: 2026-06-13 (latest session appended at top: 2026-10-14).
+
+## SESSION 2026-10-14 — autonomous resume-paused-work: no-op (5th in a row; nothing stranded, nothing actionable without a device or user choice)
+State on arrival: D=`port_windows` 7ac3cee, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
+`adb devices` empty, no java/gradle running. `phoneme_segment_edits.json` still 07-10 11:28 (no new Tier-B edits); `device_ingest/` still
+827 files (newest 07-08). No build run, no codebook/JSON touched. Same four STILL OPEN items, all gated on the user or a phone.
+
+**Open next (unchanged):** device test of the retrained vote (user + phone); then decide whether the capture-time gate or the display merge is wanted.
 
 ## SESSION 2026-10-13 — autonomous resume-paused-work: no-op (nothing stranded, nothing actionable without a device or user choice)
 State on arrival: D=`port_windows` 7cf4257, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
