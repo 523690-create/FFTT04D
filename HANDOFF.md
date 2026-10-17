@@ -927,3 +927,6 @@ are fast enough, the working **code** dirs (FFTT04D/M/L) may migrate there too.
   `public_dataset_v3`/`public_dataset`). A low row count there earlier was just the zip still extracting
   during the scan; re-running Build ALLDATA is idempotent (reuses converted WAVs).
 - Results-pane font enlarged 10 → 14pt this session.
+
+## 2026-10-17 resume-paused-work (no-op)
+No device connected, all 3 repos clean and in sync with origin, device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Remaining items are device- or user-gated (M phone test of CoughVote 1e65392; more Tier-B edits). No build, no codebook touched.
