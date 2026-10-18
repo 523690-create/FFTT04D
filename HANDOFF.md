@@ -930,3 +930,6 @@ are fast enough, the working **code** dirs (FFTT04D/M/L) may migrate there too.
 
 ## 2026-10-17 resume-paused-work (no-op)
 No device connected, all 3 repos clean and in sync with origin, device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Remaining items are device- or user-gated (M phone test of CoughVote 1e65392; more Tier-B edits). No build, no codebook touched.
+
+## 2026-10-18 resume-paused-work (no-op)
+No device connected (adb empty), all 3 repos clean and in sync with origin, device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Remaining items device/user-gated (M phone test of CoughVote 1e65392; more Tier-B edits). No build, no codebook touched.
