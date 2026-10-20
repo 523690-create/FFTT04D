@@ -933,3 +933,6 @@ No device connected, all 3 repos clean and in sync with origin, device_ingest st
 
 ## 2026-10-18 resume-paused-work (no-op)
 No device connected (adb empty), all 3 repos clean and in sync with origin, device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Remaining items device/user-gated (M phone test of CoughVote 1e65392; more Tier-B edits). No build, no codebook touched.
+
+## 2026-10-20 resume-paused-work (no-op)
+No device attached (adb empty), all 3 repos clean/in sync with origin (D 9f69423, M 1e65392, L 942d9c7), no build running, segment-edit JSON unchanged since 07-10, device_ingest still 827 files. STILL OPEN items remain device-/user-gated (phone test of CoughVote on M; segedit retrain needs eligible Tier-B edits). No build, no codebook touched.
