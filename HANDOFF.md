@@ -936,3 +936,6 @@ No device connected (adb empty), all 3 repos clean and in sync with origin, devi
 
 ## 2026-10-20 resume-paused-work (no-op)
 No device attached (adb empty), all 3 repos clean/in sync with origin (D 9f69423, M 1e65392, L 942d9c7), no build running, segment-edit JSON unchanged since 07-10, device_ingest still 827 files. STILL OPEN items remain device-/user-gated (phone test of CoughVote on M; segedit retrain needs eligible Tier-B edits). No build, no codebook touched.
+
+## 2026-10-27 resume-paused-work (no-op)
+No device attached (adb empty), all 3 repos clean/in sync with origin (D 94d1325, M 1e65392, L 942d9c7), device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Open items remain device-/user-gated (phone test of CoughVote on M; segedit retrain needs eligible Tier-B edits). Older "QUEUED" UI items (async cancel of ALLDATA build, auto image-gen after metadata.csv, train-negative button) pre-date the drive migration and were not re-triaged this run — candidate non-device work for a future run. No build, no codebook touched.
