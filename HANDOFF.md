@@ -939,3 +939,6 @@ No device attached (adb empty), all 3 repos clean/in sync with origin (D 9f69423
 
 ## 2026-10-27 resume-paused-work (no-op)
 No device attached (adb empty), all 3 repos clean/in sync with origin (D 94d1325, M 1e65392, L 942d9c7), device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Open items remain device-/user-gated (phone test of CoughVote on M; segedit retrain needs eligible Tier-B edits). Older "QUEUED" UI items (async cancel of ALLDATA build, auto image-gen after metadata.csv, train-negative button) pre-date the drive migration and were not re-triaged this run — candidate non-device work for a future run. No build, no codebook touched.
+
+## 2026-10-28 resume-paused-work (no-op)
+No device attached (`adb devices` empty after daemon start), no java running, all 3 repos clean and in sync with origin (D 4fbb46b, M 1e65392, L 942d9c7), device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Re-checked the 2026-06-13 QUEUED items above: their premise (H:\ drive too slow) is obsolete since the NVMe move (2026-06-18), so they are not resumed autonomously; they need the user to say whether still wanted (ALLDATA cancel latency, auto image-gen after metadata.csv, train-negative button). No build, no codebook touched.
