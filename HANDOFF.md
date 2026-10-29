@@ -942,3 +942,15 @@ No device attached (adb empty), all 3 repos clean/in sync with origin (D 94d1325
 
 ## 2026-10-28 resume-paused-work (no-op)
 No device attached (`adb devices` empty after daemon start), no java running, all 3 repos clean and in sync with origin (D 4fbb46b, M 1e65392, L 942d9c7), device_ingest still 827 files, phoneme_segment_edits.json unchanged since 07-10. Re-checked the 2026-06-13 QUEUED items above: their premise (H:\ drive too slow) is obsolete since the NVMe move (2026-06-18), so they are not resumed autonomously; they need the user to say whether still wanted (ALLDATA cancel latency, auto image-gen after metadata.csv, train-negative button). No build, no codebook touched.
+
+## 2026-10-29 resume-paused-work — ALLDATA cancel now stops mid-Coswara-archive
+No device attached; all 3 repos clean/in sync at start (D d87a7ed, M 1e65392, L 942d9c7). Broke the no-op streak per
+the no-op-streak lesson: the 2026-06-13 QUEUED "check the cancel flag per archive entry" item is pure desktop code,
+and its value doesn't depend on the old H:\ drive premise (a full date tar is large on any disk).
+- `AllDataBuilder.streamTar` now checks `cancelled` per tar entry; `buildCoswara` breaks before queueing a
+  cancelled date's partial staging (temp WAVs still wiped with `_tmp_coswara`). metadata.csv is still written on
+  cancel on purpose — it records the rows already converted and the build is resumable.
+- Build green, jar 'X' (build index 309). **Not runtime-tested** (needs a real ALLDATA build + Cancel click).
+- Still QUEUED for the user to re-confirm (not built unasked): auto image-gen after metadata.csv (GPU wavelets
+  default), train-negative button, `.tar` dedup by listing entries only. Device-gated: M phone test of CoughVote
+  `1e65392`; segedit retrain needs eligible Tier-B edits.

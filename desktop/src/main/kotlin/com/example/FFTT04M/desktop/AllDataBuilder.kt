@@ -447,6 +447,9 @@ object AllDataBuilder {
             } catch (e: Exception) {
                 onProgress(Progress("Coswara", di, dateDirs.size, "Coswara ${dateDir.name}: ${e.message}"))
             }
+            // Cancelled mid-archive: drop this date's partial staging (tmpRoot is wiped below)
+            // rather than queueing jobs that runJobs would only skip one by one.
+            if (cancelled) break
 
             // Build + convert this date's jobs in parallel.
             val jobs = staged.map { (participant, soundType, tmp) ->
@@ -468,13 +471,14 @@ object AllDataBuilder {
         tmpRoot.deleteRecursively()
     }
 
-    /** Concatenate split gzip parts and call [onEntry] with each file entry's name + bytes. */
+    /** Concatenate split gzip parts and call [onEntry] with each file entry's name + bytes.
+     *  Checks [cancelled] per entry, so Cancel no longer waits for a whole date's tar to unpack. */
     private fun streamTar(parts: List<File>, onEntry: (String, ByteArray) -> Unit) {
         val streams = parts.map { FileInputStream(it) }
         val seq = SequenceInputStream(java.util.Collections.enumeration(streams))
         TarArchiveInputStream(GzipCompressorInputStream(seq)).use { tar ->
             var entry = tar.nextTarEntry
-            while (entry != null) {
+            while (entry != null && !cancelled) {
                 if (!entry.isDirectory) onEntry(entry.name, tar.readBytes())
                 entry = tar.nextTarEntry
             }
