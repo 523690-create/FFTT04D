@@ -954,3 +954,8 @@ and its value doesn't depend on the old H:\ drive premise (a full date tar is la
 - Still QUEUED for the user to re-confirm (not built unasked): auto image-gen after metadata.csv (GPU wavelets
   default), train-negative button, `.tar` dedup by listing entries only. Device-gated: M phone test of CoughVote
   `1e65392`; segedit retrain needs eligible Tier-B edits.
+
+## 2026-10-30 resume-paused-work (no-op)
+No device connected; D/M/L all clean and in sync with origin (D `ce00d15`). STILL OPEN items are device- or
+user-gated (M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits; 3 QUEUED UI items
+await user re-confirmation). No build, no codebook touched.
