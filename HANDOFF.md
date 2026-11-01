@@ -964,3 +964,8 @@ await user re-confirmation). No build, no codebook touched.
 No device (adb empty), no java/gradle running; D `ec5f37c`, M `1e65392`, L `942d9c7` all clean and in sync with origin.
 Re-read STILL OPEN: all device-/user-gated (M phone test of CoughVote; segedit retrain needs Tier-B edits; QUEUED UI items
 await user). No build, no codebook touched.
+
+## 2026-11-01 resume-paused-work (no-op)
+No device (adb empty); D `477184f`, M `1e65392`, L `942d9c7` all clean and in sync with origin. STILL OPEN items remain
+device-/user-gated (M phone test of CoughVote; segedit retrain needs eligible Tier-B edits, JSON unchanged since 07-10;
+3 QUEUED UI items await user re-confirmation). No build, no codebook touched.
