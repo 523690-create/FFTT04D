@@ -397,6 +397,18 @@ tasks.register<JavaExec>("clipGate") {
     maxHeapSize = "3g"
 }
 
+// Headless Build ALLDATA (same builder as the GUI button) — timing / resume regression checks.
+tasks.register<JavaExec>("allDataBuild") {
+    group = "application"
+    description = "Build ALLDATA headless: -Dalldata.src=<sources> -Dalldata.out=<out> [-Dalldata.images=true]."
+    mainClass.set("com.example.FFTT04M.desktop.AllDataBuildCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    for (k in listOf("alldata.src", "alldata.out", "alldata.images"))
+        systemProperty(k, System.getProperty(k) ?: "")
+    maxHeapSize = "3g"
+}
+
 // Whole-clip (segmenter-independent) scorer over ALLDATA: forest P(cough) + squiggle + speech cues →
 // cough_wholeclip.csv, the parallel method family for coughEval. All cores, no GPU.
 tasks.register<JavaExec>("allDataScore") {

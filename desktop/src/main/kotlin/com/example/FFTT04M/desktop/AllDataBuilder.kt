@@ -425,34 +425,35 @@ object AllDataBuilder {
             onProgress(Progress("Coswara", di, dateDirs.size,
                 "Coswara ${dateDir.name} (${di + 1}/${dateDirs.size}) — extracting…"))
 
-            // Stream the tar once: write each wav to a temp file, collect each metadata.json.
+            // Pass 1 — list only: collect each metadata.json and the wav entry names, without
+            // reading or writing any audio. Output names depend on metadata.json, which can come
+            // after its wavs in the tar, so they are only known once the whole listing is in.
             val perParticipantJson = HashMap<String, Map<String, String>>()
-            val staged = ArrayList<Triple<String, String, File>>() // participant, soundType, temp wav
+            val staged = ArrayList<Triple<String, String, String>>() // participant, soundType, entry name
             try {
-                streamTar(parts) { name, bytes ->
+                streamTar(parts) { name, read ->
                     val segs = name.split('/')
                     if (segs.size < 3) return@streamTar
                     val participant = segs[segs.size - 2]
                     val leaf = segs.last()
                     when {
                         leaf.equals("metadata.json", true) ->
-                            perParticipantJson[participant] = Json.flatBytes(bytes)
-                        leaf.endsWith(".wav", true) -> {
-                            val tmp = File.createTempFile("cos_", ".wav", tmpRoot)
-                            tmp.writeBytes(bytes)
-                            staged.add(Triple(participant, leaf.removeSuffix(".wav").removeSuffix(".WAV"), tmp))
-                        }
+                            perParticipantJson[participant] = Json.flatBytes(read())
+                        leaf.endsWith(".wav", true) ->
+                            staged.add(Triple(participant, leaf.removeSuffix(".wav").removeSuffix(".WAV"), name))
                     }
                 }
             } catch (e: Exception) {
                 onProgress(Progress("Coswara", di, dateDirs.size, "Coswara ${dateDir.name}: ${e.message}"))
             }
-            // Cancelled mid-archive: drop this date's partial staging (tmpRoot is wiped below)
-            // rather than queueing jobs that runJobs would only skip one by one.
+            // Cancelled mid-archive: drop this date rather than queueing jobs that runJobs would
+            // only skip one by one.
             if (cancelled) break
 
-            // Build + convert this date's jobs in parallel.
-            val jobs = staged.map { (participant, soundType, tmp) ->
+            // Build this date's jobs in entry order (keeps collision suffixes stable across runs).
+            // Each gets a fixed temp path; only clips with no usable output are extracted to it.
+            val jobs = staged.mapIndexed { i, (participant, soundType, _) ->
+                val tmp = File(tmpRoot, "cos_${dateDir.name}_$i.wav")
                 val meta = LinkedHashMap<String, String>()
                 meta["source"] = "Coswara"; meta["record_folder"] = dateDir.name
                 meta["participant"] = participant; meta["sound_type"] = soundType
@@ -466,20 +467,39 @@ object AllDataBuilder {
                     coughDetected = "", metadataJson = gson.toJson(meta)
                 ))
             }
+
+            // Pass 2 — only when something is missing: extract just those wavs. A fully converted
+            // date (the usual resume case) costs one decompress and no temp-disk writes.
+            val missing = HashMap<String, File>()
+            staged.forEachIndexed { i, (_, _, entryName) ->
+                val out = jobs[i].output
+                if (!(out.isFile && out.length() > 44L)) missing[entryName] = jobs[i].input
+            }
+            if (missing.isNotEmpty()) {
+                onProgress(Progress("Coswara", di, dateDirs.size,
+                    "Coswara ${dateDir.name}: extracting ${missing.size}/${jobs.size} new clips…"))
+                try {
+                    streamTar(parts) { name, read -> missing[name]?.writeBytes(read()) }
+                } catch (e: Exception) {
+                    onProgress(Progress("Coswara", di, dateDirs.size, "Coswara ${dateDir.name}: ${e.message}"))
+                }
+                if (cancelled) break
+            }
             runJobs(jobs, pool, "Coswara ${dateDir.name}", onProgress)
         }
         tmpRoot.deleteRecursively()
     }
 
-    /** Concatenate split gzip parts and call [onEntry] with each file entry's name + bytes.
+    /** Concatenate split gzip parts and call [onEntry] with each file entry's name and a reader
+     *  for its bytes (unread entries are skipped, never buffered).
      *  Checks [cancelled] per entry, so Cancel no longer waits for a whole date's tar to unpack. */
-    private fun streamTar(parts: List<File>, onEntry: (String, ByteArray) -> Unit) {
+    private fun streamTar(parts: List<File>, onEntry: (String, () -> ByteArray) -> Unit) {
         val streams = parts.map { FileInputStream(it) }
         val seq = SequenceInputStream(java.util.Collections.enumeration(streams))
         TarArchiveInputStream(GzipCompressorInputStream(seq)).use { tar ->
             var entry = tar.nextTarEntry
             while (entry != null && !cancelled) {
-                if (!entry.isDirectory) onEntry(entry.name, tar.readBytes())
+                if (!entry.isDirectory) onEntry(entry.name) { tar.readBytes() }
                 entry = tar.nextTarEntry
             }
         }
