@@ -922,7 +922,7 @@ are fast enough, the working **code** dirs (FFTT04D/M/L) may migrate there too.
 
 ### Misc
 - `.tar` dedup (QUEUED): open archives only far enough to **list entries** and match, not fully unpack
-  (Coswara is `.tar`).
+  (Coswara is `.tar`). **DONE 2026-11-02** (`e501112`): list pass first, extract only missing clips.
 - `public_dataset_v3` is NOT a missing dataset — it's COUGHVID's folder name (collectCoughvid aliases
   `public_dataset_v3`/`public_dataset`). A low row count there earlier was just the zip still extracting
   during the scan; re-running Build ALLDATA is idempotent (reuses converted WAVs).
@@ -969,3 +969,20 @@ await user). No build, no codebook touched.
 No device (adb empty); D `477184f`, M `1e65392`, L `942d9c7` all clean and in sync with origin. STILL OPEN items remain
 device-/user-gated (M phone test of CoughVote; segedit retrain needs eligible Tier-B edits, JSON unchanged since 07-10;
 3 QUEUED UI items await user re-confirmation). No build, no codebook touched.
+
+## 2026-11-02 resume-paused-work — Coswara `.tar` dedup (list first, extract only missing)
+No device; all 3 repos clean/in sync at start (D `4bc6694`). No-op streak was 3, so per the no-op-streak lesson the
+QUEUED list was re-read: the `.tar` dedup item is pure desktop code like the 10-29 cancel fix.
+- `AllDataBuilder.buildCoswara` is now two-pass per date: pass 1 streams the tar reading only `metadata.json` and
+  wav entry names (no audio read, no temp writes); jobs are built in the same entry order (so `_2` collision names
+  are unchanged), each with a fixed temp path; pass 2 runs ONLY if some output is missing and writes just those wavs.
+  `streamTar`'s callback now gets a lazy byte reader. Gzip can't be skipped, so a date with new clips is decompressed twice
+  (cheap: ~0.3 s/date here); the common resume case is one decompress and zero temp-disk writes.
+- New headless harness `:desktop:allDataBuild -Dalldata.src=<dir> -Dalldata.out=<dir> [-Dalldata.images=true]`
+  (images default OFF in the CLI).
+- Verified on a scratch source with 2 Coswara dates (20200505, 20200911 junctioned; 270 clips), old code vs new:
+  fresh build byte-identical (every WAV + metadata.csv); full resume 1.5 s → 0.9 s; deleting 3 outputs → only those 3
+  extracted, metadata.csv identical. Real ALLDATA was NOT touched. Not GUI-clicked.
+- D `e501112`, pushed, jar 'd' (build index 315). No codebook touched.
+- Still QUEUED for user re-confirmation: auto image-gen after metadata.csv (GPU wavelets default), train-negative button.
+  Device-gated: M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits.
