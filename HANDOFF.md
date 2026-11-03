@@ -902,7 +902,8 @@ The external **H:\** drive is very slow; several observed issues trace to it, no
 - **Image generation does NOT auto-start after the data build.** Confirmed *intended* that images don't
   compete during the WAV/metadata build (good — keeps the data pass fast). But once `metadata.csv` is
   written, the FFT/CWT image passes currently must be kicked manually. QUEUED: auto-initiate image
-  generation after metadata.csv completes; **GPU wavelets by default** to free CPU. Canceling image
+  generation after metadata.csv completes; **GPU wavelets by default** to free CPU. **DONE 2026-11-03**
+  (`139f970`): build prompt is After build (default) / Inline / No images. Canceling image
   production is also slow.
 - **FFT / GPU-wavelet passes are slow to *initiate*** while the H: disk sits idle — startup latency
   (likely seek/spin-up), not compute.
@@ -986,3 +987,15 @@ QUEUED list was re-read: the `.tar` dedup item is pure desktop code like the 10-
 - D `e501112`, pushed, jar 'd' (build index 315). No codebook touched.
 - Still QUEUED for user re-confirmation: auto image-gen after metadata.csv (GPU wavelets default), train-negative button.
   Device-gated: M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits.
+
+## 2026-11-03 resume-paused-work — ALLDATA image passes auto-start after metadata.csv
+No device; all 3 repos clean/in sync at start (D `33ea544`). Took the last pure-desktop QUEUED item (2026-06-13).
+- Build ALLDATA's image prompt is now a 3-way choice: **After build (default)** / Inline per clip / No images.
+  "After build" starts the FFT pass and the CWT pass (`CWT_GPU` when `GpuFft.available()`, else `CWT_CPU`)
+  once the build finishes **uncancelled** with a metadata.csv; they run concurrently, exactly like clicking the
+  image buttons (resumable, each button becomes its Cancel). `onGenerateImages` now delegates to a shared
+  `startImagePass(mode, button, folder)` that skips a button already running.
+- Build green, D `139f970`, pushed, jar 'e' (build index 316). **Not GUI-clicked** (no user present).
+- Still QUEUED: "Canceling image production is also slow" (not investigated); train-negative button (needs the
+  `H:	rain` mp3 set + a user decision on redeploying to all 3 apps). Device-gated: M phone test of CoughVote
+  `1e65392`; segedit retrain needs eligible Tier-B edits. No codebook touched.
