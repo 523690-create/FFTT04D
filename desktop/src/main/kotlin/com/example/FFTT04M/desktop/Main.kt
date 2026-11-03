@@ -507,16 +507,21 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             return
         }
 
-        // Image rendering is the slow part and now has its own buttons (FFT images / CWT CPU / CWT
-        // GPU) that run as a resumable second pass — so default this to No. (Cancel aborts the build.)
-        val imgChoice = JOptionPane.showConfirmDialog(this,
-            "Also render the 512×512 FFT (PNG) + Morlet-CWT (JPEG) images inline, per clip?\n\n" +
-            "Recommended: No — build WAV + metadata only, then use the\n" +
-            "\"FFT images\" / \"CWT images (CPU)\" / \"CWT images (GPU)\" buttons\n" +
-            "to render (and resume) images separately.",
-            "Build ALLDATA — images", JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE)
-        if (imgChoice == JOptionPane.CANCEL_OPTION || imgChoice == JOptionPane.CLOSED_OPTION) return
-        AllDataBuilder.generateImages = (imgChoice == JOptionPane.YES_OPTION)
+        // Image rendering is the slow part, so it stays out of the WAV/metadata pass by default and
+        // starts on its own once metadata.csv is written: FFT + CWT (GPU when cuFFT is active) run as
+        // the same resumable second pass as the image buttons, each cancellable from its button.
+        val imgOptions = arrayOf("After build (recommended)", "Inline, per clip", "No images", "Cancel")
+        val imgChoice = JOptionPane.showOptionDialog(this,
+            "When should the 512×512 FFT (PNG) + Morlet-CWT (JPEG) images be rendered?\n\n" +
+            "After build — WAV + metadata first, then the FFT and CWT image passes start\n" +
+            "automatically (CWT on the GPU when available). Same as clicking the image buttons.\n" +
+            "Inline — render per clip during the build (slower build).\n" +
+            "No images — use the image buttons later.",
+            "Build ALLDATA — images", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+            null, imgOptions, imgOptions[0])
+        if (imgChoice !in 0..2) return
+        AllDataBuilder.generateImages = (imgChoice == 1)
+        val imagesAfter = (imgChoice == 0)
 
         buildingAllData = true
         val tp = TaskProgress("Build ALLDATA")
@@ -524,7 +529,7 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             buildAllDataButton.text = "Cancel ALLDATA build"
             analysisResultsArea.text = "Building ALLDATA from ${sourcesRoot.absolutePath}\n -> ${outDir.absolutePath}\n\n"
         }
-        logLine("Build ALLDATA started — sources: ${sourcesRoot.absolutePath} → out: ${outDir.absolutePath} (images: ${if (AllDataBuilder.generateImages) "yes" else "no"})")
+        logLine("Build ALLDATA started — sources: ${sourcesRoot.absolutePath} → out: ${outDir.absolutePath} (images: ${imgOptions[imgChoice].lowercase()})")
         thread {
             val startNs = System.nanoTime()
             var lastPhase = ""
@@ -550,6 +555,13 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
                     "ALLDATA cancelled — ${summary.rows} rows written"
                 else
                     "ALLDATA: ${summary.rows} clips, ${summary.failed} failed, in ${"%.1f".format(elapsedS)}s"
+                // Not on cancel: the user stopped the build, so don't start more work behind it.
+                if (imagesAfter && !summary.cancelled && summary.csvPath.isNotEmpty()) {
+                    analysisResultsArea.append("\nmetadata.csv written — starting image passes automatically\n")
+                    startImagePass(ImageBatch.Mode.FFT, fftButton, outDir)
+                    if (GpuFft.available()) startImagePass(ImageBatch.Mode.CWT_GPU, cwtGpuButton, outDir)
+                    else startImagePass(ImageBatch.Mode.CWT_CPU, cwtCpuButton, outDir)
+                }
             }
             tp.finish()
             buildingAllData = false
@@ -584,7 +596,12 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
         // Defaults to the ALLDATA output folder used by Build ALLDATA (same pref key).
         val folder = pickDirectory("Select the ALLDATA folder (holds the .wav files)",
             "allDataOut", "C:\\AndroidStudio\\ALLDATA") ?: return
+        startImagePass(mode, button, folder)
+    }
 
+    /** Runs one image pass over [folder] in the background; [button] becomes its Cancel. EDT only. */
+    private fun startImagePass(mode: ImageBatch.Mode, button: JButton, folder: File) {
+        if (imagingTokens.containsKey(button)) return // already running (e.g. clicked before auto-start)
         val token = java.util.concurrent.atomic.AtomicBoolean(false)
         imagingTokens[button] = token
         val tp = TaskProgress(mode.button)
