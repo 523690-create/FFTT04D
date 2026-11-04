@@ -446,6 +446,7 @@ tasks.register<JavaExec>("cwtImages") {
     systemProperty("image.mode", System.getProperty("image.mode") ?: "")
     systemProperty("image.skip", System.getProperty("image.skip") ?: "")
     systemProperty("image.list", System.getProperty("image.list") ?: "")
+    systemProperty("image.cancelAfterMs", System.getProperty("image.cancelAfterMs") ?: "")
     maxHeapSize = "3g"
 }
 

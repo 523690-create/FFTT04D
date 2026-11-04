@@ -12,6 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Modes: -Dimage.mode=CWT_GPU (default) | CWT_CPU | FFT.  -Dimage.skip prunes a subtree by folder name.
  * -Dimage.list=<file> restricts rendering to the WAV filenames listed in <file> (one per line) — image
  * only those clips, leaving the rest of a mixed folder untouched.
+ * -Dimage.cancelAfterMs=N raises the pass's cancel flag N ms after start — a headless harness for the
+ * GUI's Cancel button (the pass must stop promptly, leave no `*.part` files, and report cancelled).
  */
 object ImageCli {
     @JvmStatic
@@ -30,12 +32,30 @@ object ImageCli {
             seq.map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
         }
 
+        val cancelAfterMs = System.getProperty("image.cancelAfterMs")?.toLongOrNull()?.takeIf { it > 0 }
+
         println("=== IMAGE ${mode.label} over $dir (skip=${skip ?: "none"}, " +
-            "list=${onlyNames?.let { "${it.size} names" } ?: "all"}) ===")
-        val sum = ImageBatch.run(dir, mode, AtomicBoolean(false), skip, onlyNames) { p ->
+            "list=${onlyNames?.let { "${it.size} names" } ?: "all"}" +
+            (cancelAfterMs?.let { ", cancel after ${it} ms" } ?: "") + ") ===")
+        val cancel = AtomicBoolean(false)
+        val t0 = System.nanoTime()
+        var cancelledAtNs = 0L
+        cancelAfterMs?.let { ms ->
+            Thread {
+                Thread.sleep(ms)
+                cancelledAtNs = System.nanoTime(); cancel.set(true)
+                println("  [harness] cancel raised at ${"%.2f".format((cancelledAtNs - t0) / 1e9)} s")
+            }.apply { isDaemon = true }.start()
+        }
+        val sum = ImageBatch.run(dir, mode, cancel, skip, onlyNames) { p ->
             if (p.done % 50 == 0 || p.done == p.total) println("  ${p.message}")
         }
         println("=== IMAGE done: rendered ${sum.rendered}, skipped ${sum.skipped}, failed ${sum.failed}, " +
-            "${"%.1f".format(sum.elapsedS)}s, ${sum.device} ===")
+            "${"%.1f".format(sum.elapsedS)}s, ${sum.device}" +
+            (if (sum.cancelled) ", CANCELLED" else "") + " ===")
+        if (cancelledAtNs != 0L)
+            println("  [harness] pass returned ${"%.2f".format((System.nanoTime() - cancelledAtNs) / 1e9)} s after cancel")
+        val parts = dir.walkTopDown().filter { it.isFile && it.name.endsWith(ImageBatch.PART_SUFFIX) }.toList()
+        println("  [harness] leftover ${ImageBatch.PART_SUFFIX} files: ${parts.size}")
     }
 }
