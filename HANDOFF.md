@@ -904,7 +904,8 @@ The external **H:\** drive is very slow; several observed issues trace to it, no
   written, the FFT/CWT image passes currently must be kicked manually. QUEUED: auto-initiate image
   generation after metadata.csv completes; **GPU wavelets by default** to free CPU. **DONE 2026-11-03**
   (`139f970`): build prompt is After build (default) / Inline / No images. Canceling image
-  production is also slow.
+  production is also slow. **DONE 2026-11-04** (`62b4981`): Cancel now stops the scan too and ends within one
+  clip per worker; images are written atomically (`.part` → rename).
 - **FFT / GPU-wavelet passes are slow to *initiate*** while the H: disk sits idle — startup latency
   (likely seek/spin-up), not compute.
 
@@ -920,6 +921,9 @@ are fast enough, the working **code** dirs (FFTT04D/M/L) may migrate there too.
   negatives **in random order**. Caveat: a **very limited (<20)** number of real coughs may have snuck
   into the audio — tolerate that small label noise. Run AFTER the drive swap (H: too slow). Then
   re-derive threshold, redeploy the model to all 3 apps, drop the 0.65 stopgap override.
+  **Re-triaged 2026-11-04**: ingest/chop/train-as-negative is already built (`collectTrain` + `HarvestForestCli`,
+  3,120 `train__*` clips in ALLDATA, set now at `D:\AndroidProjects	rain`); only the redeploy + stopgap-drop
+  decision remains (user).
 
 ### Misc
 - `.tar` dedup (QUEUED): open archives only far enough to **list entries** and match, not fully unpack
@@ -999,3 +1003,30 @@ No device; all 3 repos clean/in sync at start (D `33ea544`). Took the last pure-
 - Still QUEUED: "Canceling image production is also slow" (not investigated); train-negative button (needs the
   `H:	rain` mp3 set + a user decision on redeploying to all 3 apps). Device-gated: M phone test of CoughVote
   `1e65392`; segedit retrain needs eligible Tier-B edits. No codebook touched.
+
+## 2026-11-04 resume-paused-work — image-pass Cancel is now prompt; atomic image writes
+No device; all 3 repos clean/in sync at start (D `dc908ba`, M `1e65392`, L `942d9c7`). Took the last 2026-06-13 QUEUED
+perf item ("Canceling image production is also slow"), the only remaining pure-desktop one.
+- **Diagnosis** (`ImageBatch.run`): (1) the scan phase — `walkTopDown` + a per-WAV `targetFor().isFile` stat over the
+  whole tree (ALLDATA = 227k files) — never looked at the cancel flag and showed no progress, so a Cancel clicked there
+  did nothing until the walk ended (this was the dominant latency on the old H:\ drive; still seconds on NVMe);
+  (2) after cancel the code still `get()`-drained every queued future as a no-op; (3) in-flight renders wrote straight
+  to the final PNG/JPG, so a kill mid-write left a truncated image that the resume rule ("target exists") treats as
+  done forever — a latent data defect, not just latency.
+- **Fix**: scan reports progress every 5000 WAVs and bails on cancel (summary `cancelled=true`, nothing rendered);
+  after cancel the untouched futures are `cancel(false)`-dropped and only the ≤1-clip-per-worker in flight are awaited;
+  each image is rendered to `<name>.png.part` / `.jpg.part` and atomically renamed into place (`renderAtomically`,
+  `ImageBatch.PART_SUFFIX`). GUI unchanged (same `onProgress` contract; `total=0` → indeterminate bar during scan).
+- **Headless harness**: `:desktop:cwtImages -Dimage.cancelAfterMs=N` raises the cancel N ms after start and prints
+  time-from-cancel-to-return + leftover `.part` count. Measured on scratch copies of ALLDATA coswara WAVs:
+  CWT_CPU 378 clips, cancel at 0.92 s → returned **0.11 s** later, 40 rendered, 0 `.part`, resume rendered the rest;
+  FFT 300 clips → returned 0.07 s after cancel. (10 "failed" FFT clips were 78-byte header-only WAVs in ALLDATA —
+  pre-existing data defect, same `failed` path as before.) Real ALLDATA untouched. **Not GUI-clicked.**
+- D `62b4981`, pushed, jar 'i' (build index 320). No codebook touched.
+- **Train-negative QUEUED item re-triaged — mostly already done**: `H:	rain` now lives at `D:\AndroidProjects	rain`
+  (52 Damon Runyon radio mp3s, 1.3 GB); `AllDataBuilder.collectTrain` (2026-06-13b) already chops them into 6 s
+  "mostly speech" negatives (3,120 `train__*` clips present in ALLDATA), `HarvestForestCli` trains with `train` as
+  class 0, and the ALLDATA decode measured old-radio speech FA at 0.4 % (2026-10-03). What remains is a USER decision:
+  re-derive the capture threshold, redeploy the forest to all 3 apps, and drop the M `PRECISION_THRESHOLD = 0.65`
+  stopgap (`MainActivity` sets `CoughClassifier.thresholdOverride` at record start). Not done unasked.
+- Remaining: device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits.
