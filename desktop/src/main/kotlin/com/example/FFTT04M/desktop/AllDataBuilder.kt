@@ -51,7 +51,11 @@ object AllDataBuilder {
     data class Progress(val phase: String, val done: Int, val total: Int, val message: String)
     data class Summary(
         val rows: Int, val converted: Int, val reused: Int, val failed: Int,
-        val images: Int, val csvPath: String, val bySource: Map<String, Int>, val cancelled: Boolean
+        val images: Int, val csvPath: String, val bySource: Map<String, Int>, val cancelled: Boolean,
+        /** Clips left out of metadata.csv because the source recording holds no audio. */
+        val noAudio: Int = 0,
+        /** Coswara dates whose archive could not be read to the end, so later clips are missing. */
+        val damagedArchives: List<String> = emptyList()
     )
 
     @Volatile private var cancelled = false
@@ -70,6 +74,8 @@ object AllDataBuilder {
     private val reused = AtomicInteger()
     private val failed = AtomicInteger()
     private val images = AtomicInteger()
+    private val noAudio = AtomicInteger()
+    private val damagedArchives = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     /**
      * Build ALLDATA from datasets found under [sourcesRoot] into [outDir].
@@ -79,6 +85,7 @@ object AllDataBuilder {
         cancelled = false
         usedNames.clear(); rows.clear()
         converted.set(0); reused.set(0); failed.set(0); images.set(0)
+        noAudio.set(0); damagedArchives.clear()
         outDir.mkdirs()
         excludeDir = outDir.canonicalFile   // never re-ingest the output folder (guardrail vs ALLDATA→ALLDATA)
 
@@ -137,7 +144,7 @@ object AllDataBuilder {
 
         return Summary(
             rows.size, converted.get(), reused.get(), failed.get(), images.get(),
-            csv.absolutePath, bySource, cancelled
+            csv.absolutePath, bySource, cancelled, noAudio.get(), damagedArchives.toList()
         )
     }
 
@@ -164,13 +171,23 @@ object AllDataBuilder {
         for (f in futures) try { f.get() } catch (_: Exception) {}
     }
 
-    /** Transcode one job (skip if a good output already exists) and record its row. Returns success. */
+    /**
+     * Transcode one job (skip if a good output already exists) and record its row. Returns success.
+     *
+     * A source with no audio (Coswara has 388, each a bare 44-byte WAV) gets no row. The header-only
+     * output ffmpeg leaves is kept as a marker, so a resumed build needn't extract that clip again;
+     * delete the file to retry it.
+     */
     private fun convertOne(job: Job): Boolean {
         try {
+            val headerOnly = { job.output.isFile && job.output.length() > 44L && !AudioDecoder.hasSamples(job.output) }
+            if (headerOnly()) { noAudio.incrementAndGet(); return true }
             val ok = if (job.output.isFile && job.output.length() > 44L) {
                 reused.incrementAndGet(); true
             } else if (AudioDecoder.convertToWav(job.input, job.output)) {
                 converted.incrementAndGet(); true
+            } else if (headerOnly()) {
+                noAudio.incrementAndGet(); return true
             } else {
                 failed.incrementAndGet(); false
             }
@@ -404,10 +421,14 @@ object AllDataBuilder {
 
     // ---- Coswara (streamed split-tar extraction) -----------------------------------------------
 
+    /** Folder names to look for, best first. The local "-paper-publication" copy lost part of
+     *  date 20210406 in an interrupted unpack (22 participants), so the full repo copy goes first. */
+    private val COSWARA_DIRS = arrayOf(
+        "Coswara-Data-master", "Coswara-Data-dataset-paper-publication", "Coswara-Data", "Coswara")
+
     private fun buildCoswara(root: File, outDir: File, pool: java.util.concurrent.ExecutorService,
                              onProgress: (Progress) -> Unit) {
-        val dir = findChild(root, "Coswara-Data-dataset-paper-publication", "Coswara-Data", "Coswara")
-            ?: return
+        val dir = findChild(root, *COSWARA_DIRS) ?: return
         // Master metadata keyed by participant id.
         val combined = Csv.readKeyed(dir.resolve("combined_data.csv"), keyCol = "id")
         val tmpRoot = File(outDir, "_tmp_coswara").apply { mkdirs() }
@@ -430,6 +451,11 @@ object AllDataBuilder {
             // after its wavs in the tar, so they are only known once the whole listing is in.
             val perParticipantJson = HashMap<String, Map<String, String>>()
             val staged = ArrayList<Triple<String, String, String>>() // participant, soundType, entry name
+            fun archiveError(e: Exception) {
+                damagedArchives.addIfAbsent(dateDir.name)
+                onProgress(Progress("warn", di, dateDirs.size,
+                    "⚠ Coswara ${dateDir.name}: archive is damaged (${e.message ?: e.javaClass.simpleName}) — clips past that point are missing from ALLDATA"))
+            }
             try {
                 streamTar(parts) { name, read ->
                     val segs = name.split('/')
@@ -439,12 +465,13 @@ object AllDataBuilder {
                     when {
                         leaf.equals("metadata.json", true) ->
                             perParticipantJson[participant] = Json.flatBytes(read())
-                        leaf.endsWith(".wav", true) ->
+                        // "._x.wav" = macOS resource-fork junk stored in some Coswara tars, not audio.
+                        leaf.endsWith(".wav", true) && !leaf.startsWith("._") ->
                             staged.add(Triple(participant, leaf.removeSuffix(".wav").removeSuffix(".WAV"), name))
                     }
                 }
             } catch (e: Exception) {
-                onProgress(Progress("Coswara", di, dateDirs.size, "Coswara ${dateDir.name}: ${e.message}"))
+                archiveError(e)
             }
             // Cancelled mid-archive: drop this date rather than queueing jobs that runJobs would
             // only skip one by one.
@@ -481,7 +508,7 @@ object AllDataBuilder {
                 try {
                     streamTar(parts) { name, read -> missing[name]?.writeBytes(read()) }
                 } catch (e: Exception) {
-                    onProgress(Progress("Coswara", di, dateDirs.size, "Coswara ${dateDir.name}: ${e.message}"))
+                    archiveError(e)
                 }
                 if (cancelled) break
             }
@@ -571,7 +598,7 @@ object AllDataBuilder {
         appendLine("Datasets under ${sourcesRoot.path}:")
         fun line(label: String, dir: File?, detail: () -> String) =
             appendLine(if (dir == null) "  $label: NOT FOUND" else "  $label -> ${dir.path}  [${detail()}]")
-        val cos = findChild(sourcesRoot, "Coswara-Data-dataset-paper-publication", "Coswara-Data", "Coswara")
+        val cos = findChild(sourcesRoot, *COSWARA_DIRS)
         line("Coswara", cos) { "${cos!!.listFiles { f -> f.isDirectory && f.name.matches(Regex("\\d{8}")) }?.size ?: 0} date dirs, combined_data.csv=${cos.resolve("combined_data.csv").isFile}" }
         val cd = findChild(sourcesRoot, "CoughDataset-main", "CoughDataset")
         line("CoughDataset", cd) { "covid=${cd!!.resolve("covid").isDirectory || cd.name.equals("covid", true)}" }

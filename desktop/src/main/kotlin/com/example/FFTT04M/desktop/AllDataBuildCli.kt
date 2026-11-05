@@ -24,6 +24,7 @@ object AllDataBuildCli {
                 println("[%6.1fs] %s".format((System.nanoTime() - t0) / 1e9, p.message))
         }
         println("SUMMARY rows=${s.rows} converted=${s.converted} reused=${s.reused} failed=${s.failed} " +
+            "noAudio=${s.noAudio} damagedArchives=${s.damagedArchives} " +
             "images=${s.images} cancelled=${s.cancelled} bySource=${s.bySource} " +
             "elapsed=%.1fs".format((System.nanoTime() - t0) / 1e9))
     }

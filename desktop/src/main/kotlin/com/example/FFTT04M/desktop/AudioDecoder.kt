@@ -111,9 +111,34 @@ object AudioDecoder {
             val drain = Thread { try { p.inputStream.readBytes() } catch (_: Exception) {} }
             drain.isDaemon = true; drain.start()
             p.waitFor()
-            p.exitValue() == 0 && output.isFile && output.length() > 44L
+            p.exitValue() == 0 && hasSamples(output)
         } catch (e: Exception) {
             System.err.println("convertToWav failed for ${input.name}: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * True if [wav] holds at least one audio sample. A length check can't tell: ffmpeg exits 0 on an
+     * empty source and writes a valid 78-byte WAV (header + LIST chunk + empty data chunk).
+     * Only short files are opened, so this is cheap to call across a large corpus.
+     */
+    fun hasSamples(wav: File): Boolean {
+        if (!wav.isFile) return false
+        val size = wav.length()
+        if (size >= 4096L) return true
+        return try {
+            val b = wav.readBytes()
+            val buf = java.nio.ByteBuffer.wrap(b).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            var pos = 12
+            while (pos + 8 <= b.size) {
+                val id = String(b, pos, 4, Charsets.US_ASCII)
+                val len = buf.getInt(pos + 4).toLong() and 0xFFFFFFFFL
+                if (id == "data") return len > 0 && b.size > pos + 8
+                pos = (pos + 8 + len + (len and 1)).coerceAtMost(b.size.toLong()).toInt()
+            }
+            false
+        } catch (_: Exception) {
             false
         }
     }

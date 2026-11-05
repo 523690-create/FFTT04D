@@ -543,6 +543,9 @@ class AnalyzerWindow : JFrame("Cough Analysis Desktop") {
             sb.append(if (summary.cancelled) "=== ALLDATA build CANCELLED ===\n" else "=== ALLDATA build complete ===\n")
             sb.append(String.format("%d rows · %d converted · %d reused · %d failed · %d images · %.1fs%n",
                 summary.rows, summary.converted, summary.reused, summary.failed, summary.images, elapsedS))
+            if (summary.noAudio > 0) sb.append("${summary.noAudio} clips left out: source recording holds no audio\n")
+            if (summary.damagedArchives.isNotEmpty())
+                sb.append("⚠ damaged Coswara archives (clips missing): ${summary.damagedArchives.joinToString(", ")}\n")
             if (summary.csvPath.isNotEmpty()) sb.append("metadata: ${summary.csvPath}\n")
             sb.append("\nby source:\n")
             summary.bySource.forEach { (s, n) -> sb.append("  ${s.padEnd(16)} $n\n") }

@@ -70,7 +70,8 @@ object ImageBatch {
         for (wav in walk) {
             if (cancel.get()) break
             seen++
-            if (!targetFor(wav, mode).isFile) todo.add(wav)
+            // A header-only WAV can't render, so it would count as "failed" again on every pass.
+            if (!targetFor(wav, mode).isFile && AudioDecoder.hasSamples(wav)) todo.add(wav)
             if (seen % SCAN_PROGRESS_EVERY == 0)
                 onProgress(Progress(0, 0, "Scanning… $seen WAVs seen, ${todo.size} need ${mode.label}"))
         }
