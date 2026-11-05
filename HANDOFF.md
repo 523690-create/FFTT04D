@@ -872,7 +872,8 @@ cough_detected, metadata_json`
 - `Coswara-Data-dataset-paper-publication` — `YYYYMMDD/` folders, split `*.tar.gz.aa…` archives
   (`<participant>/<sound-type>.wav` + `metadata.json`), `combined_data.csv` (keyed by `id`),
   `csv_labels_legend.json`. This is the *moved/renamed* Coswara (old code expected
-  `Coswara-Data-master`); `findChild` matches by prefix so both names work.
+  `Coswara-Data-master`); `findChild` matches by prefix so both names work. **2026-11-05: both copies exist
+  now; this one is damaged (date 20210406), so the builder prefers `Coswara-Data-master`.**
 - `CoughDataset-main/covid` — small, all presumed COVID.
 - `coughvid_20211012` — large flat folder; `.webm`/`.ogg`/`.wav` + per-file `.json`;
   `metadata_compiled.csv` keyed by uuid (`status` = healthy/symptomatic/COVID-19).
@@ -1030,3 +1031,25 @@ perf item ("Canceling image production is also slow"), the only remaining pure-d
   re-derive the capture threshold, redeploy the forest to all 3 apps, and drop the M `PRECISION_THRESHOLD = 0.65`
   stopgap (`MainActivity` sets `CoughClassifier.thresholdOverride` at record start). Not done unasked.
 - Remaining: device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits.
+
+## 2026-11-05 resume-paused-work — ALLDATA: 388 empty clips dropped, 22 lost Coswara participants restored
+No device; all 3 repos clean/in sync at start (D `4f54d78`, M `1e65392`, L `942d9c7`). Followed up the 11-04 aside about
+"78-byte header-only WAVs". Full detail + revert: `data/_alldata_rows_20261105/RESULTS.md`.
+- **Empty clips**: 388 Coswara rows (82 cough) pointed at WAVs with no samples. The sources are 44-byte empty WAVs;
+  ffmpeg exits 0 and writes 78 bytes, which passed the "> 44 bytes" check. `AudioDecoder.hasSamples` now decides. These
+  clips get no row (`Summary.noAudio`), the 78-byte file stays as a "done" marker, and image passes skip them.
+- **Damaged source**: `Coswara-Data-dataset-paper-publication/20210406` has a short `.ac` and no `.ad` (interrupted
+  unpack, mtime 2026-06-12), which lost 22 participants; the only trace was a progress line. `Coswara-Data-master` is
+  complete and now preferred. A damaged archive is a warning and `Summary.damagedArchives`. The tars' `._x.wav` junk is skipped.
+- **Corpus**: `metadata.csv` 76,146 → 75,955 rows (−388, +197); 197 WAVs + FFT/CWT images added. Applied by script from a
+  verified scratch build, not a full rebuild (see below). Backup `metadata.csv.pre` is in the results folder.
+- **Verified** on a scratch build of 3 dates: 1,475 shared clips byte-identical with identical row text; resume converted 0;
+  image pass rendered 1,672, skipped 38, failed 0; damaged copy alone reports `damagedArchives=[20210406]`. Not GUI-clicked.
+- **Old numbers**: decode-based evals unaffected. `:desktop:coughEval` counted the 82 as misses (Coswara recall up to 1.5%
+  low, 0.2% overall). Not re-run.
+- D `c58e290`, pushed, jar 's' (build index 330). No codebook, decode or embedding file touched.
+- **User decisions**: (1) 14 metadata rows have no WAV but still have images, which matches the grid's delete actions.
+  **A full Build ALLDATA would recreate them**; say whether they were deleted on purpose. (2) Delete or re-unpack the damaged
+  Coswara copy (left as is).
+- Remaining: the 197 new clips need the next ALLDATA decode/embedding run; device-gated M phone test of CoughVote `1e65392`;
+  segedit retrain needs eligible Tier-B edits.
