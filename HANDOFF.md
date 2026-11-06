@@ -1,7 +1,7 @@
 # HANDOFF — FFTT04D desktop (for Claude Code)
 
 Read this first. It captures desktop-specific context that isn't obvious from the code.
-Date: 2026-06-13 (latest session appended at top: 2026-10-14).
+Date: 2026-06-13 (sessions through 2026-10-14 are at the top, newest first; from 2026-10-29 on they are appended at the BOTTOM of this file).
 
 ## SESSION 2026-10-14 — autonomous resume-paused-work: no-op (5th in a row; nothing stranded, nothing actionable without a device or user choice)
 State on arrival: D=`port_windows` 7ac3cee, M=`blue_sky` 1e65392, L=`main` 942d9c7, all clean and in sync with origin (nothing to push).
@@ -1053,3 +1053,12 @@ No device; all 3 repos clean/in sync at start (D `4f54d78`, M `1e65392`, L `942d
   Coswara copy (left as is).
 - Remaining: the 197 new clips need the next ALLDATA decode/embedding run; device-gated M phone test of CoughVote `1e65392`;
   segedit retrain needs eligible Tier-B edits.
+
+## 2026-11-06 resume-paused-work — restored clips decoded and embedded; coughEval re-run
+No device; all 3 repos clean/in sync at start (D `5c1d0ac`, M `1e65392`, L `942d9c7`). Closed the 11-05 leftover. Detail + revert: `data/_alldata_gapfill_20261106/RESULTS.md`.
+- **Gap**: of 250 rows with no decode, 197 were the restored clips. The other 39 are outside the decoder's <100 ms / >45 s limits and will never decode; 14 have no WAV.
+- **Filled additively**: `ALLDATA_decoded.json` 75,705 → 75,902, `clipemb_ALLDATA.bin` 75,742 → 75,939, `cough_wholeclip.csv` 75,744 → 75,941. Existing records and vectors unchanged; backups in the results folder. Restart a running desktop app to see them.
+- **HuBERT ran on CPU** because a `llama-server` held 7.7 of 8 GB VRAM (left alone). 40 control clips vs the GPU decode: 99.95% of windows identical, same call on 40/40.
+- **coughEval re-run** (first since the row fix): 0 shared rows differ. Fuser@.7 stays 74% / 7.6%. Coswara fuser@.7 recall 89.88 → 90.51, or 91.26 excluding the 197, confirming the 11-05 estimate. The harvest never saw the 197, so segment methods count their 44 coughs as misses; use the "without the 197" column for those.
+- **New switch**: `:desktop:unsupervisedCluster -Dcluster.corpus=ALLDATA -Dcluster.embedOnly=true` fills the embedding cache and stops, leaving `cluster_<corpus>.*` alone. jar 'z' (337). No codebook file touched (md5-checked).
+- **Remaining**: device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits; user decisions from 11-05 (the 14 WAVs, the damaged Coswara copy) and 11-04 (redeploy the forest, drop M's 0.65 stopgap).

@@ -115,6 +115,7 @@ tasks.register<JavaExec>("unsupervisedCluster") {
     systemProperty("cluster.ks", System.getProperty("cluster.ks") ?: "")            // -Dcluster.ks=5,8,10,12
     systemProperty("cluster.max", System.getProperty("cluster.max") ?: "")          // -Dcluster.max=30000 sample cap
     systemProperty("cluster.exclude", System.getProperty("cluster.exclude") ?: "")  // -Dcluster.exclude=voice,noise
+    systemProperty("cluster.embedOnly", System.getProperty("cluster.embedOnly") ?: "")  // -Dcluster.embedOnly=true → fill clipemb cache, stop
     systemProperty("cluster.binary", System.getProperty("cluster.binary") ?: "")    // -Dcluster.binary=true → cough/not-cough eval
     systemProperty("cluster.segbinary", System.getProperty("cluster.segbinary") ?: "")  // -Dcluster.segbinary=true → segment-level
     systemProperty("cluster.probe", System.getProperty("cluster.probe") ?: "")          // -Dcluster.probe=true → run head on clips

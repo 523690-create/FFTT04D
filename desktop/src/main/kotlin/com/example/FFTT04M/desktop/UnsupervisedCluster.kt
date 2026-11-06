@@ -66,6 +66,8 @@ object UnsupervisedCluster {
 
         // ---- embeddings (cached on disk; resumable append) ----
         val embAll = computeEmbeddings(corpus, wavs)
+        // -Dcluster.embedOnly=true → just fill the cache for new clips; leaves cluster_<corpus>.* alone.
+        if (System.getProperty("cluster.embedOnly")?.toBoolean() == true) return
         // -Dcluster.binary=true → measure a purpose-built cough/not-cough discriminator instead of clustering.
         if (System.getProperty("cluster.binary")?.toBoolean() == true) { evalBinary(embAll, labels); return }
         if (embAll.size < KS.max()) { println("too few embeddings (${embAll.size})"); return }
