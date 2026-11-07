@@ -1062,3 +1062,14 @@ No device; all 3 repos clean/in sync at start (D `5c1d0ac`, M `1e65392`, L `942d
 - **coughEval re-run** (first since the row fix): 0 shared rows differ. Fuser@.7 stays 74% / 7.6%. Coswara fuser@.7 recall 89.88 → 90.51, or 91.26 excluding the 197, confirming the 11-05 estimate. The harvest never saw the 197, so segment methods count their 44 coughs as misses; use the "without the 197" column for those.
 - **New switch**: `:desktop:unsupervisedCluster -Dcluster.corpus=ALLDATA -Dcluster.embedOnly=true` fills the embedding cache and stops, leaving `cluster_<corpus>.*` alone. jar 'z' (337). No codebook file touched (md5-checked).
 - **Remaining**: device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits; user decisions from 11-05 (the 14 WAVs, the damaged Coswara copy) and 11-04 (redeploy the forest, drop M's 0.65 stopgap).
+
+## 2026-11-07 resume-paused-work — SoftmaxLR never converged on HuBERT; fixed
+No device; all 3 repos clean/in sync at start (D `f2ab0d6`, M `1e65392`, L `942d9c7`). Took the "`SoftmaxLR` NOT audited" note left by the 10-05 impulse veto. Detail + revert: `data/_softmax_audit_20261107/RESULTS.md`.
+- **Defect**: fixed step 0.5 is stable only for λmax < ~7; z-scored HuBERT has 93–160. Coswara objective bounced 0.30–0.72 against a true minimum of 0.096, with about 72% of predictions saturated.
+- **Fix (`48cc8ce`, jar 'C', 340)**: above the limit, Nesterov at step 1/L on the same objective; below it, the old loop unchanged. VOTE LR 5.2, DSP-only 27.7 and FUSED 2.6 reproduce to the digit. `deviceHubertEval` LINEAR 5.9 → 4.3.
+- **FP @90% recall, fixed → converged**: device day folds 11.4 → 5.3 (MLP 4.9–6.2); coswara cough vs breath 3.2 → 1.2 (MLP 1.0–1.2; 07-10 log said linear 4.9); specialist on participant folds 5.1 → 0.6.
+- **So the 07-10 "linear-capacity ceiling" was mostly an optimizer artifact.** Older 768-d linear numbers are pessimistic.
+- **Retrained, backed up**: `cough_specialist.*`, `cough_clipgate.*`. Clip gate thr .7: 79.7 / 4.8 → 81.8 / 4.4; breathing-deep FP 12.1 → 8.9; `dataset_1sec` recall 72.3 → 84.8. ESC-50 FP 10.8 → 13.4 and UrbanSound8K 4.3 → 5.2 got worse.
+- **Untouched**: phone models (`cough_vote` is 7-d, `device_cough_head` is `Mlp`; md5s unchanged), phoneme codebook.
+- **Found**: M's `CoughVerifier` has no callers, so its `cough_head.json` asset is unused.
+- **Remaining**: `cough_head_ALLDATA.json` retrain (may need GPU; `pHead`/fuser depend on it); `Mlp.kt` fixed step not audited; user decision on a linear device head; plus everything listed under 11-06.
