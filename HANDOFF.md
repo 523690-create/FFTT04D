@@ -1073,3 +1073,11 @@ No device; all 3 repos clean/in sync at start (D `f2ab0d6`, M `1e65392`, L `942d
 - **Untouched**: phone models (`cough_vote` is 7-d, `device_cough_head` is `Mlp`; md5s unchanged), phoneme codebook.
 - **Found**: M's `CoughVerifier` has no callers, so its `cough_head.json` asset is unused.
 - **Remaining**: `cough_head_ALLDATA.json` retrain (may need GPU; `pHead`/fuser depend on it); `Mlp.kt` fixed step not audited; user decision on a linear device head; plus everything listed under 11-06.
+
+## 2026-11-11 resume-paused-work — Mlp.kt fixed step audited: not a defect
+No device; all 3 repos clean/in sync at start (D `5b489c8`, M `1e65392`, L `942d9c7`). Took the "`Mlp.kt` fixed step not audited" item left on 11-07. Detail: `data/_mlp_audit_20261111/RESULTS.md`.
+- **Result**: lr 0.1 descends monotonically on device (1,354) and coswara cough-vs-breath (10,803); no bouncing like the old `SoftmaxLR`. The ~50% saturation comes from fitting the training set, and more optimisation raises it with no held-out gain.
+- **FP @90% recall**: shipped 4.9-6.2 on device day folds across seeds, Adam 4.6-5.0 (inside seed noise); coswara 0.9-1.2 for everything. **No code change**, no build, no codebook or model file touched.
+- MLP numbers since 07-10 stand. On HuBERT a converged linear head ≈ the MLP, so the linear device head stays a user call.
+- **GPU now free** (1.1 of 8 GB used; the `llama-server` is gone), which unblocks the `cough_head_ALLDATA.json` retrain. Not started: it sets off a chain of retrains (rescore harvest `pHead`, refit the CoughGate fuser, retrain the clip gate, re-run coughEval) and rewrites several data files that are not in git. Do it as its own run, backing up `cough_head_ALLDATA.json`, `segemb_ALLDATA.bin`, `cough_harvest/*.csv` and `cough_fuser*` first.
+- **Remaining**: the head retrain chain above; device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits; user decisions (linear device head, the 14 WAVs, the damaged Coswara copy, redeploy the forest / drop M's 0.65 stopgap).
