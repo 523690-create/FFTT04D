@@ -1074,6 +1074,13 @@ No device; all 3 repos clean/in sync at start (D `f2ab0d6`, M `1e65392`, L `942d
 - **Found**: M's `CoughVerifier` has no callers, so its `cough_head.json` asset is unused.
 - **Remaining**: `cough_head_ALLDATA.json` retrain (may need GPU; `pHead`/fuser depend on it); `Mlp.kt` fixed step not audited; user decision on a linear device head; plus everything listed under 11-06.
 
+## 2026-11-12 resume-paused-work — cough_head_ALLDATA retrained (converged) + full cascade refit
+No device; all 3 repos clean/in sync at start (D `97279e3`, M `1e65392`, L `942d9c7`). Took the head-retrain chain left open on 11-07/11-11 (GPU free). Detail + revert: `data/_head_retrain_20261112/RESULTS.md`. D `e43625a` + this docs commit, jar 'S'.
+- **Head**: `unsupervisedCluster -Dcluster.segbinary -Dseg.max=3000` (8,634 segs). CV 81.6 → 88.9%; unseen device AUC 0.808 → 0.862, FP@90 56.1 → 45.1, saturation 42 → 0%.
+- **New `verifyHarvest -Dverify.scoreOnly=true`** + per-bucket embedding cache `data/codebooks/harvestemb_<bucket>.bin` (~560 MB): rescored all 175,483 segments, moved nothing. Next head retrain = CPU-only rescore.
+- **Cascade** (baseline reproduced old files byte-for-byte first): `patch_compare.py` swaps only pHead-derived columns; refit `coughGate`, `clipGate`, rerun `coughEval`. coughEval fuser≥.8 68.4/5.0 → 69.9/4.8; fuser≥.7 J +66.3 → +67.7; clip gate @.7 81.8/4.4 → 82.0/4.0. Segment-level breathing FP got worse (fuser≥.7 deep 24 → 28%) but the clip gate absorbs it.
+- **Remaining**: `cough_vote.json` (phone) was trained with the old head's headP — retrain is a ship decision, after the pending M phone test; found_in_other kept/rejected folders still reflect the old head; device-gated M phone test of `1e65392`; user decisions (linear device head, 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
 ## 2026-11-11 resume-paused-work — Mlp.kt fixed step audited: not a defect
 No device; all 3 repos clean/in sync at start (D `5b489c8`, M `1e65392`, L `942d9c7`). Took the "`Mlp.kt` fixed step not audited" item left on 11-07. Detail: `data/_mlp_audit_20261111/RESULTS.md`.
 - **Result**: lr 0.1 descends monotonically on device (1,354) and coswara cough-vs-breath (10,803); no bouncing like the old `SoftmaxLR`. The ~50% saturation comes from fitting the training set, and more optimisation raises it with no held-out gain.
