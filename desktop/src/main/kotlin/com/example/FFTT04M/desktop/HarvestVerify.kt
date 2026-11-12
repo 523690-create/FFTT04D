@@ -2,6 +2,9 @@ package com.example.FFTT04M.desktop
 
 import com.example.FFTT04M.desktop.fractionation.HubertKMeansUnits
 import com.google.gson.Gson
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
@@ -46,10 +49,21 @@ object HarvestVerify {
             return p[ci] / sum
         }
 
-        if (!HubertKMeansUnits.available) { println("HuBERT unavailable: ${HubertKMeansUnits.unavailableReason}"); return }
-        val wavs = dir.listFiles { f -> f.isFile && f.extension.equals("wav", true) }?.toList() ?: emptyList()
-        println("=== VERIFY ${wavs.size} harvested segments in $dir (keep P(cough) >= $threshold) · HuBERT ${HubertKMeansUnits.provider} ===")
+        // -Dverify.scoreOnly=true: rescore EVERY segment of the bucket (top level + _rejected_lowP/) and rewrite
+        // the CSV, but move nothing — the kept/rejected folder split stays as it is. Used when the head changes.
+        val scoreOnly = System.getProperty("verify.scoreOnly")?.toBoolean() == true
         val rejDir = File(dir, "_rejected_lowP").apply { mkdirs() }
+        fun wavsIn(d: File) = d.listFiles { f -> f.isFile && f.extension.equals("wav", true) }?.toList() ?: emptyList()
+        val wavs = if (scoreOnly) wavsIn(dir) + wavsIn(rejDir) else wavsIn(dir)
+        // Embedding cache (data/codebooks/harvestemb_<bucket>.bin, keyed by file name, same record format as
+        // segemb_*.bin): HuBERT runs once per segment ever, so a later head retrain rescores on the CPU.
+        val cacheFile = File(Workspace.dir("codebooks"), "harvestemb_${dir.name}.bin")
+        val cache = loadCache(cacheFile)
+        val needHubert = wavs.any { !cache.containsKey(it.name) }
+        if (needHubert && !HubertKMeansUnits.available) { println("HuBERT unavailable: ${HubertKMeansUnits.unavailableReason}"); return }
+        println("=== VERIFY ${wavs.size} harvested segments in $dir (${if (scoreOnly) "score only, no moves" else "keep P(cough) >= $threshold"}) · " +
+            "${cache.size} cached embeddings · HuBERT ${if (needHubert) HubertKMeansUnits.provider else "not needed"} ===")
+        val cacheOut = DataOutputStream(java.io.FileOutputStream(cacheFile, true).buffered())
         val fail = AtomicInteger(); val done = AtomicInteger()
         // (name, pCough) scored in parallel. Files are NOT moved here — a concurrent renameTo() on this
         // mountvol/NVMe volume silently returns false ~85% of the time, so the physical filtering is done
@@ -62,28 +76,41 @@ object HarvestVerify {
             wavs.map { wav ->
                 pool.submit {
                     try {
-                        val pcm = AudioDecoder.decode(wav)?.also { rms(it) }
-                        if (pcm == null || pcm.size < SR / 16 || pcm.size > SR * 10) fail.incrementAndGet()
+                        val hit = cache[wav.name]
+                        if (hit != null) scored.add(wav.name to pCough(hit))
                         else {
-                            val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR)
-                            if (fe == null || fe.isEmpty()) fail.incrementAndGet()
+                            val pcm = AudioDecoder.decode(wav)?.also { rms(it) }
+                            if (pcm == null || pcm.size < SR / 16 || pcm.size > SR * 10) fail.incrementAndGet()
                             else {
-                                val d = fe[0].size; val v = DoubleArray(d)
-                                for (f in fe) for (j in 0 until d) v[j] += f[j]; for (j in 0 until d) v[j] /= fe.size
-                                scored.add(wav.name to pCough(v))
+                                val fe = HubertKMeansUnits.frameEmbeddings(pcm, SR)
+                                if (fe == null || fe.isEmpty()) fail.incrementAndGet()
+                                else {
+                                    val d = fe[0].size; val v = DoubleArray(d)
+                                    for (f in fe) for (j in 0 until d) v[j] += f[j]; for (j in 0 until d) v[j] /= fe.size
+                                    synchronized(cacheOut) { cacheOut.writeUTF(wav.name); cacheOut.writeInt(d); for (x in v) cacheOut.writeFloat(x.toFloat()) }
+                                    scored.add(wav.name to pCough(v))
+                                }
                             }
                         }
                     } catch (e: Exception) { fail.incrementAndGet() }
                     val n = done.incrementAndGet()
-                    if (n % 500 == 0 || n == wavs.size) println("  scored $n/${wavs.size}")
+                    if (n % 500 == 0 || n == wavs.size) {
+                        println("  scored $n/${wavs.size}")
+                        synchronized(cacheOut) { cacheOut.flush() }
+                    }
                 }
             }.forEach { it.get() }
-        } finally { pool.shutdown() }
+        } finally { pool.shutdown(); cacheOut.close() }
 
         File(dir.parentFile, "${dir.name}_verified.csv").bufferedWriter().use { ww ->
             ww.write("file,pCough\n"); for ((name, p) in scored.sortedBy { it.first }) ww.write("$name,${"%.3f".format(p)}\n")
         }
 
+        if (scoreOnly) {
+            println("=== SCORE-ONLY complete: ${scored.size} scored (P>=$threshold: ${scored.count { it.second >= threshold }}), " +
+                "scoreFailed ${fail.get()}, nothing moved ===")
+            return
+        }
         // Reliable sequential move: nio.Files.move throws (and reports) on real failure instead of the
         // renameTo() boolean that we can't trust here.
         var kept = 0; var moved = 0; var moveFail = 0
@@ -101,5 +128,20 @@ object HarvestVerify {
     private fun rms(pcm: FloatArray, target: Float = 0.1f) {
         var s = 0.0; for (x in pcm) s += x.toDouble() * x
         val r = sqrt(s / pcm.size.coerceAtLeast(1)); if (r > 1e-5) { val g = (target / r).toFloat(); for (i in pcm.indices) pcm[i] *= g }
+    }
+
+    private fun loadCache(f: File): HashMap<String, DoubleArray> {
+        val m = HashMap<String, DoubleArray>()
+        if (!f.isFile) return m
+        try {
+            DataInputStream(f.inputStream().buffered()).use { dis ->
+                while (true) {
+                    val id = try { dis.readUTF() } catch (e: EOFException) { break }
+                    val n = dis.readInt(); val v = DoubleArray(n) { dis.readFloat().toDouble() }
+                    m[id] = v
+                }
+            }
+        } catch (e: Exception) { System.err.println("cache read (${f.name}): ${e.message} — kept ${m.size} complete records") }
+        return m
     }
 }

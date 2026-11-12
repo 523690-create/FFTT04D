@@ -149,6 +149,7 @@ tasks.register<JavaExec>("verifyHarvest") {
     systemProperty("java.awt.headless", "true")
     systemProperty("verify.dir", System.getProperty("verify.dir") ?: "")
     systemProperty("verify.threshold", System.getProperty("verify.threshold") ?: "")
+    systemProperty("verify.scoreOnly", System.getProperty("verify.scoreOnly") ?: "")  // rescore all, move nothing
     maxHeapSize = "3g"
 }
 
