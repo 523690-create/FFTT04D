@@ -1079,7 +1079,7 @@ No device; all 3 repos clean/in sync at start (D `97279e3`, M `1e65392`, L `942d
 - **Head**: `unsupervisedCluster -Dcluster.segbinary -Dseg.max=3000` (8,634 segs). CV 81.6 → 88.9%; unseen device AUC 0.808 → 0.862, FP@90 56.1 → 45.1, saturation 42 → 0%.
 - **New `verifyHarvest -Dverify.scoreOnly=true`** + per-bucket embedding cache `data/codebooks/harvestemb_<bucket>.bin` (~560 MB): rescored all 175,483 segments, moved nothing. Next head retrain = CPU-only rescore.
 - **Cascade** (baseline reproduced old files byte-for-byte first): `patch_compare.py` swaps only pHead-derived columns; refit `coughGate`, `clipGate`, rerun `coughEval`. coughEval fuser≥.8 68.4/5.0 → 69.9/4.8; fuser≥.7 J +66.3 → +67.7; clip gate @.7 81.8/4.4 → 82.0/4.0. Segment-level breathing FP got worse (fuser≥.7 deep 24 → 28%) but the clip gate absorbs it.
-- **Remaining**: `cough_vote.json` (phone) was trained with the old head's headP — retrain is a ship decision, after the pending M phone test; found_in_other kept/rejected folders still reflect the old head; device-gated M phone test of `1e65392`; user decisions (linear device head, 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+- **Remaining**: ~~`cough_vote.json` was trained with the old head's headP~~ (wrong, see 2026-11-13); found_in_other kept/rejected folders still reflect the old head; device-gated M phone test of `1e65392`; user decisions (linear device head, 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
 
 ## 2026-11-11 resume-paused-work — Mlp.kt fixed step audited: not a defect
 No device; all 3 repos clean/in sync at start (D `5b489c8`, M `1e65392`, L `942d9c7`). Took the "`Mlp.kt` fixed step not audited" item left on 11-07. Detail: `data/_mlp_audit_20261111/RESULTS.md`.
@@ -1088,3 +1088,14 @@ No device; all 3 repos clean/in sync at start (D `5b489c8`, M `1e65392`, L `942d
 - MLP numbers since 07-10 stand. On HuBERT a converged linear head ≈ the MLP, so the linear device head stays a user call.
 - **GPU now free** (1.1 of 8 GB used; the `llama-server` is gone), which unblocks the `cough_head_ALLDATA.json` retrain. Not started: it sets off a chain of retrains (rescore harvest `pHead`, refit the CoughGate fuser, retrain the clip gate, re-run coughEval) and rewrites several data files that are not in git. Do it as its own run, backing up `cough_head_ALLDATA.json`, `segemb_ALLDATA.bin`, `cough_harvest/*.csv` and `cough_fuser*` first.
 - **Remaining**: the head retrain chain above; device-gated M phone test of CoughVote `1e65392`; segedit retrain needs eligible Tier-B edits; user decisions (linear device head, the 14 WAVs, the damaged Coswara copy, redeploy the forest / drop M's 0.65 stopgap).
+
+## 2026-11-13 resume-paused-work — "vote needs retrain for new head" item was wrong (docs only)
+No device; all 3 repos clean/in sync at start (D `e82c7e4`, M `1e65392`, L `942d9c7`), nothing to push. Checked the 11-12 open item
+before acting on it. In `DeviceCoughGateCli.kt` the fuser vector `vec()` takes `headP` from `devHeadOOF` (the in-domain device MLP,
+saved as `device_cough_head.json`); the `cough_head_ALLDATA.json` score (`Row.headP`) is used only for the
+`cough_head (ALLDATA/OOD)` report line. M's `CoughVote` loads `device_cough_head.json`. **So no shipped phone model depends on the
+ALLDATA head and the 11-12 retrain does not call for a `cough_vote.json` retrain.** Corrected in the 11-12 entry,
+`data/_head_retrain_20261112/RESULTS.md` and memory. No build, no codebook or model file touched.
+- **Remaining** (all gated): M phone test of CoughVote `1e65392`; found_in_other kept/rejected folders still reflect the old head @.75
+  (re-move changes GUI buckets, user); segedit retrain needs Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged
+  Coswara copy, forest redeploy / M 0.65 stopgap).
