@@ -1099,3 +1099,15 @@ ALLDATA head and the 11-12 retrain does not call for a `cough_vote.json` retrain
 - **Remaining** (all gated): M phone test of CoughVote `1e65392`; found_in_other kept/rejected folders still reflect the old head @.75
   (re-move changes GUI buckets, user); segedit retrain needs Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged
   Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-14 resume-paused-work — 768-d linear research numbers re-logged after the SoftmaxLR fix
+No device; all 3 repos clean/in sync at start (D `9d7c953`, M `1e65392`, L `942d9c7`), nothing to push. Took the 11-07 "old linear numbers
+not re-logged" item (the only non-gated one). Detail: `data/_linear_relog_20261114/RESULTS.md`. CPU only, no code change, no jar.
+- **coughVsExp** (coswara cough vs breath, 5-fold): HuBERT 90.9 → **96.5%**, FUSED 91.6 → **96.6%**; thr .7 88/94 → **95.5 / 97.4** recall/reject.
+- **breathSpec** (breath FP @90% recall → alarms/hr at 15/min): baseline 4.9% / 43.9 → **1.2% / 10.7**; best single 3.6 / 32.4 → **0.9 / 7.7**;
+  cascade 2.7 / 24.0 → **0.5% / 4.2** (end-to-end recall 81.6). HuBERT MLP = linear (1.2 / 10.5); the trainer now feeds the cascade the linear variant.
+- DSP-only rows moved ≤0.2 pp although the set grew 10,716 → 10,803 (11-05 restore), so the HuBERT gain is the optimizer. The 07-10 "breath wall"
+  was mostly the non-converging fit. inspiration*/respiratoryPhase are DSP-only and were not re-run.
+- `breathSpec` rewrites `data/codebooks/breath_mlp_coswara.json`; backed up and **restored** (all codebook md5s identical before/after).
+- **Remaining** (all gated): M phone test of CoughVote `1e65392`; found_in_other folders still reflect the old head; segedit retrain needs Tier-B
+  edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
