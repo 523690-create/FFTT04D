@@ -116,7 +116,9 @@ softmax LR reused), 5-fold CV, reports fused vs each single method (FP on hard-n
   now with squiggle/speech columns + pFused + speechVeto + verdict).
 - [ ] Wire real Stage-B inference (`CoughGate` loads all models) into a GUI button + a re-harvest that
       gates DURING streaming segmentation over RAW audio (the true fix for post-seg over-fire).
-- [ ] User-domain override: p3 multi-class letter authoritative for user voice.
+      *(2026-11-15: still open, tracked in HANDOFF as the "capture-time gate": waits until AutoReject (M `1e65392`) has been tested on a phone.)*
+- [~] User-domain override: p3 multi-class letter authoritative for user voice.
+      *(2026-11-15: superseded. The in-domain `CoughVote` (trained only on the user's own labels, 2026-10-07) does this job on device; see memory `on-device-cough-vote`.)*
 
 See memory `cough_isolation_ensemble`.
 
@@ -161,8 +163,10 @@ from INTERSECT-like (62%/2.6%) to UNION-like (89%/17%). See memory `cough_eval_f
       75,744 clips. Strictly dominates: rec 77%/FP 5.1% · rec 83%/FP 7.1%/prec 94% (thr .6) · rec 88%/FP
       10.3% (thr .5) — beats union (89%/17%) and both single families at every operating point. Fixes the
       dataset_1sec blind spot (89.8% recall @.5). **Deploy at thr≈0.6.** Saved `cough_clipgate.json`.
-- [ ] Device-recording eval (condition 2) over device_ingest/p3 with manual hard labels.
-- [ ] Wire the clip-gate verdict into a GUI button + mobile AutoReject; gate during raw-stream segmentation.
+- [x] Device-recording eval (condition 2) over device_ingest/p3 with manual hard labels.
+      *(DONE: `deviceCoughGate` / `deviceHubertEval` / `deviceEval` on 1,354 clean user labels, 2026-10-07, D `4bd339c`; whole-clip forest FP 80.7% @.7 in-domain.)*
+- [~] Wire the clip-gate verdict into a GUI button + mobile AutoReject; gate during raw-stream segmentation.
+      *(2026-11-15: mobile part superseded, since AutoReject uses `CoughVote` and not this gate. The GUI part was not built: `cough_clipgate.csv` `pClip` comes from the final model trained on ALL clips, so it is in-sample and only repeats the labels ALLDATA already has. It would need out-of-fold scores to be worth showing. Raw-stream gating = the capture-time gate above.)*
 
 ---
 

@@ -1111,3 +1111,15 @@ not re-logged" item (the only non-gated one). Detail: `data/_linear_relog_202611
 - `breathSpec` rewrites `data/codebooks/breath_mlp_coswara.json`; backed up and **restored** (all codebook md5s identical before/after).
 - **Remaining** (all gated): M phone test of CoughVote `1e65392`; found_in_other folders still reflect the old head; segedit retrain needs Tier-B
   edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-15 resume-paused-work: no new work available; stale COUGH_ISOLATION checkboxes updated (docs only)
+No device; all 3 repos clean/in sync at start (D `1647933`, M `1e65392`, L `942d9c7`), nothing to push. `phoneme_segment_edits.json` still
+07-10 11:28, `device_ingest/` 827 files. Per the no-op-streak lesson, looked for open items outside HANDOFF:
+- Checked the other `SoftmaxLR` callers for the 11-07 convergence bug. `HistogramClassifier` uses letter fractions (λmax ≤ 1). `WholeClipClassifier` is 14-d, and
+  `train` now switches to Nesterov by itself above the limit. `UnsupervisedCluster` heads were retrained 11-12. `ImpulseVeto` has its own 1/L step. Nothing stale.
+- `COUGH_ISOLATION.md` had 4 unchecked July boxes. Annotated them: device eval DONE (10-07); user-domain override and mobile clip gate replaced by
+  `CoughVote`; GUI clip-gate display NOT built, because `cough_clipgate.csv` pClip comes from a model trained on all clips (in-sample, adds nothing
+  over ALLDATA labels; would need out-of-fold scores first). Stage-B/raw-stream gating = HANDOFF's capture-time gate (waits on the phone test).
+- No build, no codebook/model file touched.
+- **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; found_in_other folders still reflect the old head; segedit retrain needs
+  Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
