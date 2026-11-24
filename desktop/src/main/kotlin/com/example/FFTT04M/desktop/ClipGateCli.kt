@@ -19,6 +19,32 @@ import kotlin.math.ln
  *
  * Run: ./gradlew :desktop:clipGate -Deval.alldata=D:\AndroidProjects\ALLDATA -Deval.harvest=D:\AndroidProjects\cough_harvest
  */
+/**
+ * Read-only view of `cough_harvest/cough_clipgate.csv` for the recordings grid: the 5-fold OUT-OF-FOLD clip-gate
+ * P(cough) (`pClipOOF`). Files written before that column existed have none → empty map (nothing shown).
+ * Folds are by row index, not participant, so this is not participant-held-out (same as the CLI's sweep).
+ */
+object ClipGateScores {
+    const val THR = 0.7   // documented deploy point: recall 82.0 % / FP 4.0 % (2026-11-24)
+    @Volatile private var cache: Map<String, Double>? = null
+    fun reload() { cache = null }
+    fun get(id: String): Double? = (cache ?: read().also { cache = it })[id]
+    private fun read(): Map<String, Double> {
+        val f = File(Workspace.repoRoot ?: return emptyMap(), "cough_harvest/cough_clipgate.csv")
+        if (!f.isFile) return emptyMap()
+        return try {
+            f.useLines { s ->
+                val it = s.iterator(); if (!it.hasNext()) return@useLines emptyMap()
+                val h = it.next().split(','); val ci = h.indexOf("pClipOOF"); val ii = h.indexOf("id")
+                if (ci < 0 || ii < 0) return@useLines emptyMap()
+                val m = HashMap<String, Double>()
+                while (it.hasNext()) { val c = it.next().split(','); c.getOrNull(ci)?.toDoubleOrNull()?.let { p -> m[c[ii]] = p } }
+                m
+            }
+        } catch (e: Exception) { System.err.println("clip gate scores: ${e.message}"); emptyMap() }
+    }
+}
+
 object ClipGateCli {
 
     private val SUFFIX = Regex("__cough\\d+_\\d+-\\d+ms$")
@@ -115,10 +141,14 @@ object ClipGateCli {
         // 5-fold pooled out-of-fold predictions
         data class P(val truth: Boolean, val p: Double, val grp: String, val pos: Boolean)
         val preds = ArrayList<P>(ys.size)
+        // per-clip OOF score (index-aligned with ids) — written to the CSV as pClipOOF. The final model's
+        // pClip is in-sample (trained on every clip), so only pClipOOF is fit for display/evaluation.
+        val oof = DoubleArray(ys.size) { Double.NaN }
         for (k in 0 until 5) {
             val tr = xs.indices.filter { it % 5 != k }; val te = xs.indices.filter { it % 5 == k }
             val model = WholeClipClassifier.train(tr.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
-            for (i in te) { val (lab, p) = model.predict(xs[i]); preds += P(ys[i], if (lab == "cough") p else 1 - p, grp[i], ys[i]) }
+            for (i in te) { val (lab, p) = model.predict(xs[i]); val pc = if (lab == "cough") p else 1 - p
+                oof[i] = pc; preds += P(ys[i], pc, grp[i], ys[i]) }
         }
         fun m(sel: (P) -> Boolean): Triple<Double, Double, Double> {  // recall, fp, precision
             var tp = 0; var fp = 0; var tn = 0; var fn = 0
@@ -156,9 +186,9 @@ object ClipGateCli {
         val model = WholeClipClassifier.train(xs.indices.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
         WholeClipClassifier.save(model, File(Workspace.dir("codebooks"), "cough_clipgate.json"))
         File(harvest, "cough_clipgate.csv").bufferedWriter().use { w ->
-            w.write("id,source,truth,pClip,verdict@.5\n")
+            w.write("id,source,truth,pClip,verdict@.5,pClipOOF\n")   // pClip = in-sample final model; pClipOOF = 5-fold OOF
             for (i in ids.indices) { val (lab, p) = model.predict(xs[i]); val pc = if (lab == "cough") p else 1 - p
-                w.write("${ids[i]},${src[i]},${if (ys[i]) "cough" else "not_cough"},${"%.3f".format(pc)},${if (pc >= 0.5) "cough" else "not_cough"}\n") }
+                w.write("${ids[i]},${src[i]},${if (ys[i]) "cough" else "not_cough"},${"%.3f".format(pc)},${if (pc >= 0.5) "cough" else "not_cough"},${"%.3f".format(oof[i])}\n") }
         }
         println("\nsaved → data/codebooks/cough_clipgate.json + cough_harvest/cough_clipgate.csv")
     }

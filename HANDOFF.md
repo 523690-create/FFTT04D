@@ -1123,3 +1123,15 @@ No device; all 3 repos clean/in sync at start (D `1647933`, M `1e65392`, L `942d
 - No build, no codebook/model file touched.
 - **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; found_in_other folders still reflect the old head; segedit retrain needs
   Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-24 resume-paused-work — clip gate out-of-fold scores saved + shown in the grid tooltip
+No device; all 3 repos clean/in sync at start (D `ebd6c4a`, M `1e65392`, L `942d9c7`), nothing to push. Took the one non-gated item: the
+GUI clip-gate display that 11-15 left unbuilt because `pClip` was in-sample. Detail + revert: `data/_clipgate_oof_20261124/RESULTS.md`. jar 'X' (361).
+- `ClipGateCli` already computed 5-fold OOF predictions for its sweep and threw them away; now appended as `pClipOOF` to
+  `cough_harvest/cough_clipgate.csv` (old columns byte-identical). New `ClipGateScores` loader; grid tooltip line `clip gate 0.xx → cough (thr 0.7)`.
+- Re-ran `:desktop:clipGate`: sweep identical to 11-12 (thr .7: 82.0 / 4.0); `cough_clipgate.json` + all codebook md5s unchanged. Backups in the results folder.
+- **Finding:** in-sample `pClip` ≈ OOF (mean gap 0.001, 60/75,941 verdicts flip at .5). The 14-d linear fuser doesn't overfit; the honest caveat
+  is that folds are by row index, not participant.
+- **Not verified:** tooltip not clicked in the GUI; loader not runtime-tested (Java 8, no jshell). Restart a running desktop app to see it.
+- **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders still reflect the old head;
+  segedit retrain needs Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).

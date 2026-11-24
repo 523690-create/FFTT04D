@@ -579,7 +579,7 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
         DecodeFeedback.setAll(targets.map { it.id }, correct); model.fireTableDataChanged()
     }
 
-    private fun reloadDecodes() { DecodeStore.reload(); PhonemeLegend.reload(); ImpulseVeto.Scores.reload(); model.fireTableDataChanged() }
+    private fun reloadDecodes() { DecodeStore.reload(); PhonemeLegend.reload(); ImpulseVeto.Scores.reload(); ClipGateScores.reload(); model.fireTableDataChanged() }
 
     private fun updateCount() {
         countLabel.text = "  ${table.rowCount} shown · ${rows.size} total · ${rows.count { it.checked }} checked"
@@ -742,6 +742,11 @@ class RecordingsGridPanel : JPanel(java.awt.BorderLayout()) {
                         .append(when { veto -> " → impulsive noise, not cough (veto p %.2f)".format(ip)
                                        cs > 0 -> " → cough"; else -> " → not cough" }).append("</span>")
                 }
+            }
+            ClipGateScores.get(rec.id)?.let { p ->                      // clip-level meta-fuser, out-of-fold score
+                val c = p >= ClipGateScores.THR
+                append("<br><span style='color:${if (c) "#fa7" else "#5cf"}'>clip gate ").append("%.2f".format(p))
+                    .append(if (c) " → cough" else " → not cough").append(" (thr %.1f)".format(ClipGateScores.THR)).append("</span>")
             }
             append("</html>")
         }

@@ -167,6 +167,7 @@ from INTERSECT-like (62%/2.6%) to UNION-like (89%/17%). See memory `cough_eval_f
       *(DONE: `deviceCoughGate` / `deviceHubertEval` / `deviceEval` on 1,354 clean user labels, 2026-10-07, D `4bd339c`; whole-clip forest FP 80.7% @.7 in-domain.)*
 - [~] Wire the clip-gate verdict into a GUI button + mobile AutoReject; gate during raw-stream segmentation.
       *(2026-11-15: mobile part superseded, since AutoReject uses `CoughVote` and not this gate. The GUI part was not built: `cough_clipgate.csv` `pClip` comes from the final model trained on ALL clips, so it is in-sample and only repeats the labels ALLDATA already has. It would need out-of-fold scores to be worth showing. Raw-stream gating = the capture-time gate above.)*
+      *(2026-11-24: GUI part DONE. `clipGate` now writes `pClipOOF` (5-fold out-of-fold) to the CSV, and the grid tooltip shows it at thr 0.7. Measured: in-sample `pClip` ≈ OOF (mean gap 0.001, 60/75,941 verdicts flip), so the 11-15 objection was overstated. Folds are by row, not participant. `data/_clipgate_oof_20261124/RESULTS.md`.)*
 
 ---
 
