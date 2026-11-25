@@ -1135,3 +1135,13 @@ GUI clip-gate display that 11-15 left unbuilt because `pClip` was in-sample. Det
 - **Not verified:** tooltip not clicked in the GUI; loader not runtime-tested (Java 8, no jshell). Restart a running desktop app to see it.
 - **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders still reflect the old head;
   segedit retrain needs Tier-B edits; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-25 resume-paused-work — clip gate participant-grouped CV: no leak at the fuser layer
+No device; all 3 repos clean/in sync at start (D `8f82de2`, M `1e65392`, L `942d9c7`), nothing to push. Took the 11-24 caveat (OOF folds by row
+index, not participant). Detail: `data/_clipgate_participant_20261125/RESULTS.md`. jar 'a' (364).
+- New `-Dclip.folds=participant` on `:desktop:clipGate`: folds grouped by ALLDATA `original_id` (Coswara participant, COUGHVID uuid, chunk ids with
+  `_N` stripped, UrbanSound8K fsID, ESC-50 clip id; 41,632 groups). Measurement only — saves nothing; default run unchanged; clip-gate json/csv md5-identical.
+- **Result:** every number within ±0.2 pp of the row-index run; thr .7 = 82.0 / 4.0 in both. The deploy point holds participant-held-out for the fuser.
+- **Still open caveat:** upstream input models (ALLDATA head, wavelet, forest, segment fuser) were trained on overlapping clips; only `spec_cough` is OOF.
+- **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders still reflect the old head;
+  segedit retrain needs Tier-B edits; tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).

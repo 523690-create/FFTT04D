@@ -22,7 +22,7 @@ import kotlin.math.ln
 /**
  * Read-only view of `cough_harvest/cough_clipgate.csv` for the recordings grid: the 5-fold OUT-OF-FOLD clip-gate
  * P(cough) (`pClipOOF`). Files written before that column existed have none → empty map (nothing shown).
- * Folds are by row index, not participant, so this is not participant-held-out (same as the CLI's sweep).
+ * Folds are by row index; a participant-grouped re-run (-Dclip.folds=participant, 2026-11-25) matched within 0.2 pp.
  */
 object ClipGateScores {
     const val THR = 0.7   // documented deploy point: recall 82.0 % / FP 4.0 % (2026-11-24)
@@ -50,6 +50,13 @@ object ClipGateCli {
     private val SUFFIX = Regex("__cough\\d+_\\d+-\\d+ms$")
     private fun parentOf(segId: String) = segId.replace(SUFFIX, "")
     private val classes = listOf("not_cough", "cough")
+    private val TRAILING_INDEX = Regex("_\\d+$")
+    /** Recording-source key for grouped folds: clips that share it come from one person / one source file. */
+    internal fun groupKey(source: String, originalId: String): String = source.lowercase() + ":" + when {
+        source.equals("UrbanSound8K", true) -> originalId.substringBefore('-')               // fsID-class-occ-slice
+        source.equals("ESC-50", true) -> originalId.split('-').getOrElse(1) { originalId }  // fold-clip-take-class
+        else -> originalId.replace(TRAILING_INDEX, "")   // Coswara participant, COUGHVID uuid, *_N chunk ids
+    }
     val FEATURES = listOf(
         "wc_forest", "wc_sqR2", "wc_lnSqN", "wc_pitch", "wc_flat", "wc_syll",
         "seg_maxHead", "seg_maxWav", "seg_maxFused", "seg_maxForest", "seg_hall", "seg_lnCand", "seg_maxSqR2",
@@ -70,14 +77,15 @@ object ClipGateCli {
         if (!meta.isFile || !wcFile.isFile) { println("need $meta and $wcFile (run allDataScore first)"); return }
 
         // truth per clip
-        data class Truth(val source: String, val soundType: String, val pos: Boolean)
+        data class Truth(val source: String, val soundType: String, val pos: Boolean, val who: String)
         val truth = HashMap<String, Truth>(90_000)
         meta.useLines { seq ->
             seq.drop(1).forEach { line ->
                 val c = line.split(','); if (c.size < 5) return@forEach
                 val t = CoughTruth.fromIsCough(CoughTruth.parseIsCough(c[4]))
                 if (t != CoughTruth.Truth.SKIP)
-                    truth[c[0].trim().removeSuffix(".wav")] = Truth(c[1].trim(), c[3].trim(), t == CoughTruth.Truth.POS)
+                    truth[c[0].trim().removeSuffix(".wav")] = Truth(c[1].trim(), c[3].trim(), t == CoughTruth.Truth.POS,
+                        groupKey(c[1].trim(), c[2].trim()))
             }
         }
 
@@ -123,14 +131,14 @@ object ClipGateCli {
 
         // assemble samples (clips with truth + whole-clip features)
         val ids = ArrayList<String>(); val xs = ArrayList<DoubleArray>(); val ys = ArrayList<Boolean>()
-        val src = ArrayList<String>(); val grp = ArrayList<String>()
+        val src = ArrayList<String>(); val grp = ArrayList<String>(); val who = ArrayList<String>()
         for ((id, t) in truth) {
             val w = wc[id] ?: continue
             val g = agg[id] ?: Agg()
             xs += doubleArrayOf(w[0], w[1], w[2], w[3], w[4], w[5],
                 g.maxHead, g.maxWav, g.maxFused, g.maxForest, if (g.hall) 1.0 else 0.0, ln(1.0 + g.nCand), g.maxSqR2,
                 spec[id] ?: 0.5)
-            ys += t.pos; ids += id; src += t.source
+            ys += t.pos; ids += id; src += t.source; who += t.who
             grp += if (t.source.equals("Coswara", true)) "Coswara/${t.soundType}" else t.source
         }
         val nPos = ys.count { it }; val nNeg = ys.size - nPos
@@ -144,8 +152,14 @@ object ClipGateCli {
         // per-clip OOF score (index-aligned with ids) — written to the CSV as pClipOOF. The final model's
         // pClip is in-sample (trained on every clip), so only pClipOOF is fit for display/evaluation.
         val oof = DoubleArray(ys.size) { Double.NaN }
+        // -Dclip.folds=participant: hold out whole recording sources (Coswara participant, COUGHVID uuid, one
+        // UrbanSound8K freesound file, …) per fold instead of row index. Measurement only: nothing is saved in
+        // that mode, so the shipped json/csv (row-index OOF) stay untouched.
+        val byParticipant = System.getProperty("clip.folds").equals("participant", true)
+        val foldOf = IntArray(ys.size) { if (byParticipant) (who[it].hashCode() and 0x7fffffff) % 5 else it % 5 }
+        if (byParticipant) println("folds: PARTICIPANT-grouped (${who.toSet().size} groups) — measurement only, nothing saved")
         for (k in 0 until 5) {
-            val tr = xs.indices.filter { it % 5 != k }; val te = xs.indices.filter { it % 5 == k }
+            val tr = xs.indices.filter { foldOf[it] != k }; val te = xs.indices.filter { foldOf[it] == k }
             val model = WholeClipClassifier.train(tr.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
             for (i in te) { val (lab, p) = model.predict(xs[i]); val pc = if (lab == "cough") p else 1 - p
                 oof[i] = pc; preds += P(ys[i], pc, grp[i], ys[i]) }
@@ -182,6 +196,7 @@ object ClipGateCli {
             }
         }
 
+        if (byParticipant) return
         // train final on all + save + per-clip dump
         val model = WholeClipClassifier.train(xs.indices.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
         WholeClipClassifier.save(model, File(Workspace.dir("codebooks"), "cough_clipgate.json"))

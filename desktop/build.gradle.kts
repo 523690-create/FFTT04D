@@ -396,6 +396,7 @@ tasks.register<JavaExec>("clipGate") {
     systemProperty("java.awt.headless", "true")
     systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
     systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
+    systemProperty("clip.folds", System.getProperty("clip.folds") ?: "")   // -Dclip.folds=participant -> grouped CV, saves nothing
     maxHeapSize = "3g"
 }
 
