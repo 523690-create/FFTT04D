@@ -1145,3 +1145,14 @@ index, not participant). Detail: `data/_clipgate_participant_20261125/RESULTS.md
 - **Still open caveat:** upstream input models (ALLDATA head, wavelet, forest, segment fuser) were trained on overlapping clips; only `spec_cough` is OOF.
 - **Remaining** (all gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders still reflect the old head;
   segedit retrain needs Tier-B edits; tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-26 resume-paused-work — clip gate upstream-leak ablation: leak can inflate thr .7 by at most ~7 pp recall / 2 pp FP
+No device; all 3 repos clean/in sync at start (D `c0d5c90`, M `1e65392`, L `942d9c7`), nothing to push. Took the 11-25 "still open caveat"
+(upstream inputs trained on overlapping clips). Detail: `data/_clipgate_ablation_20261126/RESULTS.md`. jar 'f' (369).
+- New `-Dclip.drop=name,...` on `:desktop:clipGate`: refit without those FEATURES. Measurement only — saves nothing; clip-gate json/csv md5-identical.
+- **Result (participant folds, thr .7 rec/FP):** full 82.0/4.0 · no-head 81.0/4.6 · no-forest 76.6/4.1 · leak-free (DSP+hallmark+spec_cough OOF) 74.6/6.0.
+  Leakage bound: ≤7.4 pp recall, ≤2.0 pp FP. Coswara unaffected (leak-free even better on breathing FP); gap is COUGHVID/dataset_1sec recall and
+  ESC-50/UrbanSound8K FP, i.e. the forest's training sources. Forest carries most of it.
+- **Next if wanted:** participant-folded OOF refit of CoughForest (then the ALLDATA head) to replace the bound with a point estimate. `seg_hall` is codebook-derived, so "leak-free" is leak-reduced.
+- **Remaining** (gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders; segedit retrain needs Tier-B edits;
+  tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).

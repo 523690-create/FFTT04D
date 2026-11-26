@@ -155,13 +155,21 @@ object ClipGateCli {
         // -Dclip.folds=participant: hold out whole recording sources (Coswara participant, COUGHVID uuid, one
         // UrbanSound8K freesound file, …) per fold instead of row index. Measurement only: nothing is saved in
         // that mode, so the shipped json/csv (row-index OOF) stay untouched.
+        // -Dclip.drop=name,name: fit the gate WITHOUT those FEATURES (ablation, e.g. drop every upstream model trained on
+        // overlapping ALLDATA clips to get a leak-free lower bound). Measurement only: nothing is saved. Baselines still
+        // read the full xs.
+        val drop = System.getProperty("clip.drop").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        drop.filter { it !in FEATURES }.takeIf { it.isNotEmpty() }?.let { println("unknown -Dclip.drop names: $it (known: $FEATURES)"); return }
+        val keep = FEATURES.indices.filter { FEATURES[it] !in drop }
+        val fit: List<DoubleArray> = if (drop.isEmpty()) xs else xs.map { x -> DoubleArray(keep.size) { x[keep[it]] } }
+        if (drop.isNotEmpty()) println("ablation: fitting on ${keep.map { FEATURES[it] }} — measurement only, nothing saved")
         val byParticipant = System.getProperty("clip.folds").equals("participant", true)
         val foldOf = IntArray(ys.size) { if (byParticipant) (who[it].hashCode() and 0x7fffffff) % 5 else it % 5 }
         if (byParticipant) println("folds: PARTICIPANT-grouped (${who.toSet().size} groups) — measurement only, nothing saved")
         for (k in 0 until 5) {
             val tr = xs.indices.filter { foldOf[it] != k }; val te = xs.indices.filter { foldOf[it] == k }
-            val model = WholeClipClassifier.train(tr.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
-            for (i in te) { val (lab, p) = model.predict(xs[i]); val pc = if (lab == "cough") p else 1 - p
+            val model = WholeClipClassifier.train(tr.map { fit[it] to if (ys[it]) "cough" else "not_cough" }, classes)
+            for (i in te) { val (lab, p) = model.predict(fit[i]); val pc = if (lab == "cough") p else 1 - p
                 oof[i] = pc; preds += P(ys[i], pc, grp[i], ys[i]) }
         }
         fun m(sel: (P) -> Boolean): Triple<Double, Double, Double> {  // recall, fp, precision
@@ -196,7 +204,7 @@ object ClipGateCli {
             }
         }
 
-        if (byParticipant) return
+        if (byParticipant || drop.isNotEmpty()) return
         // train final on all + save + per-clip dump
         val model = WholeClipClassifier.train(xs.indices.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
         WholeClipClassifier.save(model, File(Workspace.dir("codebooks"), "cough_clipgate.json"))
