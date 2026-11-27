@@ -1156,3 +1156,19 @@ No device; all 3 repos clean/in sync at start (D `c0d5c90`, M `1e65392`, L `942d
 - **Next if wanted:** participant-folded OOF refit of CoughForest (then the ALLDATA head) to replace the bound with a point estimate. `seg_hall` is codebook-derived, so "leak-free" is leak-reduced.
 - **Remaining** (gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders; segedit retrain needs Tier-B edits;
   tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+
+## 2026-11-27 resume-paused-work — participant-folded OOF forest: upstream leak at thr .7 is ~1 pp, not ≤7
+No device; all 3 repos clean/in sync at start (D `ae69ec5`, M `1e65392`, L `942d9c7`), nothing to push. Took the 11-26 "next if wanted"
+(OOF refit of CoughForest). Detail: `data/_forest_oof_20261127/RESULTS.md`. jar 'k' (374).
+- New `:desktop:forestOof` (`ForestOofCli`, measurement only): refits a bundled-shape CoughForest on ALLDATA with the SAME participant folds as
+  `clipGate -Dclip.folds=participant`, writes OOF P(cough) to the results folder. New `-Dclip.forestOof=<csv>` on `:desktop:clipGate` swaps it
+  in for `wc_forest`; saves nothing (clip-gate json/csv md5 unchanged).
+- **OOF forest alone beats the bundled one** on ALLDATA (thr .7: 80.0/9.9 vs 77.3/12.3). The bundled forest was not fit on most of ALLDATA
+  (Urban8K FP 34.7%, train 41.5%), so its leak was small.
+- **Gate, thr .7 rec/FP:** shipped 82.0/4.0 · OOF forest all-14 82.9/4.4 · leak-reduced (OOF forest + DSP + hallmark + spec_cough, no
+  head/wav/fused/segforest) **81.3/5.2**. That replaces the 11-26 bound (74.6/6.0) with a point estimate: leak ≈ 0.7 pp recall / 1.2 pp FP. The
+  remaining gap is ESC-50 FP (head/wavelet's share). The deploy point holds.
+- Not done: participant-OOF refit of the ALLDATA HuBERT head (GPU; would close the last ~1 pp; low value now).
+- **Remaining** (gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders; segedit retrain needs Tier-B
+  edits; tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap —
+  new input: an ALLDATA-trained forest measures better than the bundled one OOF).

@@ -388,6 +388,17 @@ tasks.register<JavaExec>("impulseVeto") {
 
 // Clip-level META-FUSER over both method families (seg-OR content signals + whole-clip forest) — the
 // recommended best cough/not-cough gate. Trains + evaluates on existing CSVs, no GPU.
+tasks.register<JavaExec>("forestOof") {
+    group = "application"
+    description = "Participant-folded OOF refit of the whole-clip CoughForest on ALLDATA (measurement only)."
+    mainClass.set("com.example.FFTT04M.desktop.ForestOofCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    systemProperty("eval.alldata", System.getProperty("eval.alldata") ?: "")
+    systemProperty("oof.out", System.getProperty("oof.out") ?: "")
+    maxHeapSize = "6g"
+}
+
 tasks.register<JavaExec>("clipGate") {
     group = "application"
     description = "Train + evaluate the clip-level meta-fuser over seg-OR + whole-clip signals."
@@ -398,6 +409,7 @@ tasks.register<JavaExec>("clipGate") {
     systemProperty("eval.harvest", System.getProperty("eval.harvest") ?: "")
     systemProperty("clip.folds", System.getProperty("clip.folds") ?: "")   // -Dclip.folds=participant -> grouped CV, saves nothing
     systemProperty("clip.drop", System.getProperty("clip.drop") ?: "")     // -Dclip.drop=f1,f2 -> feature ablation, saves nothing
+    systemProperty("clip.forestOof", System.getProperty("clip.forestOof") ?: "")   // -Dclip.forestOof=forest_oof.csv -> leak-free wc_forest, saves nothing
     maxHeapSize = "3g"
 }
 
