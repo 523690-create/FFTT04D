@@ -399,6 +399,17 @@ tasks.register<JavaExec>("forestOof") {
     maxHeapSize = "6g"
 }
 
+tasks.register<JavaExec>("headOof") {
+    group = "application"
+    description = "Participant-folded OOF refit of the ALLDATA HuBERT cough head from cached embeddings (CPU, measurement only)."
+    mainClass.set("com.example.FFTT04M.desktop.HeadOofCli")
+    classpath = sourceSets["main"].runtimeClasspath
+    systemProperty("java.awt.headless", "true")
+    for (k in listOf("eval.alldata", "eval.harvest", "oof.out"))
+        systemProperty(k, System.getProperty(k) ?: "")
+    maxHeapSize = "6g"
+}
+
 tasks.register<JavaExec>("clipGate") {
     group = "application"
     description = "Train + evaluate the clip-level meta-fuser over seg-OR + whole-clip signals."
@@ -410,6 +421,8 @@ tasks.register<JavaExec>("clipGate") {
     systemProperty("clip.folds", System.getProperty("clip.folds") ?: "")   // -Dclip.folds=participant -> grouped CV, saves nothing
     systemProperty("clip.drop", System.getProperty("clip.drop") ?: "")     // -Dclip.drop=f1,f2 -> feature ablation, saves nothing
     systemProperty("clip.forestOof", System.getProperty("clip.forestOof") ?: "")   // -Dclip.forestOof=forest_oof.csv -> leak-free wc_forest, saves nothing
+    systemProperty("clip.headOof", System.getProperty("clip.headOof") ?: "")       // -Dclip.headOof=head_oof.csv -> leak-free seg_maxHead, saves nothing
+    systemProperty("clip.headOofCol", System.getProperty("clip.headOofCol") ?: "") // column of head_oof.csv (default maxHeadOOF)
     maxHeapSize = "3g"
 }
 

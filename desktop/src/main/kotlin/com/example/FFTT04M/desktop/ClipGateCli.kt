@@ -138,6 +138,17 @@ object ClipGateCli {
             println("wc_forest ← OOF forest from $f (${m.size} clips) — measurement only, nothing saved"); m
         }
 
+        // -Dclip.headOof=<head_oof.csv from :desktop:headOof>: replace seg_maxHead with the participant-folded OOF HuBERT
+        // head's max over the clip's harvest segments (column maxHeadOOF; 0 if the clip has none). Measurement only.
+        val headOof: Map<String, Double>? = System.getProperty("clip.headOof")?.takeIf { it.isNotBlank() }?.let { path ->
+            val f = File(path); if (!f.isFile) { println("no -Dclip.headOof file: $f"); return }
+            val col = System.getProperty("clip.headOofCol")?.takeIf { it.isNotBlank() } ?: "maxHeadOOF"
+            val ci = f.useLines { it.first().split(',').indexOf(col) }; if (ci < 1) { println("no column $col in $f"); return }
+            val m = HashMap<String, Double>(90_000)
+            f.useLines { s -> s.drop(1).forEach { l -> val c = l.split(','); c.getOrNull(ci)?.toDoubleOrNull()?.let { m[c[0]] = it } } }
+            println("seg_maxHead ← $col from $f (${m.size} clips) — measurement only, nothing saved"); m
+        }
+
         // assemble samples (clips with truth + whole-clip features)
         val ids = ArrayList<String>(); val xs = ArrayList<DoubleArray>(); val ys = ArrayList<Boolean>()
         val src = ArrayList<String>(); val grp = ArrayList<String>(); val who = ArrayList<String>()
@@ -146,7 +157,7 @@ object ClipGateCli {
             val g = agg[id] ?: Agg()
             val wf = if (forestOof == null) w[0] else forestOof[id] ?: continue
             xs += doubleArrayOf(wf, w[1], w[2], w[3], w[4], w[5],
-                g.maxHead, g.maxWav, g.maxFused, g.maxForest, if (g.hall) 1.0 else 0.0, ln(1.0 + g.nCand), g.maxSqR2,
+                if (headOof == null) g.maxHead else headOof[id] ?: 0.0, g.maxWav, g.maxFused, g.maxForest, if (g.hall) 1.0 else 0.0, ln(1.0 + g.nCand), g.maxSqR2,
                 spec[id] ?: 0.5)
             ys += t.pos; ids += id; src += t.source; who += t.who
             grp += if (t.source.equals("Coswara", true)) "Coswara/${t.soundType}" else t.source
@@ -214,7 +225,7 @@ object ClipGateCli {
             }
         }
 
-        if (byParticipant || drop.isNotEmpty() || forestOof != null) return
+        if (byParticipant || drop.isNotEmpty() || forestOof != null || headOof != null) return
         // train final on all + save + per-clip dump
         val model = WholeClipClassifier.train(xs.indices.map { xs[it] to if (ys[it]) "cough" else "not_cough" }, classes)
         WholeClipClassifier.save(model, File(Workspace.dir("codebooks"), "cough_clipgate.json"))

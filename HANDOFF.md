@@ -1172,3 +1172,17 @@ No device; all 3 repos clean/in sync at start (D `ae69ec5`, M `1e65392`, L `942d
 - **Remaining** (gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders; segedit retrain needs Tier-B
   edits; tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap —
   new input: an ALLDATA-trained forest measures better than the bundled one OOF).
+
+## 2026-11-28 resume-paused-work — participant-OOF HuBERT head: head leak at the gate is ~0.1 pp; honest deploy point ≈ 82.5/4.5
+No device; all 3 repos clean/in sync at start (D `7eb7cbb`, M `1e65392`, L `942d9c7`), nothing to push. Took the 11-27 "not done" item
+(participant-OOF refit of the ALLDATA HuBERT head). It needed no GPU because it uses the cached `segemb_ALLDATA.bin` + `harvestemb_*.bin`.
+Detail: `data/_head_oof_20261128/RESULTS.md`. jar 'q' (380).
+- New `:desktop:headOof` (`HeadOofCli`, CPU, measurement only). It refits the 768→2 head per participant fold on 11,086 cached
+  segments and scores all 175,483 harvest segments out-of-fold. It writes `head_oof.csv` (per-clip max). New
+  `-Dclip.headOof=<csv>` / `-Dclip.headOofCol=` on `:desktop:clipGate` swaps it in for `seg_maxHead` and saves nothing (md5s unchanged).
+- **Gate thr .7 rec/FP:** leak-reduced with OOF head 82.5/4.5, with shipped head 82.6/4.4 → head leak ≈ 0.1 pp. The head is real signal (+1.2 rec /
+  −0.7 FP over the 11-27 head-less 81.3/5.2). Wavelet/fused/segforest add nothing honest. **Honest deploy point ≈ 82.5/4.5 vs reported
+  82.0/4.0.** The upstream-leak question is now closed; the deploy rule holds.
+- **Remaining** (gated, unchanged): M phone test of CoughVote `1e65392`; capture-time gate; found_in_other folders; segedit retrain needs Tier-B
+  edits; tooltip not GUI-clicked; user decisions (linear device head, the 14 WAVs, damaged Coswara copy, forest redeploy / M 0.65 stopgap).
+  Optional simplification: a deployable gate without the wavelet input would lose nothing measurable.
